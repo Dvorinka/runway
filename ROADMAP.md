@@ -57,15 +57,20 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 
 *The personal pain point, done properly.*
 
-- [ ] Instance-level Cloudflare Tunnel: admin-managed, covers
-      `APP_HOSTNAME` + `*.DEPLOY_DOMAIN` — whole box reachable with
-      no public IP
-- [ ] `DISABLE_TLS` edge-termination mode honored end-to-end
-- [ ] One-click custom domain assign (CF DNS API), multi-domain,
-      apex + subdomain + redirect types
-- [ ] Per-team tunnels for custom domains (port from devpush)
-- [ ] Tunnel health/restart, ingress bookkeeping on assign/remove
-- [ ] Fallback unchanged: direct IP + ACME (HTTP-01/DNS-01)
+- [x] Instance-level Cloudflare Tunnel: `CF_API_TOKEN` + `CF_ACCOUNT_ID`
+      → `ensure_instance_tunnel` job at serve; covers `APP_HOSTNAME` +
+      `*.DEPLOY_DOMAIN` — whole box reachable with no public IP
+- [x] `DISABLE_TLS` edge-termination mode honored end-to-end
+      (web-only labels; tunnel ingress → traefik:80)
+- [x] One-click custom domain assign (CF DNS API)
+      `POST .../domains/{id}/assign-cloudflare`; multi-domain,
+      apex + subdomain + redirect types in schema/Traefik
+- [ ] Per-team tunnels for custom domains (port from devpush;
+      team OAuth flow remains)
+- [x] Tunnel health/restart (5-min reconcile loop + restart policy),
+      ingress bookkeeping on domain assign/remove
+- [x] Fallback unchanged: direct IP + ACME (`le` TLS-challenge
+      resolver configured; publish :443 in production)
 
 ## Phase 4 — API, CLI, agentic
 

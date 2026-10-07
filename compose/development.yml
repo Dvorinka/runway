@@ -30,6 +30,12 @@ services:
       - --providers.file.directory=/traefik
       - --providers.file.watch=true
       - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      # ACME fallback path (direct-IP hosting). Harmless when DISABLE_TLS
+      # is set — routers only reference `le` when url_scheme is https.
+      - --certificatesresolvers.le.acme.tlschallenge=true
+      - --certificatesresolvers.le.acme.email=${ACME_EMAIL:-admin@example.com}
+      - --certificatesresolvers.le.acme.storage=/traefik/acme.json
     ports:
       - "8080:80"
     volumes:
@@ -63,11 +69,21 @@ services:
       GITHUB_APP_NAME: ${GITHUB_APP_NAME:-}
       GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
       GITHUB_APP_WEBHOOK_SECRET: ${GITHUB_APP_WEBHOOK_SECRET:-}
+      # CGNAT path — set both to auto-manage the instance tunnel.
+      CF_API_TOKEN: ${CF_API_TOKEN:-}
+      CF_ACCOUNT_ID: ${CF_ACCOUNT_ID:-}
     ports:
       - "8000:8000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - runway-data:/home/runway/data
+    # Router for APP_HOSTNAME — the tunnel ingress targets traefik:80.
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.runway.rule=Host(`${APP_HOSTNAME:-runway.localhost}`)
+      - traefik.http.routers.runway.service=runway
+      - traefik.http.routers.runway.entrypoints=web
+      - traefik.http.services.runway.loadbalancer.server.port=8000
 
 volumes:
   runway-db:

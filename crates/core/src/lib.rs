@@ -19,6 +19,7 @@ pub mod models;
 pub mod presets;
 pub mod slugify;
 pub mod traefik;
+pub mod tunnel;
 
 pub use config::Settings;
 pub use error::{Error, Result};

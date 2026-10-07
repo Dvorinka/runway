@@ -511,12 +511,110 @@ pub async fn verify_domain(
     Ok(Json(json!({ "ok": true })).into_response())
 }
 
+/// One-click Cloudflare assign: create the CNAME, add the hostname to
+/// the instance tunnel ingress when one exists, mark active.
+pub async fn assign_cloudflare_domain(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path((project_id, domain_id)): Path<(String, i64)>,
+) -> ApiResult<Response> {
+    let project = accessible_project(&state, user.user.id, &project_id).await?;
+    let (Some(token), Some(account_id)) = (
+        state.settings.cf_api_token.clone(),
+        state.settings.cf_account_id.clone(),
+    ) else {
+        return Err(ApiError::bad_request(
+            "cloudflare not configured (CF_API_TOKEN/CF_ACCOUNT_ID)",
+        ));
+    };
+    let domain: Option<(String,)> =
+        sqlx::query_as("SELECT hostname FROM domain WHERE id = $1 AND project_id = $2")
+            .bind(domain_id)
+            .bind(&project.id)
+            .fetch_optional(&state.db)
+            .await?;
+    let Some((hostname,)) = domain else {
+        return Err(ApiError::not_found("domain"));
+    };
+
+    let cf = runway_core::cloudflare::CloudflareClient::new(token);
+    let tunnel = runway_core::tunnel::read_tunnel_state(&state.settings.data_dir).await;
+    // Through the tunnel when it exists (CGNAT), else straight at the app.
+    let target = tunnel
+        .as_ref()
+        .map(|t| format!("{}.cfargotunnel.com", t.tunnel_id))
+        .unwrap_or_else(|| state.settings.app_hostname.clone());
+
+    let rec = cf
+        .create_or_update_dns_record(&hostname, &target, true)
+        .await
+        .map_err(ApiError::from)?
+        .ok_or_else(|| ApiError::bad_request(format!("no cloudflare zone covers {hostname}")))?;
+
+    if let Some(t) = &tunnel {
+        cf_tunnel_sync(&cf, &account_id, &t.tunnel_id, Some(&hostname), None).await;
+    }
+
+    sqlx::query(
+        "UPDATE domain SET status = 'active', cloudflare_zone_id = $1,
+         cloudflare_record_id = $2, last_checked_at = now()
+         WHERE id = $3",
+    )
+    .bind(rec["zone_id"].as_str().unwrap_or(""))
+    .bind(rec["record_id"].as_str().unwrap_or(""))
+    .bind(domain_id)
+    .execute(&state.db)
+    .await?;
+    runway_core::traefik::update_project_config(&state.db, &project, &state.settings, &[])
+        .await
+        .map_err(ApiError::from)?;
+    Ok(Json(json!({ "ok": true, "target": target })).into_response())
+}
+
+/// Best-effort tunnel ingress update — never blocks the request.
+async fn cf_tunnel_sync(
+    cf: &runway_core::cloudflare::CloudflareClient,
+    account_id: &str,
+    tunnel_id: &str,
+    add: Option<&str>,
+    remove: Option<&str>,
+) {
+    if let Err(e) = runway_core::tunnel::sync_ingress(cf, account_id, tunnel_id, add, remove).await
+    {
+        tracing::warn!(error = %e, "tunnel ingress sync failed");
+    }
+}
+
 pub async fn delete_domain(
     user: AuthUser,
     State(state): State<AppState>,
     Path((project_id, domain_id)): Path<(String, i64)>,
 ) -> ApiResult<Response> {
     let project = accessible_project(&state, user.user.id, &project_id).await?;
+    let domain: Option<(String, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT hostname, cloudflare_zone_id, cloudflare_record_id
+         FROM domain WHERE id = $1 AND project_id = $2",
+    )
+    .bind(domain_id)
+    .bind(&project.id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    // Best-effort upstream cleanup before the row goes.
+    if let Some((hostname, Some(zone_id), Some(record_id))) = &domain {
+        if let (Some(token), Some(account_id)) = (
+            state.settings.cf_api_token.clone(),
+            state.settings.cf_account_id.clone(),
+        ) {
+            let cf = runway_core::cloudflare::CloudflareClient::new(token);
+            let _ = cf.delete_dns_record(zone_id, record_id).await;
+            if let Some(t) = runway_core::tunnel::read_tunnel_state(&state.settings.data_dir).await
+            {
+                cf_tunnel_sync(&cf, &account_id, &t.tunnel_id, None, Some(hostname)).await;
+            }
+        }
+    }
+
     sqlx::query("DELETE FROM domain WHERE id = $1 AND project_id = $2")
         .bind(domain_id)
         .bind(&project.id)

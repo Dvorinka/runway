@@ -119,6 +119,8 @@ async fn dispatch(ctx: &Ctx, kind: &str, payload: &Value) -> anyhow::Result<()> 
         "reconcile_edge_network" => {
             deploy::reconcile_edge_network(ctx, str_payload_opt(payload, "deployment_id")).await
         }
+        "ensure_instance_tunnel" => crate::tunnel::ensure_instance(ctx).await,
+        "teardown_instance_tunnel" => crate::tunnel::teardown_instance(ctx).await,
         other => anyhow::bail!("unknown job kind: {other}"),
     }
 }

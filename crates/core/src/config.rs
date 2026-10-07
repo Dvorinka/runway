@@ -81,6 +81,11 @@ pub struct Settings {
 
     /// Directory holding the built React SPA (`web/dist` in dev).
     pub web_dir: String,
+
+    /// Instance-level Cloudflare API token (CGNAT path). Needs
+    /// Zone.DNS + Account.Tunnel permissions.
+    pub cf_api_token: Option<String>,
+    pub cf_account_id: Option<String>,
 }
 
 impl Settings {
@@ -144,7 +149,14 @@ impl Settings {
             smtp_from: opt("SMTP_FROM"),
             smtp_tls: env_bool("SMTP_TLS", true),
             web_dir: env_or("WEB_DIR", "./web/dist"),
+            cf_api_token: opt("CF_API_TOKEN").or_else(|| opt("CLOUDFLARE_API_TOKEN")),
+            cf_account_id: opt("CF_ACCOUNT_ID").or_else(|| opt("CLOUDFLARE_ACCOUNT_ID")),
         })
+    }
+
+    /// True when the instance-level Cloudflare Tunnel can be managed.
+    pub fn cf_configured(&self) -> bool {
+        self.cf_api_token.is_some() && self.cf_account_id.is_some()
     }
 
     /// True when the GitHub App integration is fully configured.
@@ -251,5 +263,7 @@ pub(crate) fn test_settings() -> Settings {
         smtp_from: None,
         smtp_tls: true,
         web_dir: "./web/dist".into(),
+        cf_api_token: None,
+        cf_account_id: None,
     }
 }

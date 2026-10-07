@@ -71,6 +71,10 @@ pub fn router(state: AppState) -> Router {
             post(routes::projects::verify_domain),
         )
         .route(
+            "/api/v1/projects/{id}/domains/{domain_id}/assign-cloudflare",
+            post(routes::projects::assign_cloudflare_domain),
+        )
+        .route(
             "/api/v1/projects/{id}/domains/{domain_id}",
             delete(routes::projects::delete_domain),
         )

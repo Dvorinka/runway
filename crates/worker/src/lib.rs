@@ -11,6 +11,7 @@
 pub mod deploy;
 pub mod jobs;
 pub mod monitor;
+pub mod tunnel;
 
 use bollard::Docker;
 use sqlx::PgPool;
@@ -58,6 +59,41 @@ pub async fn run(
             tracing::warn!(error = %e, "startup edge reconcile failed");
         }
     });
+
+    // CGNAT path: bring up the instance-level Cloudflare Tunnel when
+    // CF_API_TOKEN + CF_ACCOUNT_ID are configured.
+    if settings.cf_configured() {
+        if let Err(e) =
+            runway_core::deploy::enqueue(&db, "ensure_instance_tunnel", serde_json::json!({}), 0)
+                .await
+        {
+            tracing::warn!(error = %e, "failed to enqueue instance tunnel setup");
+        }
+        // Restart covers crashes; this loop covers a removed container
+        // or a changed Traefik network (re-enqueues a full reconcile).
+        let tunnel_ctx = ctx.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(300));
+            loop {
+                ticker.tick().await;
+                let status = runway_core::tunnel::cloudflared_status(
+                    &tunnel_ctx.docker,
+                    "cloudflared-instance",
+                )
+                .await;
+                if status != "running" {
+                    tracing::warn!(status, "instance tunnel container down — re-enqueueing");
+                    let _ = runway_core::deploy::enqueue(
+                        &tunnel_ctx.db,
+                        "ensure_instance_tunnel",
+                        serde_json::json!({}),
+                        0,
+                    )
+                    .await;
+                }
+            }
+        });
+    }
 
     let jobs_ctx = ctx.clone();
     tokio::spawn(async move { jobs::run(jobs_ctx).await });
