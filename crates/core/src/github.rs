@@ -208,6 +208,101 @@ impl GithubService {
             .await?)
     }
 
+    /// Recursive file path list for a branch (installation token).
+    /// Feeds preset detection.
+    pub async fn repo_files(
+        &self,
+        installation_token: &str,
+        repo_full_name: &str,
+        branch: &str,
+    ) -> Result<Vec<String>> {
+        let resp: serde_json::Value = self
+            .http
+            .get(format!(
+                "{}/repos/{}/git/trees/{}?recursive=1",
+                self.api_base, repo_full_name, branch
+            ))
+            .bearer_auth(installation_token)
+            .header("Accept", "application/vnd.github+json")
+            .header("User-Agent", "runway")
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        Ok(resp
+            .get("tree")
+            .and_then(|t| t.as_array())
+            .map(|t| {
+                t.iter()
+                    .filter_map(|e| e.get("path").and_then(|p| p.as_str()).map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    /// Decoded text of a file at path (installation token). None on 404.
+    pub async fn file_text(
+        &self,
+        installation_token: &str,
+        repo_full_name: &str,
+        path: &str,
+    ) -> Result<Option<String>> {
+        use base64::Engine;
+        let resp = self
+            .http
+            .get(format!(
+                "{}/repos/{}/contents/{}",
+                self.api_base, repo_full_name, path
+            ))
+            .bearer_auth(installation_token)
+            .header("Accept", "application/vnd.github+json")
+            .header("User-Agent", "runway")
+            .send()
+            .await?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        let body: serde_json::Value = resp.error_for_status()?.json().await?;
+        let Some(b64) = body.get("content").and_then(|c| c.as_str()) else {
+            return Ok(None);
+        };
+        let raw = base64::engine::general_purpose::STANDARD
+            .decode(b64.replace('\n', ""))
+            .map_err(|e| Error::Other(e.into()))?;
+        Ok(Some(String::from_utf8_lossy(&raw).to_string()))
+    }
+
+    /// Commit status (installation token) — PR preview check on the commit.
+    pub async fn commit_status(
+        &self,
+        installation_token: &str,
+        repo_full_name: &str,
+        sha: &str,
+        state: &str,
+        target_url: Option<&str>,
+        description: &str,
+    ) -> Result<()> {
+        self.http
+            .post(format!(
+                "{}/repos/{}/statuses/{}",
+                self.api_base, repo_full_name, sha
+            ))
+            .bearer_auth(installation_token)
+            .header("Accept", "application/vnd.github+json")
+            .header("User-Agent", "runway")
+            .json(&serde_json::json!({
+                "state": state,
+                "target_url": target_url,
+                "description": description,
+                "context": "runway/deploy",
+            }))
+            .send()
+            .await?
+            .error_for_status()?;
+        Ok(())
+    }
+
     /// Repos visible to the user token under an installation.
     pub async fn installation_repositories_for_user(
         &self,

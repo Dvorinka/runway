@@ -129,7 +129,7 @@ async fn tick(
             .filter(|ip| !ip.is_empty());
 
         let Some(ip) = ip else { continue };
-        let port = dep.deployment_port();
+        let port = dep.serve_port();
 
         let url = format!("http://{ip}:{port}/");
         let ready = http.get(&url).send().await.is_ok();

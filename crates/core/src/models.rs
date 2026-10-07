@@ -437,6 +437,25 @@ impl Deployment {
             .unwrap_or(8000)
     }
 
+    /// True when the deployment materializes to a static artifact
+    /// (config.output_directory) rather than a long-lived process.
+    pub fn is_static(&self) -> bool {
+        self.config
+            .get("output_directory")
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| !s.is_empty())
+    }
+
+    /// Port the serving container listens on. Static deploys are served
+    /// by the `static-web` image on :80.
+    pub fn serve_port(&self) -> i64 {
+        if self.is_static() {
+            80
+        } else {
+            self.deployment_port()
+        }
+    }
+
     pub fn env_vars(&self, crypto: &Crypto) -> Result<Vec<EnvVar>> {
         if self.env_vars.is_empty() {
             return Ok(vec![]);

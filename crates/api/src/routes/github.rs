@@ -138,6 +138,9 @@ pub async fn webhook(
         "push" => {
             handle_push(&state, &data).await;
         }
+        "pull_request" => {
+            handle_pull_request(&state, &data).await;
+        }
         _ => {}
     }
     Ok(StatusCode::OK.into_response())
@@ -240,6 +243,81 @@ async fn handle_push(state: &AppState, data: &Value) {
             ),
             Err(e) => {
                 tracing::warn!(project_id = project.id, error = %e, "push: deployment create failed")
+            }
+        }
+    }
+}
+
+/// pull_request opened/synchronize/reopened → preview deployment on the
+/// PR head branch. Branch allowlists don't apply — previews are the
+/// point. `auto_deploy=false` still opts the project out.
+async fn handle_pull_request(state: &AppState, data: &Value) {
+    let action = data["action"].as_str().unwrap_or("");
+    if !matches!(action, "opened" | "synchronize" | "reopened") {
+        return;
+    }
+    let repo_id = data["repository"]["id"].as_i64().unwrap_or(0);
+    let pr = &data["pull_request"];
+    let branch = pr["head"]["ref"].as_str().unwrap_or("").to_string();
+    let sha = pr["head"]["sha"].as_str().unwrap_or("").to_string();
+    if branch.is_empty() || sha.is_empty() {
+        return;
+    }
+    let number = pr["number"].as_i64().unwrap_or(0);
+    let commit = CommitInfo {
+        sha,
+        author: pr["user"]["login"].as_str().unwrap_or("").to_string(),
+        message: format!("{} (PR #{number})", pr["title"].as_str().unwrap_or("")),
+        timestamp: pr["updated_at"].as_str().map(String::from),
+    };
+
+    let projects: Vec<Project> = match sqlx::query_as(
+        "SELECT * FROM project
+         WHERE repo_id = $1 AND repo_provider = 'github' AND status = 'active'",
+    )
+    .bind(repo_id)
+    .fetch_all(&state.db)
+    .await
+    {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::error!(error = %e, "pull_request webhook: project lookup failed");
+            return;
+        }
+    };
+
+    for project in projects {
+        let rules = project
+            .config
+            .get("deployment_rules")
+            .cloned()
+            .unwrap_or(json!({}));
+        if rules.get("auto_deploy").and_then(|v| v.as_bool()) == Some(false) {
+            continue;
+        }
+        if rules.get("preview_prs").and_then(|v| v.as_bool()) == Some(false) {
+            continue;
+        }
+
+        match deploy::create(
+            &state.db,
+            &state.bus,
+            &state.crypto,
+            &project,
+            &branch,
+            &commit,
+            "pull_request",
+            None,
+        )
+        .await
+        {
+            Ok(dep) => tracing::info!(
+                deployment_id = dep.id,
+                project_id = project.id,
+                "preview deployment created from pull_request"
+            ),
+            Err(e) => {
+                tracing::warn!(project_id = project.id, error = %e, "pull_request: deployment create failed")
             }
         }
     }

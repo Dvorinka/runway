@@ -146,6 +146,41 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
     }
 
     let config = &deployment.config;
+    // Static mode: `output_directory` materializes the build to a host
+    // dir served by the `static-web` image instead of a runner process.
+    let output_dir = config
+        .get("output_directory")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .trim_matches('/')
+        .to_string();
+    let static_mode = !output_dir.is_empty();
+    let mut spa_fallback = config
+        .get("spa_fallback")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let static_local_dir = std::path::PathBuf::from(&ctx.settings.data_dir)
+        .join("static")
+        .join(deployment_id);
+    let static_host_dir = if static_mode {
+        tokio::fs::create_dir_all(&static_local_dir).await?;
+        let host_root = ctx
+            .settings
+            .host_data_dir
+            .clone()
+            .unwrap_or_else(|| ctx.settings.data_dir.clone());
+        let host_dir = std::path::PathBuf::from(host_root)
+            .join("static")
+            .join(deployment_id)
+            .display()
+            .to_string();
+        binds.push(format!("{host_dir}:/out"));
+        Some(host_dir)
+    } else {
+        None
+    };
+
     let root_dir = config
         .get("root_directory")
         .and_then(|v| v.as_str())
@@ -184,8 +219,21 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
          ( {pre_deploy} ); \
          fi; fi"
     ));
-    commands.push("echo 'Starting application...'".into());
-    commands.push(config_command("start_command", cfg_str("start_command")));
+    if static_mode {
+        commands.push(format!(
+            "OUTDIR=$(if [ -f runway.json ] && command -v jq >/dev/null 2>&1; then \
+             jq -r '.output_directory // empty' runway.json; fi); \
+             OUTDIR=${{OUTDIR:-{output_dir}}}; \
+             echo \"Publishing static output ($OUTDIR -> /out)...\"; \
+             test -d \"$OUTDIR\" || {{ printf '\\033[31mError: output directory %s not found\\033[0m\\n' \"$OUTDIR\" 1>&2; exit 1; }}; \
+             mkdir -p /out && cp -r \"$OUTDIR\"/. /out/ && \
+             (cp runway.json /out/.runway.json 2>/dev/null || true) && \
+             echo 'Static output published'"
+        ));
+    } else {
+        commands.push("echo 'Starting application...'".into());
+        commands.push(config_command("start_command", cfg_str("start_command")));
+    }
 
     // -- Networks ------------------------------------------------------
     let edge_network = edge_network_name(deployment_id);
@@ -210,7 +258,7 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
     .await?;
 
     // -- Labels --------------------------------------------------------
-    let app_port = deployment.deployment_port();
+    let app_port = deployment.serve_port();
     let router = format!("deployment-{deployment_id}");
     let project_slug = project.slug.clone().unwrap_or_else(|| project.id.clone());
     let mut labels = HashMap::from([
@@ -300,6 +348,34 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
         anyhow::bail!("runner image not found for deployment");
     };
 
+    // Build-output cache for node/bun runners — persists incremental
+    // compiler state (.next/cache, .turbo) across deployments.
+    if runner_image.contains("node") || runner_image.contains("bun") {
+        let base = format!("runway-bcache-{}", &project.id[..12.min(project.id.len())]);
+        let root = if root_dir.is_empty() {
+            String::new()
+        } else {
+            format!("/{root_dir}")
+        };
+        for (suffix, path) in [
+            ("next", format!("/app{root}/.next/cache")),
+            ("turbo", format!("/app{root}/.turbo")),
+        ] {
+            let vol = format!("{base}-{suffix}");
+            let _ = docker
+                .create_volume(CreateVolumeOptions {
+                    name: vol.clone(),
+                    labels: HashMap::from([
+                        ("runway.project_id".into(), project.id.clone()),
+                        ("runway.cache".into(), format!("build-{suffix}")),
+                    ]),
+                    ..Default::default()
+                })
+                .await;
+            binds.push(format!("{vol}:{path}"));
+        }
+    }
+
     if config
         .get("dockerfile_path")
         .and_then(|v| v.as_str())
@@ -318,6 +394,19 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
     } else {
         log(&format!("Runner image already present ({runner_image})")).await;
     }
+
+    let serve_image = if static_mode {
+        let img = presets::runner_image("static-web")
+            .expect("static-web runner is registered")
+            .to_string();
+        if docker.inspect_image(&img).await.is_err() {
+            log(&format!("Pulling static server image ({img})...")).await;
+            pull_image(docker, &img).await?;
+        }
+        Some(img)
+    } else {
+        None
+    };
 
     // -- Container -----------------------------------------------------
     log("Preparing and starting container...").await;
@@ -369,20 +458,169 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
         ],
     };
 
-    let body = ContainerConfig {
-        image: Some(runner_image),
-        env: Some(env),
-        working_dir: Some("/app".into()),
-        labels: Some(labels),
-        networking_config: Some(NetworkingConfig {
-            endpoints_config: HashMap::from([
-                (edge_network.clone(), EndpointSettings::default()),
-                (workspace_network.clone(), EndpointSettings::default()),
-            ]),
-        }),
-        host_config: Some(host_config),
-        cmd: Some(cmd),
-        ..Default::default()
+    let body = if static_mode {
+        // Phase 1: throwaway build container — clones, builds, copies
+        // output_directory into the host-mounted /out, then exits.
+        let build_name = format!("{container_name}-build");
+        let build_body = ContainerConfig {
+            image: Some(runner_image.clone()),
+            env: Some(env),
+            working_dir: Some("/app".into()),
+            labels: Some(HashMap::from([
+                ("runway.deployment_id".into(), deployment_id.clone()),
+                ("runway.project_id".into(), project.id.clone()),
+                ("runway.team_id".into(), project.team_id.clone()),
+                ("runway.role".into(), "build".into()),
+            ])),
+            networking_config: Some(NetworkingConfig {
+                endpoints_config: HashMap::from([(
+                    workspace_network.clone(),
+                    EndpointSettings::default(),
+                )]),
+            }),
+            host_config: Some(HostConfig {
+                restart_policy: Some(RestartPolicy {
+                    name: Some(RestartPolicyNameEnum::NO),
+                    maximum_retry_count: None,
+                }),
+                ..host_config.clone()
+            }),
+            cmd: Some(cmd),
+            ..Default::default()
+        };
+        let build_id = match dkr::create_or_replace_container(docker, &build_name, build_body).await
+        {
+            Ok(id) => id,
+            Err(runway_core::Error::Docker(e)) => {
+                let reason = dkr::create_error_reason(&e);
+                deploy::enqueue(
+                    &ctx.db,
+                    "fail_deployment",
+                    json!({
+                        "deployment_id": deployment_id,
+                        "status": "prepare",
+                        "reason": reason,
+                    }),
+                    0,
+                )
+                .await?;
+                return Ok(());
+            }
+            Err(e) => return Err(e.into()),
+        };
+        docker
+            .start_container(&build_id, None::<StartContainerOptions<String>>)
+            .await?;
+        spawn_log_tailer(ctx, build_id.clone(), deployment_id.clone());
+        log("Building static output...").await;
+        let exit = wait_exit(docker, &build_id, ctx.settings.deployment_timeout_seconds).await;
+        let _ = docker
+            .remove_container(
+                &build_id,
+                Some(RemoveContainerOptions {
+                    force: true,
+                    ..Default::default()
+                }),
+            )
+            .await;
+        match exit {
+            Ok(0) => log("Static build completed").await,
+            Ok(code) => {
+                deploy::enqueue(
+                    &ctx.db,
+                    "fail_deployment",
+                    json!({
+                        "deployment_id": deployment_id,
+                        "status": "prepare",
+                        "reason": format!("build failed (exit code {code})"),
+                    }),
+                    0,
+                )
+                .await?;
+                return Ok(());
+            }
+            Err(e) => {
+                deploy::enqueue(
+                    &ctx.db,
+                    "fail_deployment",
+                    json!({
+                        "deployment_id": deployment_id,
+                        "status": "prepare",
+                        "reason": format!("build failed: {e}"),
+                    }),
+                    0,
+                )
+                .await?;
+                return Ok(());
+            }
+        }
+
+        // Phase 2: serve the artifact with the static-web image.
+        let static_dir = static_host_dir.expect("static_mode implies static_host_dir");
+
+        // runway.json extracted during build → SWS config + overrides.
+        let mut serve_binds = vec![format!("{static_dir}:/public:ro")];
+        let marker = static_local_dir.join(".runway.json");
+        if let Ok(raw) = tokio::fs::read_to_string(&marker).await {
+            let _ = tokio::fs::remove_file(&marker).await; // never served
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&raw) {
+                if let Some(spa) = val.get("spa_fallback").and_then(|v| v.as_bool()) {
+                    spa_fallback = spa;
+                }
+                if let Some(toml) = sws_config(&val) {
+                    let toml_path = std::path::PathBuf::from(&ctx.settings.data_dir)
+                        .join("static")
+                        .join(format!("{deployment_id}.toml"));
+                    if tokio::fs::write(&toml_path, toml).await.is_ok() {
+                        let host_toml = static_dir
+                            .trim_end_matches(&format!("/{deployment_id}"))
+                            .to_string()
+                            + &format!("/{deployment_id}.toml");
+                        serve_binds.push(format!("{host_toml}:/config.toml:ro"));
+                    }
+                }
+            }
+        }
+
+        let mut serve_env = vec!["SERVER_ROOT=/public".to_string()];
+        if serve_binds.len() > 1 {
+            serve_env.push("SERVER_CONFIG_FILE=/config.toml".to_string());
+        }
+        if spa_fallback {
+            serve_env.push("SERVER_PAGE_FALLBACK=/public/index.html".to_string());
+        }
+        ContainerConfig {
+            image: serve_image,
+            env: Some(serve_env),
+            labels: Some(labels),
+            networking_config: Some(NetworkingConfig {
+                endpoints_config: HashMap::from([
+                    (edge_network.clone(), EndpointSettings::default()),
+                    (workspace_network.clone(), EndpointSettings::default()),
+                ]),
+            }),
+            host_config: Some(HostConfig {
+                binds: Some(serve_binds),
+                ..host_config
+            }),
+            ..Default::default()
+        }
+    } else {
+        ContainerConfig {
+            image: Some(runner_image),
+            env: Some(env),
+            working_dir: Some("/app".into()),
+            labels: Some(labels),
+            networking_config: Some(NetworkingConfig {
+                endpoints_config: HashMap::from([
+                    (edge_network.clone(), EndpointSettings::default()),
+                    (workspace_network.clone(), EndpointSettings::default()),
+                ]),
+            }),
+            host_config: Some(host_config),
+            cmd: Some(cmd),
+            ..Default::default()
+        }
     };
 
     let container_id = match dkr::create_or_replace_container(docker, &container_name, body).await {
@@ -451,6 +689,90 @@ fn config_command(key: &str, command: &str) -> String {
          ( {command} ); \
          fi"
     )
+}
+
+/// Translate runway.json `redirects`/`rewrites`/`headers` (vercel.json
+/// shape) into a static-web-server `advanced` config. None when the
+/// file carries none of them.
+fn sws_config(val: &serde_json::Value) -> Option<String> {
+    let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+    let mut out = String::new();
+
+    if let Some(redirects) = val.get("redirects").and_then(|v| v.as_array()) {
+        for r in redirects {
+            let (Some(src), Some(dst)) = (r["source"].as_str(), r["destination"].as_str()) else {
+                continue;
+            };
+            let kind = r["status_code"]
+                .as_i64()
+                .or_else(|| r["status"].as_i64())
+                .unwrap_or(if r["permanent"].as_bool() == Some(true) {
+                    308
+                } else {
+                    307
+                });
+            out += &format!(
+                "[[advanced.redirects]]\nsource = \"{}\"\ndestination = \"{}\"\nkind = {kind}\n\n",
+                esc(src),
+                esc(dst)
+            );
+        }
+    }
+    if let Some(rewrites) = val.get("rewrites").and_then(|v| v.as_array()) {
+        for r in rewrites {
+            let (Some(src), Some(dst)) = (r["source"].as_str(), r["destination"].as_str()) else {
+                continue;
+            };
+            out += &format!(
+                "[[advanced.rewrites]]\nsource = \"{}\"\ndestination = \"{}\"\n\n",
+                esc(src),
+                esc(dst)
+            );
+        }
+    }
+    if let Some(headers) = val.get("headers").and_then(|v| v.as_array()) {
+        for h in headers {
+            let Some(src) = h["source"].as_str() else {
+                continue;
+            };
+            let entries = h["headers"].as_array();
+            let mut block = format!("[[advanced.headers]]\nsource = \"{}\"\n", esc(src));
+            if let Some(entries) = entries {
+                for e in entries {
+                    let (Some(k), Some(v)) = (e["key"].as_str(), e["value"].as_str()) else {
+                        continue;
+                    };
+                    block += &format!(
+                        "[[advanced.headers.headers]]\nkey = \"{}\"\nvalue = \"{}\"\n",
+                        esc(k),
+                        esc(v)
+                    );
+                }
+            }
+            out += &block;
+            out += "\n\n";
+        }
+    }
+
+    if out.is_empty() {
+        None
+    } else {
+        Some(format!("[advanced]\n{out}"))
+    }
+}
+
+/// Wait for a container to exit; returns its exit code.
+async fn wait_exit(docker: &bollard::Docker, id: &str, timeout_secs: u64) -> anyhow::Result<i64> {
+    use std::time::Duration;
+    let mut stream = docker.wait_container::<String>(id, None);
+    let code = tokio::time::timeout(Duration::from_secs(timeout_secs.max(1)), async {
+        match stream.next().await {
+            Some(res) => anyhow::Ok(res?.status_code),
+            None => anyhow::bail!("container wait stream ended before exit"),
+        }
+    })
+    .await??;
+    Ok(code)
 }
 
 async fn pull_image(docker: &bollard::Docker, image: &str) -> anyhow::Result<()> {
@@ -556,6 +878,7 @@ pub async fn finalize(ctx: &Ctx, deployment_id: &str) -> anyhow::Result<()> {
     )
     .await?;
     ctx.logs.info(deployment_id, "Deployment succeeded").await;
+    post_commit_status(ctx, &deployment, &project, "success", "Deployment ready").await;
 
     deploy::enqueue(
         &ctx.db,
@@ -659,7 +982,53 @@ pub async fn fail(
         None,
     )
     .await?;
+    if let Ok(Some(project)) = deploy::get_project(&ctx.db, &deployment.project_id).await {
+        post_commit_status(
+            ctx,
+            &deployment,
+            &project,
+            "failure",
+            reason.unwrap_or("Deployment failed"),
+        )
+        .await;
+    }
     Ok(())
+}
+
+/// GitHub commit status for the deployment — powers PR preview checks.
+/// Best-effort: no token configured, no status posted.
+async fn post_commit_status(
+    ctx: &Ctx,
+    deployment: &Deployment,
+    project: &Project,
+    state: &str,
+    description: &str,
+) {
+    let (Some(gh), Some(installation_id)) = (ctx.github.as_ref(), project.github_installation_id)
+    else {
+        return;
+    };
+    let Ok(token) = gh
+        .installation_token(&ctx.db, &ctx.crypto, installation_id)
+        .await
+    else {
+        return;
+    };
+    let project_slug = project.slug.clone().unwrap_or_else(|| project.id.clone());
+    let url = deployment.url(&project_slug, &ctx.settings);
+    if let Err(e) = gh
+        .commit_status(
+            &token,
+            &deployment.repo_full_name,
+            &deployment.commit_sha,
+            state,
+            Some(&url),
+            description,
+        )
+        .await
+    {
+        tracing::warn!(deployment_id = deployment.id, error = %e, "commit status post failed");
+    }
 }
 
 /// `delete_container` — remove a stopped deployment container + edge network.

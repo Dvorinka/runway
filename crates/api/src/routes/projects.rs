@@ -112,9 +112,7 @@ pub async fn create(
 
     // Resolve the runner image up front so bad presets fail fast.
     let mut config = body.config.unwrap_or_else(|| json!({}));
-    if let Some(preset_slug) = &body.preset {
-        let preset = runway_core::presets::preset(preset_slug)
-            .ok_or_else(|| ApiError::bad_request("unknown preset"))?;
+    let apply_preset = |config: &mut Value, preset: &'static runway_core::presets::Preset| {
         let obj = config.as_object_mut().unwrap();
         obj.entry("runner".to_string())
             .or_insert_with(|| preset.runner.into());
@@ -124,8 +122,19 @@ pub async fn create(
             .or_insert_with(|| preset.start_command.into());
         obj.entry("port".to_string())
             .or_insert_with(|| preset.port.into());
+        if let Some(output_dir) = preset.output_dir {
+            obj.entry("output_directory".to_string())
+                .or_insert_with(|| output_dir.into());
+            obj.entry("spa_fallback".to_string())
+                .or_insert_with(|| preset.spa_fallback.into());
+        }
         obj.entry("preset".to_string())
             .or_insert_with(|| preset.slug.into());
+    };
+    if let Some(preset_slug) = &body.preset {
+        let preset = runway_core::presets::preset(preset_slug)
+            .ok_or_else(|| ApiError::bad_request("unknown preset"))?;
+        apply_preset(&mut config, preset);
     }
 
     // Verify the repo is reachable via the installation.
@@ -137,6 +146,28 @@ pub async fn create(
         .repository(&token, body.repo_id)
         .await
         .map_err(|_| ApiError::bad_request("repository not accessible via installation"))?;
+
+    // Auto-detect framework when neither preset nor explicit runner given.
+    if body.preset.is_none() && config.get("runner").is_none() {
+        if let Ok(files) = gh.repo_files(&token, &body.repo_full_name, &branch).await {
+            let refs: Vec<&str> = files.iter().map(String::as_str).collect();
+            let pj = if refs.contains(&"package.json") {
+                gh.file_text(&token, &body.repo_full_name, "package.json")
+                    .await
+                    .ok()
+                    .flatten()
+            } else {
+                None
+            };
+            if let Some(preset) = runway_core::presets::detect(&refs, pj.as_deref()) {
+                apply_preset(&mut config, preset);
+                runway_core::presets::adjust_for_pm(
+                    &mut config,
+                    runway_core::presets::package_manager(&refs),
+                );
+            }
+        }
+    }
 
     let id = token_hex(16);
     let environments = json!([Environment::production(&branch)]);

@@ -70,6 +70,17 @@ pub struct Settings {
     pub session_cookie: String,
     /// Session lifetime in seconds.
     pub session_max_age: u64,
+
+    // SMTP (magic link + notifications)
+    pub smtp_host: Option<String>,
+    pub smtp_port: u16,
+    pub smtp_user: Option<String>,
+    pub smtp_password: Option<String>,
+    pub smtp_from: Option<String>,
+    pub smtp_tls: bool,
+
+    /// Directory holding the built React SPA (`web/dist` in dev).
+    pub web_dir: String,
 }
 
 impl Settings {
@@ -126,6 +137,13 @@ impl Settings {
             github_app_webhook_secret: opt("GITHUB_APP_WEBHOOK_SECRET"),
             session_cookie: env_or("SESSION_COOKIE", "runway_session"),
             session_max_age: env_u64("SESSION_MAX_AGE", 60 * 60 * 24 * 30),
+            smtp_host: opt("SMTP_HOST"),
+            smtp_port: env_u64("SMTP_PORT", 587) as u16,
+            smtp_user: opt("SMTP_USER"),
+            smtp_password: opt("SMTP_PASSWORD"),
+            smtp_from: opt("SMTP_FROM"),
+            smtp_tls: env_bool("SMTP_TLS", true),
+            web_dir: env_or("WEB_DIR", "./web/dist"),
         })
     }
 
@@ -226,5 +244,12 @@ pub(crate) fn test_settings() -> Settings {
         github_app_webhook_secret: None,
         session_cookie: "runway_session".into(),
         session_max_age: 2592000,
+        smtp_host: None,
+        smtp_port: 587,
+        smtp_user: None,
+        smtp_password: None,
+        smtp_from: None,
+        smtp_tls: true,
+        web_dir: "./web/dist".into(),
     }
 }

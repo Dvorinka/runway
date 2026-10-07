@@ -113,55 +113,138 @@ pub async fn github_callback(
         .execute(&state.db)
         .await?;
 
-        // First-login bootstrap: personal team + owner membership.
-        if user.default_team_id.is_none() {
-            let team = Team::new(&format!("{}'s team", user.username), user.id);
-            sqlx::query("INSERT INTO team (id, name, created_by_user_id) VALUES ($1, $2, $3)")
-                .bind(&team.id)
-                .bind(&team.name)
-                .bind(user.id)
-                .execute(&state.db)
-                .await?;
-            let slug = runway_core::models::Project::assign_team_slug(&state.db, &team).await?;
-            sqlx::query(
-                "INSERT INTO team_member (team_id, user_id, role) VALUES ($1, $2, 'owner')",
-            )
-            .bind(&team.id)
-            .bind(user.id)
-            .execute(&state.db)
-            .await?;
-            sqlx::query("UPDATE \"user\" SET default_team_id = $1 WHERE id = $2")
-                .bind(&team.id)
-                .bind(user.id)
-                .execute(&state.db)
-                .await?;
-            let _ = slug;
-        }
-        sqlx::query_as::<_, User>("SELECT * FROM \"user\" WHERE id = $1")
-            .bind(user.id)
-            .fetch_one(&state.db)
-            .await?
+        ensure_personal_team(&state, user).await?
     };
 
+    let jar = jar.add(session_cookie(&state, user.id)?);
+    let jar = jar.remove(Cookie::from("oauth_state"));
+    Ok((jar, Redirect::to("/")).into_response())
+}
+
+fn session_cookie(state: &AppState, user_id: i64) -> ApiResult<Cookie<'static>> {
     let jwt = mint_session(
         &state.settings.secret_key,
-        user.id,
+        user_id,
         state.settings.session_max_age,
     )
     .map_err(ApiError::internal)?;
-
-    let secure = state.settings.url_scheme == "https";
-    let cookie = Cookie::build((state.settings.session_cookie.clone(), jwt))
+    Ok(Cookie::build((state.settings.session_cookie.clone(), jwt))
         .path("/")
         .http_only(true)
-        .secure(secure)
+        .secure(state.settings.url_scheme == "https")
         .same_site(axum_extra::extract::cookie::SameSite::Lax)
         .max_age(time::Duration::seconds(
             state.settings.session_max_age as i64,
         ))
-        .build();
-    let jar = jar.add(cookie).remove(Cookie::from("oauth_state"));
+        .build())
+}
+
+// ---------------------------------------------------------------------------
+// Magic link
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct MagicLinkBody {
+    email: String,
+}
+
+/// `POST /api/auth/magic-link` — email a sign-in link.
+/// No SMTP configured → the link is logged (dev mode) and a generic 200
+/// returned either way to avoid account enumeration.
+pub async fn magic_link(
+    State(state): State<AppState>,
+    axum::Json(body): axum::Json<MagicLinkBody>,
+) -> ApiResult<Response> {
+    let email = body.email.trim().to_lowercase();
+    if !email.contains('@') {
+        return Err(ApiError::bad_request("invalid email"));
+    }
+    let token = crate::auth::mint_login_token(&state.settings.secret_key, &email)
+        .map_err(ApiError::internal)?;
+    let link = format!(
+        "{}://{}/api/auth/magic-link/verify?token={token}",
+        state.settings.url_scheme, state.settings.app_hostname,
+    );
+    runway_core::mail::send(
+        &state.settings,
+        &email,
+        "Sign in to Runway",
+        &format!("Sign in to Runway:\n\n{link}\n\nThis link expires in 15 minutes."),
+    )
+    .await?;
+    Ok(axum::Json(json!({ "ok": true })).into_response())
+}
+
+#[derive(Deserialize)]
+pub struct MagicLinkVerify {
+    token: String,
+}
+
+/// `GET /api/auth/magic-link/verify` — upsert user by email, set session.
+pub async fn magic_link_verify(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Query(params): Query<MagicLinkVerify>,
+) -> ApiResult<Response> {
+    let Some(email) = crate::auth::decode_login_token(&state.settings.secret_key, &params.token)
+    else {
+        return Err(ApiError::unauthorized("invalid or expired link"));
+    };
+
+    let user: Option<User> = sqlx::query_as("SELECT * FROM \"user\" WHERE email = $1")
+        .bind(&email)
+        .fetch_optional(&state.db)
+        .await?;
+    let user = match user {
+        Some(u) => u,
+        None => {
+            let local = email.split('@').next().unwrap_or("user");
+            let username = unique_username(&state, local).await?;
+            sqlx::query_as::<_, User>(
+                "INSERT INTO \"user\" (email, username, email_verified)
+                 VALUES ($1, $2, true) RETURNING *",
+            )
+            .bind(&email)
+            .bind(&username)
+            .fetch_one(&state.db)
+            .await?
+        }
+    };
+    let user = ensure_personal_team(&state, user).await?;
+
+    let jar = jar.add(session_cookie(&state, user.id)?);
     Ok((jar, Redirect::to("/")).into_response())
+}
+
+/// Create the personal team + owner membership on first login.
+async fn ensure_personal_team(state: &AppState, user: User) -> ApiResult<User> {
+    if user.default_team_id.is_some() {
+        return Ok(user);
+    }
+    let team = Team::new(&format!("{}'s team", user.username), user.id);
+    sqlx::query("INSERT INTO team (id, name, created_by_user_id) VALUES ($1, $2, $3)")
+        .bind(&team.id)
+        .bind(&team.name)
+        .bind(user.id)
+        .execute(&state.db)
+        .await?;
+    runway_core::models::Project::assign_team_slug(&state.db, &team).await?;
+    sqlx::query("INSERT INTO team_member (team_id, user_id, role) VALUES ($1, $2, 'owner')")
+        .bind(&team.id)
+        .bind(user.id)
+        .execute(&state.db)
+        .await?;
+    sqlx::query("UPDATE \"user\" SET default_team_id = $1 WHERE id = $2")
+        .bind(&team.id)
+        .bind(user.id)
+        .execute(&state.db)
+        .await?;
+    Ok(
+        sqlx::query_as::<_, User>("SELECT * FROM \"user\" WHERE id = $1")
+            .bind(user.id)
+            .fetch_one(&state.db)
+            .await?,
+    )
 }
 
 pub async fn logout(State(state): State<AppState>, jar: CookieJar) -> ApiResult<Response> {

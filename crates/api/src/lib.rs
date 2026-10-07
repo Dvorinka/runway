@@ -15,6 +15,7 @@ use serde_json::json;
 pub use state::AppState;
 
 pub fn router(state: AppState) -> Router {
+    let web_dir = std::path::PathBuf::from(&state.settings.web_dir);
     Router::new()
         .route("/health", get(health))
         // Auth
@@ -25,6 +26,11 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/auth/logout", post(routes::auth::logout))
         .route("/api/auth/me", get(routes::auth::me))
+        .route("/api/auth/magic-link", post(routes::auth::magic_link))
+        .route(
+            "/api/auth/magic-link/verify",
+            get(routes::auth::magic_link_verify),
+        )
         // GitHub integration
         .route("/api/github/webhook", post(routes::github::webhook))
         .route(
@@ -110,6 +116,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/keys/{id}", delete(routes::api::revoke_key))
         .route("/api/deploy", post(routes::api::api_deploy))
         .with_state(state)
+        // React SPA — static assets + client-side route fallback.
+        .fallback_service(tower_http::services::ServeDir::new(&web_dir).fallback(
+            tower_http::services::ServeFile::new(web_dir.join("index.html")),
+        ))
 }
 
 async fn health() -> Json<serde_json::Value> {

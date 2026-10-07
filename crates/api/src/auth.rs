@@ -49,6 +49,46 @@ fn decode_session(secret: &str, token: &str) -> Option<SessionClaims> {
     .map(|d| d.claims)
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LoginClaims {
+    /// Email being signed in.
+    pub sub: String,
+    pub iss: String,
+    pub aud: String,
+    pub iat: u64,
+    pub exp: u64,
+}
+
+/// Short-lived single-purpose token for magic-link login.
+/// Stateless — single-use is not enforced; expiry (15 min) bounds the window.
+pub fn mint_login_token(secret: &str, email: &str) -> anyhow::Result<String> {
+    let now = Utc::now().timestamp() as u64;
+    let claims = LoginClaims {
+        sub: email.to_string(),
+        iss: "runway".into(),
+        aud: "runway:login".into(),
+        iat: now,
+        exp: now + 15 * 60,
+    };
+    Ok(jsonwebtoken::encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(secret.as_bytes()),
+    )?)
+}
+
+pub fn decode_login_token(secret: &str, token: &str) -> Option<String> {
+    let mut validation = Validation::default();
+    validation.set_audience(&["runway:login"]);
+    jsonwebtoken::decode::<LoginClaims>(
+        token,
+        &DecodingKey::from_secret(secret.as_bytes()),
+        &validation,
+    )
+    .ok()
+    .map(|d| d.claims.sub)
+}
+
 /// Authenticated user — cookie session or `Authorization: Bearer ak_...`.
 pub struct AuthUser {
     pub user: User,

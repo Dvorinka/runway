@@ -13,43 +13,45 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 ## Phase 0 — Skeleton
 
 - [x] Cargo workspace: `core`, `api`, `worker`, `cli` (single binary)
-- [ ] Postgres schema port from devpush models (~1:1)
-- [ ] Settings, db pool, migrations, `/health`
-- [ ] Docker connectivity via bollard (socket proxy aware)
-- [ ] Traefik file-provider writer (atomic)
-- [ ] Web app skeleton: Vite + React + Tailwind + shadcn, served by axum
-- [ ] CI: fmt, clippy, test, build
+- [x] Postgres schema port from devpush models (~1:1)
+- [x] Settings, db pool, migrations, `/health`
+- [x] Docker connectivity via bollard (socket proxy aware)
+- [x] Traefik file-provider writer (atomic)
+- [x] Web app skeleton: Vite + React + Tailwind + shadcn, served by axum
+- [x] CI: fmt, clippy, test, build
 
 ## Phase 1 — Deploy loop MVP
 
 *Prove the core loop end-to-end before any breadth. GitHub only.*
 
-- [ ] Auth: magic link + GitHub OAuth; `ak_` API keys
-- [ ] GitHub App: installation, repo list, webhook → deployment
-- [ ] Project: environments + branch mapping, encrypted env vars, config
+- [x] Auth: GitHub OAuth + `ak_` API keys + magic link (SMTP or dev-log)
+- [x] GitHub App: installation, repo list, webhook → deployment
+- [x] Project: environments + branch mapping, encrypted env vars, config
       (runner, commands, root_directory, port)
-- [ ] Postgres job queue (SKIP LOCKED) + deploy worker
-- [ ] Runner containers on edge/workspace networks, `$PORT` injection,
+- [x] Postgres job queue (SKIP LOCKED) + deploy worker
+- [x] Runner containers on edge/workspace networks, `$PORT` injection,
       dep-cache volumes, config-file overrides (`runway.json`)
-- [ ] Monitor probe → finalize; aliases (immutable/branch/env);
+- [x] Monitor probe → finalize; aliases (immutable/branch/env);
       Traefik labels + dynamic config
-- [ ] File-tailed logs → SSE (build + runtime)
-- [ ] Rollback, redeploy, cancel, skip; computed/observed status
-- [ ] `runway serve` production packaging (compose: app, pgsql, traefik)
+- [x] File-tailed logs → SSE (build + runtime)
+- [x] Rollback, redeploy, cancel, skip; computed/observed status
+- [x] `runway serve` production packaging (compose: app, pgsql, traefik)
 
 ## Phase 2 — Frontend-first
 
 *The wedge. Nobody else does this well self-hosted.*
 
-- [ ] Static deployment mode: build → extract `output_directory` →
-      shared static file server → aliases (no long-lived process)
-- [ ] Framework detection + presets: Next.js, Astro, SvelteKit, Nuxt,
-      Remix, Vite/SPA, Hugo (+ existing backend presets)
-- [ ] Node version matrix (20/22), package-manager detection
-      (npm/pnpm/yarn/bun)
-- [ ] Per-PR preview deployments + commit status/PR comment with URL
-- [ ] Build-output caching (.next/cache-style, per project)
-- [ ] SPA rewrites/redirects/headers config (`runway.json`)
+- [x] Static deployment mode: build → extract `output_directory` →
+      `static-web` serve container → aliases (no long-lived process)
+- [x] Framework detection + presets: Next.js, Astro (static+SSR),
+      SvelteKit, Nuxt, Remix, Vite/SPA, Hugo (+ backend presets ported)
+- [x] Node version matrix (20/22), package-manager detection
+      (npm/pnpm/yarn/bun lockfiles → command rewrite)
+- [~] Per-PR preview deployments + commit status with URL
+      (PR comment deferred — commit status carries the link)
+- [x] Build-output caching (`.next/cache`, `.turbo` volumes, per project)
+- [x] SPA rewrites/redirects/headers via `runway.json`
+      (translated to static-web-server config)
 
 ## Phase 3 — Anywhere access (CGNAT)
 

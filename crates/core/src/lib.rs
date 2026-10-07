@@ -14,6 +14,7 @@ pub mod error;
 pub mod events;
 pub mod github;
 pub mod logs;
+pub mod mail;
 pub mod models;
 pub mod presets;
 pub mod slugify;
