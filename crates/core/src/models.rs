@@ -553,6 +553,56 @@ impl ApiKey {
 }
 
 // ---------------------------------------------------------------------------
+// Webhooks (Phase 4 — ports devpush team_webhook / project_webhook)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, FromRow)]
+pub struct TeamWebhook {
+    pub id: String,
+    pub team_id: String,
+    pub name: String,
+    pub url: String,
+    /// AES-GCM ciphertext; HMAC signing secret when set.
+    #[serde(skip)]
+    pub secret: Option<String>,
+    pub events: Value,
+    /// JSON array of project ids; NULL = all projects in the team.
+    pub project_ids: Option<Value>,
+    pub status: String,
+    pub created_by_user_id: Option<i64>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl TeamWebhook {
+    /// Port of TeamWebhook.applies_to_project — NULL list means all projects.
+    pub fn applies_to_project(&self, project_id: &str) -> bool {
+        match &self.project_ids {
+            None => true,
+            Some(ids) => ids
+                .as_array()
+                .map(|a| a.iter().any(|v| v.as_str() == Some(project_id)))
+                .unwrap_or(false),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, FromRow)]
+pub struct ProjectWebhook {
+    pub id: String,
+    pub project_id: String,
+    pub name: String,
+    pub url: String,
+    /// AES-GCM ciphertext; HMAC signing secret when set.
+    #[serde(skip)]
+    pub secret: Option<String>,
+    pub events: Value,
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+// ---------------------------------------------------------------------------
 // Job queue
 // ---------------------------------------------------------------------------
 

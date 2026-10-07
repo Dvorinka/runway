@@ -686,3 +686,112 @@ pub async fn delete_domain(
         .map_err(ApiError::from)?;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
+
+// ---------------------------------------------------------------------------
+// Project webhooks (outbound deployment events)
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct CreateWebhook {
+    pub name: String,
+    pub url: String,
+    pub secret: Option<String>,
+    /// deployment.* event names; empty = all.
+    pub events: Option<Vec<String>>,
+}
+
+fn validate_webhook_input(name: &str, url: &str, events: &[String]) -> ApiResult<()> {
+    if name.trim().is_empty() || name.len() > 100 {
+        return Err(ApiError::bad_request("invalid webhook name"));
+    }
+    if !(url.starts_with("http://") || url.starts_with("https://")) || url.len() > 2048 {
+        return Err(ApiError::bad_request("webhook url must be http(s)"));
+    }
+    for e in events {
+        if !runway_core::webhook::WEBHOOK_EVENTS.contains(&e.as_str()) {
+            return Err(ApiError::bad_request(format!("unknown event '{e}'")));
+        }
+    }
+    Ok(())
+}
+
+fn webhook_json(w: &runway_core::models::ProjectWebhook) -> Value {
+    json!({
+        "id": w.id,
+        "project_id": w.project_id,
+        "name": w.name,
+        "url": w.url,
+        "has_secret": w.secret.is_some(),
+        "events": w.events,
+        "status": w.status,
+        "created_at": w.created_at,
+    })
+}
+
+pub async fn list_webhooks(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Response> {
+    let project = accessible_project(&state, user.user.id, &id).await?;
+    let hooks: Vec<runway_core::models::ProjectWebhook> =
+        sqlx::query_as("SELECT * FROM project_webhook WHERE project_id = $1 ORDER BY created_at")
+            .bind(&project.id)
+            .fetch_all(&state.db)
+            .await?;
+    Ok(
+        Json(json!({ "webhooks": hooks.iter().map(webhook_json).collect::<Vec<_>>() }))
+            .into_response(),
+    )
+}
+
+pub async fn create_webhook(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<CreateWebhook>,
+) -> ApiResult<Response> {
+    let project = accessible_project(&state, user.user.id, &id).await?;
+    let events = body.events.unwrap_or_default();
+    validate_webhook_input(&body.name, &body.url, &events)?;
+    let secret_enc = match &body.secret {
+        Some(s) if !s.is_empty() => Some(state.crypto.encrypt(s).map_err(ApiError::internal)?),
+        _ => None,
+    };
+    let wid = runway_core::slugify::token_hex(16);
+    sqlx::query(
+        "INSERT INTO project_webhook (id, project_id, name, url, secret, events)
+         VALUES ($1,$2,$3,$4,$5,$6)",
+    )
+    .bind(&wid)
+    .bind(&project.id)
+    .bind(body.name.trim())
+    .bind(&body.url)
+    .bind(&secret_enc)
+    .bind(json!(events))
+    .execute(&state.db)
+    .await?;
+    let hook: runway_core::models::ProjectWebhook =
+        sqlx::query_as("SELECT * FROM project_webhook WHERE id = $1")
+            .bind(&wid)
+            .fetch_one(&state.db)
+            .await?;
+    Ok((StatusCode::CREATED, Json(webhook_json(&hook))).into_response())
+}
+
+pub async fn delete_webhook(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path((id, webhook_id)): Path<(String, String)>,
+) -> ApiResult<Response> {
+    let project = accessible_project(&state, user.user.id, &id).await?;
+    let res = sqlx::query("DELETE FROM project_webhook WHERE id = $1 AND project_id = $2")
+        .bind(&webhook_id)
+        .bind(&project.id)
+        .execute(&state.db)
+        .await?;
+    if res.rows_affected() == 0 {
+        return Err(ApiError::not_found("webhook"));
+    }
+    Ok(StatusCode::NO_CONTENT.into_response())
+}

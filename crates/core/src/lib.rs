@@ -20,6 +20,7 @@ pub mod presets;
 pub mod slugify;
 pub mod traefik;
 pub mod tunnel;
+pub mod webhook;
 
 pub use config::Settings;
 pub use error::{Error, Result};

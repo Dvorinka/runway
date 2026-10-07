@@ -91,6 +91,28 @@ pub fn router(state: AppState) -> Router {
             post(routes::deployments::rollback),
         )
         .route(
+            "/api/v1/projects/{id}/webhooks",
+            get(routes::projects::list_webhooks).post(routes::projects::create_webhook),
+        )
+        .route(
+            "/api/v1/projects/{id}/webhooks/{webhook_id}",
+            delete(routes::projects::delete_webhook),
+        )
+        // Teams + team webhooks
+        .route("/api/v1/teams", get(routes::teams::list))
+        .route("/api/v1/teams/{id}", get(routes::teams::get))
+        .route(
+            "/api/v1/teams/{id}/webhooks",
+            get(routes::teams::list_webhooks).post(routes::teams::create_webhook),
+        )
+        .route(
+            "/api/v1/teams/{id}/webhooks/{webhook_id}",
+            delete(routes::teams::delete_webhook),
+        )
+        // MCP (JSON-RPC 2.0) + OpenAPI
+        .route("/api/mcp", post(routes::mcp::rpc))
+        .route("/api/v1/openapi.json", get(routes::api::openapi))
+        .route(
             "/api/v1/projects/{id}/events",
             get(routes::deployments::events),
         )

@@ -695,6 +695,19 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
     )
     .await?;
 
+    // "started" fires once the container is up, per devpush.
+    if let Ok(Some(dep_now)) = deploy::get(&ctx.db, deployment_id).await {
+        runway_core::webhook::send_deployment_webhooks(
+            &ctx.db,
+            &ctx.crypto,
+            &ctx.settings,
+            project,
+            &dep_now,
+            "started",
+        )
+        .await;
+    }
+
     spawn_log_tailer(ctx, container_id.clone(), deployment_id.clone());
     Ok(())
 }
@@ -905,6 +918,18 @@ pub async fn finalize(ctx: &Ctx, deployment_id: &str) -> anyhow::Result<()> {
     .await?;
     ctx.logs.info(deployment_id, "Deployment succeeded").await;
     post_commit_status(ctx, &deployment, &project, "success", "Deployment ready").await;
+    let dep_now = deploy::get(&ctx.db, deployment_id)
+        .await?
+        .unwrap_or_else(|| deployment.clone());
+    runway_core::webhook::send_deployment_webhooks(
+        &ctx.db,
+        &ctx.crypto,
+        &ctx.settings,
+        &project,
+        &dep_now,
+        "succeeded",
+    )
+    .await;
 
     deploy::enqueue(
         &ctx.db,
@@ -1017,6 +1042,17 @@ pub async fn fail(
             reason.unwrap_or("Deployment failed"),
         )
         .await;
+        if let Ok(Some(dep_now)) = deploy::get(&ctx.db, deployment_id).await {
+            runway_core::webhook::send_deployment_webhooks(
+                &ctx.db,
+                &ctx.crypto,
+                &ctx.settings,
+                &project,
+                &dep_now,
+                "failed",
+            )
+            .await;
+        }
     }
     Ok(())
 }

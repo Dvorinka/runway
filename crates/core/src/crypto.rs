@@ -69,6 +69,15 @@ pub fn sha256_hex(input: &str) -> String {
     hex::encode(Sha256::digest(input.as_bytes()))
 }
 
+/// HMAC-SHA256 hex — outbound webhook payload signing
+/// (`X-Runway-Signature: sha256=<hmac>`, same scheme devpush emits).
+pub fn hmac_sha256_hex(key: &[u8], payload: &[u8]) -> String {
+    use hmac::{Hmac, Mac};
+    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(key).expect("hmac accepts any key length");
+    mac.update(payload);
+    hex::encode(mac.finalize().into_bytes())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

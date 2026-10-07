@@ -199,10 +199,19 @@ pub async fn cancel(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<Response> {
-    let (dep, _p) = accessible_deployment(&state, user.user.id, &id).await?;
+    let (dep, project) = accessible_deployment(&state, user.user.id, &id).await?;
     let docker = runway_core::docker::connect(&state.settings).map_err(ApiError::from)?;
     deploy::cancel(&state.db, &state.bus, &state.settings, &docker, &dep).await?;
     let dep = deploy::get(&state.db, &id).await?.unwrap();
+    runway_core::webhook::send_deployment_webhooks(
+        &state.db,
+        &state.crypto,
+        &state.settings,
+        &project,
+        &dep,
+        "canceled",
+    )
+    .await;
     Ok(
         Json(json!({ "id": dep.id, "status": dep.status, "conclusion": dep.conclusion }))
             .into_response(),
@@ -214,8 +223,19 @@ pub async fn skip(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> ApiResult<Response> {
-    let (dep, _p) = accessible_deployment(&state, user.user.id, &id).await?;
+    let (dep, project) = accessible_deployment(&state, user.user.id, &id).await?;
     deploy::skip(&state.db, &state.bus, &dep).await?;
+    if let Some(dep) = deploy::get(&state.db, &id).await? {
+        runway_core::webhook::send_deployment_webhooks(
+            &state.db,
+            &state.crypto,
+            &state.settings,
+            &project,
+            &dep,
+            "skipped",
+        )
+        .await;
+    }
     Ok(Json(json!({ "ok": true })).into_response())
 }
 
