@@ -6,10 +6,17 @@
 
 pub mod cloudflare;
 pub mod config;
+pub mod crypto;
 pub mod db;
+pub mod deploy;
 pub mod docker;
 pub mod error;
+pub mod events;
+pub mod github;
+pub mod logs;
 pub mod models;
+pub mod presets;
+pub mod slugify;
 pub mod traefik;
 
 pub use config::Settings;

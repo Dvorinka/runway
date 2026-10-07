@@ -18,6 +18,15 @@ enum Command {
     Serve,
     /// Apply database migrations only.
     Migrate,
+    /// Create the first user + team and mint an API key (local bootstrap).
+    Bootstrap {
+        /// Email for the admin user.
+        #[arg(long)]
+        email: String,
+        /// Display name / username base.
+        #[arg(long)]
+        username: Option<String>,
+    },
     /// Deploy the current directory (or the linked repo).
     Deploy,
     /// Stream logs for a deployment.
@@ -58,23 +67,42 @@ async fn main() -> anyhow::Result<()> {
                 return Ok(());
             }
 
+            let crypto = runway_core::crypto::Crypto::new(&settings.encryption_key)?;
+            let bus = runway_core::events::EventBus::new();
+
             // Workers run embedded in the same process.
-            let worker_db = db.clone();
-            let worker_settings = settings.clone();
-            tokio::spawn(async move {
-                if let Err(e) = runway_worker::run(worker_db, worker_settings).await {
-                    tracing::error!(error = %e, "worker loop died");
-                }
-            });
+            {
+                let db = db.clone();
+                let settings = settings.clone();
+                let bus = bus.clone();
+                let crypto = crypto.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = runway_worker::run(db, settings, bus, crypto).await {
+                        tracing::error!(error = %e, "worker init failed");
+                    }
+                });
+            }
 
             let state = runway_api::AppState {
                 db,
                 settings: settings.clone(),
+                bus: bus.clone(),
+                crypto: crypto.clone(),
+                github: runway_core::github::GithubService::from_settings(&settings),
+                github_oauth: runway_core::github::GithubService::oauth_only(&settings),
+                logs: runway_core::logs::LogStore::new(&settings.data_dir, bus),
             };
             let app = runway_api::router(state);
             let listener = tokio::net::TcpListener::bind(&settings.listen_addr).await?;
             tracing::info!(addr = %settings.listen_addr, "runway serving");
             axum::serve(listener, app).await?;
+        }
+        Command::Bootstrap { email, username } => {
+            let settings = runway_core::Settings::from_env()?;
+            let db = runway_core::db::connect(&settings).await?;
+            runway_core::db::migrate(&db).await?;
+            let crypto = runway_core::crypto::Crypto::new(&settings.encryption_key)?;
+            bootstrap(&db, &crypto, &email, username.as_deref()).await?;
         }
         Command::Deploy => anyhow::bail!("not implemented yet (Phase 4)"),
         Command::Logs { .. } => anyhow::bail!("not implemented yet (Phase 4)"),
@@ -85,5 +113,80 @@ async fn main() -> anyhow::Result<()> {
         Command::Open => anyhow::bail!("not implemented yet (Phase 4)"),
     }
 
+    Ok(())
+}
+
+/// First-run setup: user + team + API key, printed once to stdout.
+async fn bootstrap(
+    db: &sqlx::PgPool,
+    crypto: &runway_core::crypto::Crypto,
+    email: &str,
+    username: Option<&str>,
+) -> anyhow::Result<()> {
+    use runway_core::models::{ApiKey, Team};
+    use runway_core::slugify::{slugify, token_hex};
+
+    let username = username
+        .map(|u| slugify(u, 50))
+        .filter(|u| !u.is_empty())
+        .unwrap_or_else(|| {
+            let local = email.split('@').next().unwrap_or("admin");
+            let s = slugify(local, 50);
+            if s.is_empty() {
+                format!("user-{}", token_hex(4))
+            } else {
+                s
+            }
+        });
+
+    let user_id: i64 = sqlx::query_scalar(
+        "INSERT INTO \"user\" (email, username, email_verified)
+         VALUES ($1, $2, true)
+         ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email
+         RETURNING id",
+    )
+    .bind(email)
+    .bind(&username)
+    .fetch_one(db)
+    .await?;
+
+    let has_team: Option<(String,)> =
+        sqlx::query_as("SELECT team_id FROM team_member WHERE user_id = $1 LIMIT 1")
+            .bind(user_id)
+            .fetch_optional(db)
+            .await?;
+    if has_team.is_none() {
+        let team = Team::new(&format!("{username}'s team"), user_id);
+        sqlx::query("INSERT INTO team (id, name, created_by_user_id) VALUES ($1,$2,$3)")
+            .bind(&team.id)
+            .bind(&team.name)
+            .bind(user_id)
+            .execute(db)
+            .await?;
+        runway_core::models::Project::assign_team_slug(db, &team).await?;
+        sqlx::query("INSERT INTO team_member (team_id, user_id, role) VALUES ($1,$2,'owner')")
+            .bind(&team.id)
+            .bind(user_id)
+            .execute(db)
+            .await?;
+        sqlx::query("UPDATE \"user\" SET default_team_id = $1 WHERE id = $2")
+            .bind(&team.id)
+            .bind(user_id)
+            .execute(db)
+            .await?;
+    }
+
+    let (raw, hash) = ApiKey::generate();
+    sqlx::query("INSERT INTO api_key (id, user_id, name, token) VALUES ($1,$2,'bootstrap',$3)")
+        .bind(token_hex(16))
+        .bind(user_id)
+        .bind(&hash)
+        .execute(db)
+        .await?;
+
+    let _ = crypto;
+    println!("user_id:  {user_id}");
+    println!("api_key:  {raw}");
+    println!("(shown once — store it safely)");
     Ok(())
 }

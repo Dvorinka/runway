@@ -1,0 +1,74 @@
+# Development stack: runway + postgres + traefik.
+# Usage:  docker compose -f compose/development.yml up -d --build
+#         docker compose -f compose/development.yml exec runway runway bootstrap --email you@x.dev
+#
+# DISABLE_TLS is on for local dev (plain http on :8000, traefik on :80).
+
+services:
+  pgsql:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: runway
+      POSTGRES_PASSWORD: runway
+      POSTGRES_DB: runway
+    volumes:
+      - runway-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U runway -d runway"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  traefik:
+    image: traefik:v3.3
+    restart: unless-stopped
+    command:
+      - --api.dashboard=false
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.file.directory=/traefik
+      - --providers.file.watch=true
+      - --entrypoints.web.address=:80
+    ports:
+      - "8080:80"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - runway-data:/traefik
+    labels:
+      - traefik.enable=true
+
+  runway:
+    build: ..
+    restart: unless-stopped
+    depends_on:
+      pgsql:
+        condition: service_healthy
+    environment:
+      APP_HOSTNAME: ${APP_HOSTNAME:-runway.localhost}
+      DEPLOY_DOMAIN: ${DEPLOY_DOMAIN:-deploy.localhost}
+      DATABASE_URL: postgres://runway:runway@pgsql:5432/runway
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-key-change-me}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-dev-encryption-key-change-me}
+      DISABLE_TLS: "true"
+      RUNWAY_ENV: development
+      DATA_DIR: /home/runway/data
+      RUNWAY_LISTEN: 0.0.0.0:8000
+      # Runner containers need to reach us back via the workspace network;
+      # DOCKER_HOST can point at a socket-proxy for extra safety.
+      DOCKER_HOST: unix:///var/run/docker.sock
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      GITHUB_APP_ID: ${GITHUB_APP_ID:-}
+      GITHUB_APP_NAME: ${GITHUB_APP_NAME:-}
+      GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
+      GITHUB_APP_WEBHOOK_SECRET: ${GITHUB_APP_WEBHOOK_SECRET:-}
+    ports:
+      - "8000:8000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - runway-data:/home/runway/data
+
+volumes:
+  runway-db:
+  runway-data:

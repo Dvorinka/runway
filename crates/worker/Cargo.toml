@@ -10,10 +10,14 @@ description = "Deployment pipeline, monitor loop, cron, reconciliation"
 [dependencies]
 anyhow.workspace = true
 bollard.workspace = true
+chrono.workspace = true
+futures.workspace = true
+reqwest.workspace = true
 runway-core = { path = "../core" }
 serde.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
 tokio.workspace = true
+tokio-stream.workspace = true
 tracing.workspace = true
 uuid.workspace = true

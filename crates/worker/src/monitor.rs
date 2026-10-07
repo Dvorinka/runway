@@ -1,0 +1,272 @@
+//! Monitor loop — port of workers/monitor.py.
+//!
+//! Polls `deploy`-status deployments: probes the container's HTTP port via
+//! the workspace network (the runway container attaches itself), then
+//! enqueues finalize on success or fail on exit/timeout. Also sweeps
+//! observed_status for completed deployments.
+
+use std::collections::{HashMap, HashSet};
+use std::time::Duration;
+
+use bollard::container::InspectContainerOptions;
+use chrono::Utc;
+use serde_json::json;
+
+use runway_core::deploy::{self, edge_network_name};
+use runway_core::docker as dkr;
+use runway_core::models::Deployment;
+
+use crate::Ctx;
+
+/// deployment_id → deadline for readiness probing.
+type ProbeState = HashMap<String, chrono::DateTime<Utc>>;
+
+pub async fn run(ctx: Ctx) {
+    let interval = Duration::from_secs(ctx.settings.monitor_interval_seconds.max(1));
+    let mut ticker = tokio::time::interval(interval);
+    let mut probe_state: ProbeState = HashMap::new();
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap_or_default();
+
+    loop {
+        ticker.tick().await;
+        if let Err(e) = tick(&ctx, &http, &mut probe_state).await {
+            tracing::error!(error = %e, "monitor tick failed");
+        }
+    }
+}
+
+async fn tick(
+    ctx: &Ctx,
+    http: &reqwest::Client,
+    probe_state: &mut ProbeState,
+) -> anyhow::Result<()> {
+    // Active deployments being brought up.
+    let deploying: Vec<Deployment> = sqlx::query_as(
+        "SELECT * FROM deployment
+         WHERE status = 'deploy' AND conclusion IS NULL AND container_id IS NOT NULL",
+    )
+    .fetch_all(&ctx.db)
+    .await?;
+
+    let deploying_ids: HashSet<String> = deploying.iter().map(|d| d.id.clone()).collect();
+    probe_state.retain(|id, _| deploying_ids.contains(id));
+
+    let self_id = dkr::self_container_id();
+    let mut used_networks: HashSet<String> = HashSet::new();
+
+    for dep in &deploying {
+        let Some(container_id) = dep.container_id.clone() else {
+            continue;
+        };
+        let deadline = probe_state
+            .entry(dep.id.clone())
+            .or_insert_with(|| {
+                Utc::now()
+                    + chrono::Duration::seconds(ctx.settings.deployment_timeout_seconds as i64)
+            })
+            .to_owned();
+
+        let info = match ctx
+            .docker
+            .inspect_container(&container_id, None::<InspectContainerOptions>)
+            .await
+        {
+            Ok(i) => i,
+            Err(e) if dkr::is_not_found(&e) => {
+                enqueue_fail(ctx, &dep.id, "deploy", "container not found").await;
+                continue;
+            }
+            Err(e) => {
+                tracing::warn!(deployment_id = dep.id, error = %e, "inspect failed");
+                continue;
+            }
+        };
+
+        let state = info.state.clone().unwrap_or_default();
+        let running = state.running.unwrap_or(false);
+        if !running {
+            let exit = state.exit_code.unwrap_or(-1);
+            ctx.logs
+                .info(&dep.id, &format!("Container exited (code {exit})"))
+                .await;
+            enqueue_fail(
+                ctx,
+                &dep.id,
+                "deploy",
+                &format!("container exited (code {exit})"),
+            )
+            .await;
+            continue;
+        }
+
+        // Probe on the workspace network (cross-team isolation lives there;
+        // edge is traefik-facing only).
+        let ws_network = dkr::container_label(&info, "runway.workspace_network");
+        let edge = dkr::container_label(&info, "runway.edge_network")
+            .unwrap_or_else(|| edge_network_name(&dep.id));
+        used_networks.insert(edge);
+
+        if let Some(net) = ws_network.clone() {
+            used_networks.insert(net.clone());
+            if let Some(self_id) = self_id.as_deref() {
+                let _ = dkr::connect_to_network(&ctx.docker, Some(self_id), Some(&net)).await;
+            }
+        }
+
+        let networks = info
+            .network_settings
+            .as_ref()
+            .and_then(|ns| ns.networks.as_ref())
+            .cloned()
+            .unwrap_or_default();
+        let ip = ws_network
+            .as_ref()
+            .and_then(|net| networks.get(net))
+            .and_then(|ep| ep.ip_address.clone())
+            .filter(|ip| !ip.is_empty());
+
+        let Some(ip) = ip else { continue };
+        let port = dep.deployment_port();
+
+        let url = format!("http://{ip}:{port}/");
+        let ready = http.get(&url).send().await.is_ok();
+        if ready {
+            ctx.logs.info(&dep.id, "Application is ready").await;
+            deploy::enqueue(
+                &ctx.db,
+                "finalize_deployment",
+                json!({ "deployment_id": dep.id }),
+                0,
+            )
+            .await?;
+            // Move status forward so we don't enqueue twice before the
+            // finalize job runs.
+            deploy::update_status(
+                &ctx.db,
+                &ctx.bus,
+                &dep.id,
+                Some("finalize"),
+                None,
+                None,
+                None,
+            )
+            .await?;
+            probe_state.remove(&dep.id);
+        } else if Utc::now() > deadline {
+            ctx.logs
+                .info(&dep.id, "Timed out waiting for app readiness")
+                .await;
+            enqueue_fail(
+                ctx,
+                &dep.id,
+                "deploy",
+                &format!(
+                    "app did not become ready within {}s",
+                    ctx.settings.deployment_timeout_seconds
+                ),
+            )
+            .await;
+            probe_state.remove(&dep.id);
+        }
+    }
+
+    // Detach the probe (us) from workspace networks nothing uses.
+    if let Some(self_id) = &self_id {
+        detach_from_unused(ctx, self_id, &used_networks).await;
+    }
+
+    // Observed-state sweep for running containers (reconcile-lite; the
+    // full reconciler runs on a slower cadence in reconcile.rs).
+    let running: Vec<Deployment> = sqlx::query_as(
+        "SELECT * FROM deployment
+         WHERE container_status = 'running' AND conclusion = 'succeeded'
+           AND container_id IS NOT NULL",
+    )
+    .fetch_all(&ctx.db)
+    .await?;
+    for dep in running {
+        let Some(cid) = dep.container_id.clone() else {
+            continue;
+        };
+        let (observed, exit_code) = match ctx
+            .docker
+            .inspect_container(&cid, None::<InspectContainerOptions>)
+            .await
+        {
+            Ok(info) => {
+                let s = info.state.unwrap_or_default();
+                let status = if s.running.unwrap_or(false) {
+                    "running"
+                } else if s.paused.unwrap_or(false) {
+                    "paused"
+                } else if s.dead.unwrap_or(false) {
+                    "dead"
+                } else {
+                    "exited"
+                };
+                (status, s.exit_code)
+            }
+            Err(e) if dkr::is_not_found(&e) => ("not_found", None),
+            Err(_) => continue,
+        };
+        sqlx::query(
+            "UPDATE deployment SET observed_status = $1, observed_exit_code = $2,
+             observed_at = now(), observed_last_seen_at = now() WHERE id = $3",
+        )
+        .bind(observed)
+        .bind(exit_code)
+        .bind(&dep.id)
+        .execute(&ctx.db)
+        .await?;
+    }
+    Ok(())
+}
+
+async fn enqueue_fail(ctx: &Ctx, deployment_id: &str, status: &str, reason: &str) {
+    let _ = deploy::enqueue(
+        &ctx.db,
+        "fail_deployment",
+        json!({ "deployment_id": deployment_id, "status": status, "reason": reason }),
+        0,
+    )
+    .await;
+    // Guard against double-processing while the job is queued.
+    let _ =
+        sqlx::query("UPDATE deployment SET status = 'fail' WHERE id = $1 AND conclusion IS NULL")
+            .bind(deployment_id)
+            .execute(&ctx.db)
+            .await;
+}
+
+/// Disconnect our own container from workspace networks no deployment uses.
+async fn detach_from_unused(ctx: &Ctx, self_id: &str, used: &HashSet<String>) {
+    let Ok(info) = ctx
+        .docker
+        .inspect_container(self_id, None::<InspectContainerOptions>)
+        .await
+    else {
+        return;
+    };
+    let Some(networks) = info
+        .network_settings
+        .as_ref()
+        .and_then(|ns| ns.networks.as_ref())
+    else {
+        return;
+    };
+    for name in networks.keys() {
+        if name.starts_with(deploy::WORKSPACE_NETWORK_PREFIX) && !used.contains(name) {
+            // Only detach when no deployment remains on it.
+            match dkr::network_has_deployments(&ctx.docker, name).await {
+                Ok(true) => continue,
+                _ => {
+                    let _ =
+                        dkr::disconnect_from_network(&ctx.docker, Some(self_id), Some(name)).await;
+                }
+            }
+        }
+    }
+}

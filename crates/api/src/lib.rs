@@ -3,20 +3,112 @@
 //! Serves the REST API, the React SPA (static files), SSE streams for
 //! deployment status/logs, git provider webhooks, and the MCP endpoint.
 
-use axum::{routing::get, Json, Router};
-use serde_json::json;
-use sqlx::PgPool;
+pub mod auth;
+pub mod error;
+pub mod routes;
+pub mod state;
 
-#[derive(Clone)]
-pub struct AppState {
-    pub db: PgPool,
-    pub settings: runway_core::Settings,
-}
+use axum::routing::{delete, get, post};
+use axum::{Json, Router};
+use serde_json::json;
+
+pub use state::AppState;
 
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
-        // Phase 1+: /api/v1/*, /api/github/webhook, /api/deploy, /api/mcp, SPA fallback
+        // Auth
+        .route("/api/auth/github", get(routes::auth::github_login))
+        .route(
+            "/api/auth/github/callback",
+            get(routes::auth::github_callback),
+        )
+        .route("/api/auth/logout", post(routes::auth::logout))
+        .route("/api/auth/me", get(routes::auth::me))
+        // GitHub integration
+        .route("/api/github/webhook", post(routes::github::webhook))
+        .route(
+            "/api/v1/github/installations",
+            get(routes::github::installations),
+        )
+        .route(
+            "/api/v1/github/installations/{id}/repos",
+            get(routes::github::installation_repos),
+        )
+        // Projects
+        .route(
+            "/api/v1/projects",
+            get(routes::projects::list).post(routes::projects::create),
+        )
+        .route(
+            "/api/v1/projects/{id}",
+            get(routes::projects::get).patch(routes::projects::patch),
+        )
+        .route(
+            "/api/v1/projects/{id}/env",
+            get(routes::projects::get_env).put(routes::projects::put_env),
+        )
+        .route(
+            "/api/v1/projects/{id}/deploy-tokens",
+            post(routes::projects::create_deploy_token),
+        )
+        .route(
+            "/api/v1/projects/{id}/deploy-tokens/{token_id}",
+            delete(routes::projects::delete_deploy_token),
+        )
+        .route(
+            "/api/v1/projects/{id}/domains",
+            get(routes::projects::list_domains).post(routes::projects::add_domain),
+        )
+        .route(
+            "/api/v1/projects/{id}/domains/{domain_id}/verify",
+            post(routes::projects::verify_domain),
+        )
+        .route(
+            "/api/v1/projects/{id}/domains/{domain_id}",
+            delete(routes::projects::delete_domain),
+        )
+        // Deployments
+        .route(
+            "/api/v1/projects/{id}/deployments",
+            get(routes::deployments::list).post(routes::deployments::create),
+        )
+        .route(
+            "/api/v1/projects/{id}/environments/{env_id}/rollback",
+            post(routes::deployments::rollback),
+        )
+        .route(
+            "/api/v1/projects/{id}/events",
+            get(routes::deployments::events),
+        )
+        .route("/api/v1/deployments/{id}", get(routes::deployments::get))
+        .route(
+            "/api/v1/deployments/{id}/cancel",
+            post(routes::deployments::cancel),
+        )
+        .route(
+            "/api/v1/deployments/{id}/skip",
+            post(routes::deployments::skip),
+        )
+        .route(
+            "/api/v1/deployments/{id}/redeploy",
+            post(routes::deployments::redeploy),
+        )
+        .route(
+            "/api/v1/deployments/{id}/logs",
+            get(routes::deployments::logs),
+        )
+        .route(
+            "/api/v1/deployments/{id}/logs/stream",
+            get(routes::deployments::logs_stream),
+        )
+        // API keys + deploy-token deploy
+        .route(
+            "/api/v1/keys",
+            get(routes::api::list_keys).post(routes::api::create_key),
+        )
+        .route("/api/v1/keys/{id}", delete(routes::api::revoke_key))
+        .route("/api/deploy", post(routes::api::api_deploy))
         .with_state(state)
 }
 

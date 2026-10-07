@@ -1,26 +1,69 @@
 //! runway-worker: deployment pipeline and background loops.
 //!
-//! Single-binary model: the CLI's `runway serve` spawns these loops as
-//! tokio tasks alongside the API. Postgres is the queue — deployments are
-//! claimed with `SELECT ... FOR UPDATE SKIP LOCKED`, no Redis required.
+//! Single-binary model: `runway serve` spawns these loops as tokio tasks
+//! alongside the API. Postgres is the queue — jobs are claimed with
+//! `SELECT ... FOR UPDATE SKIP LOCKED`, no Redis required.
 //!
 //! Loops:
-//! - `deploy`:  claim queued deployments -> build/run containers -> probe -> finalize.
-//! - `monitor`: re-check running containers; reconcile observed state.
-//! - `cron`:    due jobs trigger redeploys / HTTP calls.
+//! - `jobs`:    claim queued jobs -> deploy pipeline handlers.
+//! - `monitor`: probe containers in `deploy`, sweep observed state.
 
-use std::time::Duration;
+pub mod deploy;
+pub mod jobs;
+pub mod monitor;
 
+use bollard::Docker;
 use sqlx::PgPool;
 
-/// Run all worker loops until shutdown. Stubs for now — the deploy
-/// pipeline lands in Phase 1.
-pub async fn run(db: PgPool, settings: runway_core::Settings) -> anyhow::Result<()> {
-    let interval = Duration::from_secs(settings.monitor_interval_seconds.max(1));
-    tracing::info!(?interval, "worker loops started");
-    let _ = db; // jobs land with the deploy pipeline
-    loop {
-        tokio::time::sleep(interval).await;
-        // TODO(phase-1): claim queued deployments, probe running containers.
-    }
+use runway_core::crypto::Crypto;
+use runway_core::events::EventBus;
+use runway_core::github::GithubService;
+use runway_core::logs::LogStore;
+use runway_core::Settings;
+
+/// Shared worker context passed to every loop/job.
+#[derive(Clone)]
+pub struct Ctx {
+    pub db: PgPool,
+    pub settings: Settings,
+    pub docker: Docker,
+    pub crypto: Crypto,
+    pub bus: EventBus,
+    pub logs: LogStore,
+    pub github: Option<GithubService>,
+}
+
+/// Run all worker loops until shutdown.
+pub async fn run(
+    db: PgPool,
+    settings: Settings,
+    bus: EventBus,
+    crypto: Crypto,
+) -> anyhow::Result<()> {
+    let docker = runway_core::docker::connect(&settings)?;
+    let ctx = Ctx {
+        db: db.clone(),
+        settings: settings.clone(),
+        docker,
+        crypto,
+        bus: bus.clone(),
+        logs: LogStore::new(&settings.data_dir, bus),
+        github: GithubService::from_settings(&settings),
+    };
+
+    // Attach Traefik to edge networks from before a restart.
+    let startup_ctx = ctx.clone();
+    tokio::spawn(async move {
+        if let Err(e) = deploy::reconcile_edge_network(&startup_ctx, None).await {
+            tracing::warn!(error = %e, "startup edge reconcile failed");
+        }
+    });
+
+    let jobs_ctx = ctx.clone();
+    tokio::spawn(async move { jobs::run(jobs_ctx).await });
+
+    tokio::spawn(async move { monitor::run(ctx).await });
+
+    tracing::info!("worker loops started (jobs, monitor)");
+    Ok(())
 }
