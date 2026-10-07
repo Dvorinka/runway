@@ -36,7 +36,7 @@ impl GithubService {
         }
         Some(Self {
             http: reqwest::Client::new(),
-            api_base: "https://api.github.com".into(),
+            api_base: settings.github_api_url.trim_end_matches('/').into(),
             client_id: settings.github_client_id.clone().unwrap_or_default(),
             client_secret: settings.github_client_secret.clone().unwrap_or_default(),
             app_id: settings.github_app_id.clone().unwrap_or_default(),

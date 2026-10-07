@@ -114,7 +114,21 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
       (fixes devpush's unreachable-DB gap); container-assisted dir
       wipe for engine-owned files; `PGDATA=/data/pg` fix; password
       AES-GCM in config (`password_enc`)
-- [ ] Git providers: Gitea, GitLab, Bitbucket, GitHub Enterprise
+- [x] Git providers: Gitea + GitLab fully wired —
+      `*_connection` tables (AES-GCM tokens, token probe on connect,
+      upsert per base_url/workspace), connection CRUD +
+      repos/branches discovery under `/api/v1/git/{provider}/`,
+      `POST /projects` accepts `provider`+`connection_id` (repo_id
+      resolved from provider, preset auto-detect via root listing +
+      package.json), manual deploy commit resolution +
+      `start_deployment` clone via connection tokens (GIT_ASKPASS
+      against `repo_base_url`), `POST /api/gitea/webhook`
+      (X-Gitea-Signature) + `POST /api/gitlab/webhook`
+      (X-Gitlab-Token) push → deploy with the shared rules filter;
+      Bitbucket = connection CRUD + discovery only (devpush never
+      links projects to it — no deploy path); GitHub Enterprise via
+      `GITHUB_API_URL` + `repo_base_url` clone URL. Bitbucket
+      project linkage + webhook still open (parity: devpush lacks it)
 - [ ] OIDC/SSO, allowlist
 - [ ] Cron jobs (redeploy + HTTP-call mode)
 - [ ] Redirect rules UI, project export/import

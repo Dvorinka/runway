@@ -86,11 +86,17 @@ pub async fn list(user: AuthUser, State(state): State<AppState>) -> ApiResult<Re
 #[derive(Deserialize)]
 pub struct CreateProject {
     pub name: String,
-    /// GitHub repo numeric id.
-    pub repo_id: i64,
+    /// Provider: `github` (default) | `github_enterprise` | `gitea` | `gitlab`.
+    pub provider: Option<String>,
+    /// GitHub repo numeric id (github providers). Gitea/GitLab resolve
+    /// the id from `repo_full_name` via the connection.
+    pub repo_id: Option<i64>,
     /// e.g. "acme/site".
     pub repo_full_name: String,
-    pub installation_id: i64,
+    /// GitHub installation id (github providers only).
+    pub installation_id: Option<i64>,
+    /// gitea/gitlab connection id (from `POST /api/v1/git/{p}/connect`).
+    pub connection_id: Option<i64>,
     /// Production branch (default "main").
     pub branch: Option<String>,
     /// Preset slug (e.g. "nextjs"); merged into config.
@@ -104,11 +110,9 @@ pub async fn create(
     State(state): State<AppState>,
     Json(body): Json<CreateProject>,
 ) -> ApiResult<Response> {
-    let Some(gh) = &state.github else {
-        return Err(ApiError::bad_request("GitHub App is not configured"));
-    };
+    let provider = body.provider.as_deref().unwrap_or("github");
     let team_id = default_team_id(&state, &user.user).await?;
-    let branch = body.branch.unwrap_or_else(|| "main".into());
+    let branch = body.branch.clone().unwrap_or_else(|| "main".into());
 
     // Resolve the runner image up front so bad presets fail fast.
     let mut config = body.config.unwrap_or_else(|| json!({}));
@@ -137,35 +141,104 @@ pub async fn create(
         apply_preset(&mut config, preset);
     }
 
-    // Verify the repo is reachable via the installation.
-    let token = gh
-        .installation_token(&state.db, &state.crypto, body.installation_id)
-        .await
-        .map_err(|e| ApiError::bad_request(format!("installation token failed: {e}")))?;
-    let _repo = gh
-        .repository(&token, body.repo_id)
-        .await
-        .map_err(|_| ApiError::bad_request("repository not accessible via installation"))?;
+    // Verify repo access + resolve repo_id/base_url per provider.
+    let mut repo_id = body.repo_id.unwrap_or(0);
+    let mut repo_base_url = "https://github.com".to_string();
+    let mut gitea_connection_id: Option<i64> = None;
+    let mut gitlab_connection_id: Option<i64> = None;
+    let mut root_files: Vec<String> = Vec::new();
+    let mut package_json: Option<String> = None;
+
+    match provider {
+        "github" | "github_enterprise" => {
+            let Some(gh) = &state.github else {
+                return Err(ApiError::bad_request("GitHub App is not configured"));
+            };
+            let installation_id = body.installation_id.ok_or_else(|| {
+                ApiError::bad_request("installation_id required for github projects")
+            })?;
+            let token = gh
+                .installation_token(&state.db, &state.crypto, installation_id)
+                .await
+                .map_err(|e| ApiError::bad_request(format!("installation token failed: {e}")))?;
+            let repo = gh
+                .repository(&token, repo_id)
+                .await
+                .map_err(|_| ApiError::bad_request("repository not accessible via installation"))?;
+            if provider == "github_enterprise" {
+                repo_base_url = state
+                    .settings
+                    .github_api_url
+                    .trim_end_matches("/api/v3")
+                    .to_string();
+                let _ = repo;
+            }
+            if body.preset.is_none() && config.get("runner").is_none() {
+                if let Ok(files) = gh.repo_files(&token, &body.repo_full_name, &branch).await {
+                    root_files = files;
+                    if root_files.iter().any(|f| f == "package.json") {
+                        package_json = gh
+                            .file_text(&token, &body.repo_full_name, "package.json")
+                            .await
+                            .ok()
+                            .flatten();
+                    }
+                }
+            }
+        }
+        p @ ("gitea" | "gitlab") => {
+            let conn_id = body
+                .connection_id
+                .ok_or_else(|| ApiError::bad_request("connection_id required"))?;
+            let conn = runway_core::git_providers::connection(&state.db, &state.crypto, p, conn_id)
+                .await?
+                .ok_or_else(|| ApiError::bad_request("connection not found"))?;
+            let client = runway_core::git_providers::Client::new(p, conn);
+            let repo = client
+                .repository(&body.repo_full_name)
+                .await
+                .map_err(|_| ApiError::bad_request("repository not accessible via connection"))?;
+            repo_id = repo["id"].as_i64().unwrap_or(0);
+            repo_base_url = client.conn.base_url.clone();
+            if p == "gitea" {
+                gitea_connection_id = Some(conn_id);
+            } else {
+                gitlab_connection_id = Some(conn_id);
+            }
+            if body.preset.is_none() && config.get("runner").is_none() {
+                if let Ok(files) = client.list_root_files(&body.repo_full_name, &branch).await {
+                    let pj = if files.iter().any(|f| f == "package.json") {
+                        let (owner, name) =
+                            body.repo_full_name.rsplit_once('/').unwrap_or(("", ""));
+                        client
+                            .file_text(owner, name, "package.json", &branch)
+                            .await
+                            .ok()
+                            .flatten()
+                    } else {
+                        None
+                    };
+                    package_json = pj;
+                    root_files = files;
+                }
+            }
+        }
+        _ => {
+            return Err(ApiError::bad_request(format!(
+                "provider '{provider}' not supported"
+            )))
+        }
+    }
 
     // Auto-detect framework when neither preset nor explicit runner given.
-    if body.preset.is_none() && config.get("runner").is_none() {
-        if let Ok(files) = gh.repo_files(&token, &body.repo_full_name, &branch).await {
-            let refs: Vec<&str> = files.iter().map(String::as_str).collect();
-            let pj = if refs.contains(&"package.json") {
-                gh.file_text(&token, &body.repo_full_name, "package.json")
-                    .await
-                    .ok()
-                    .flatten()
-            } else {
-                None
-            };
-            if let Some(preset) = runway_core::presets::detect(&refs, pj.as_deref()) {
-                apply_preset(&mut config, preset);
-                runway_core::presets::adjust_for_pm(
-                    &mut config,
-                    runway_core::presets::package_manager(&refs),
-                );
-            }
+    if body.preset.is_none() && config.get("runner").is_none() && !root_files.is_empty() {
+        let refs: Vec<&str> = root_files.iter().map(String::as_str).collect();
+        if let Some(preset) = runway_core::presets::detect(&refs, package_json.as_deref()) {
+            apply_preset(&mut config, preset);
+            runway_core::presets::adjust_for_pm(
+                &mut config,
+                runway_core::presets::package_manager(&refs),
+            );
         }
     }
 
@@ -174,19 +247,23 @@ pub async fn create(
     let project: Project = sqlx::query_as(
         "INSERT INTO project (
             id, team_id, name, description, repo_provider, repo_id, repo_full_name,
-            repo_base_url, repo_branch, github_installation_id, config, environments,
-            created_by_user_id
-        ) VALUES ($1,$2,$3,'',$4,$5,$6,'https://github.com',$7,$8,$9,$10,$11)
+            repo_base_url, repo_branch, github_installation_id,
+            gitea_connection_id, gitlab_connection_id,
+            config, environments, created_by_user_id
+        ) VALUES ($1,$2,$3,'',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
         RETURNING *",
     )
     .bind(&id)
     .bind(&team_id)
     .bind(&body.name)
-    .bind("github")
-    .bind(body.repo_id)
+    .bind(provider)
+    .bind(repo_id)
     .bind(&body.repo_full_name)
+    .bind(&repo_base_url)
     .bind(&branch)
     .bind(body.installation_id)
+    .bind(gitea_connection_id)
+    .bind(gitlab_connection_id)
     .bind(&config)
     .bind(&environments)
     .bind(user.user.id)

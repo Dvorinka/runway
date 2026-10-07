@@ -2,5 +2,6 @@
 **/*.rs.bk
 .env
 data/
+data-test/
 node_modules/
 dist/

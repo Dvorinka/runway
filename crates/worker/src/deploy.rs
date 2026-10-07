@@ -157,9 +157,39 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
                      > /tmp/runway-git-askpass && \
                      chmod 700 /tmp/runway-git-askpass && \
                      export GIT_ASKPASS=/tmp/runway-git-askpass GIT_TERMINAL_PROMPT=0 && \
-                     git fetch -q --depth 1 https://github.com/{repo}.git {sha} && \
+                     git fetch -q --depth 1 {base}/{repo}.git {sha} && \
                      git checkout -q FETCH_HEAD && \
                      unset GIT_ASKPASS GIT_TERMINAL_PROMPT RUNWAY_GITHUB_TOKEN && \
+                     rm -f /tmp/runway-git-askpass",
+                    base = deployment.repo_base_url.trim_end_matches('/'),
+                    repo = deployment.repo_full_name,
+                    sha = deployment.commit_sha,
+                ));
+            }
+            p @ ("gitea" | "gitlab") => {
+                // Port of devpush's gitea clone arm — token connection,
+                // askpass injection, `<base_url>/<full_name>.git`.
+                let conn_id = if p == "gitea" {
+                    project.gitea_connection_id
+                } else {
+                    project.gitlab_connection_id
+                }
+                .ok_or_else(|| anyhow::anyhow!("project has no {p} connection"))?;
+                let conn = runway_core::git_providers::connection(&ctx.db, &ctx.crypto, p, conn_id)
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!("{p} connection {conn_id} not found"))?;
+                env.push(format!("RUNWAY_GIT_TOKEN={}", conn.token));
+                let base = conn.base_url.trim_end_matches('/');
+                commands.push(format!(
+                    "git init -q && \
+                     printf '%s\\n' '#!/bin/sh' \
+                     'case \"$1\" in *Username*) echo \"x-access-token\";; *) echo \"$RUNWAY_GIT_TOKEN\";; esac' \
+                     > /tmp/runway-git-askpass && \
+                     chmod 700 /tmp/runway-git-askpass && \
+                     export GIT_ASKPASS=/tmp/runway-git-askpass GIT_TERMINAL_PROMPT=0 && \
+                     git fetch -q --depth 1 {base}/{repo}.git {sha} && \
+                     git checkout -q FETCH_HEAD && \
+                     unset GIT_ASKPASS GIT_TERMINAL_PROMPT RUNWAY_GIT_TOKEN && \
                      rm -f /tmp/runway-git-askpass",
                     repo = deployment.repo_full_name,
                     sha = deployment.commit_sha,

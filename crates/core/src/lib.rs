@@ -13,6 +13,7 @@ pub mod deploy;
 pub mod docker;
 pub mod error;
 pub mod events;
+pub mod git_providers;
 pub mod github;
 pub mod logs;
 pub mod mail;

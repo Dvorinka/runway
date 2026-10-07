@@ -137,7 +137,8 @@ pub async fn create(
         .into_response())
 }
 
-/// Shared: resolve latest commit via GitHub and create+enqueue a deployment.
+/// Shared: resolve latest commit via the repo's provider and
+/// create+enqueue a deployment.
 pub async fn trigger_deployment(
     state: &AppState,
     project: &Project,
@@ -145,36 +146,7 @@ pub async fn trigger_deployment(
     trigger: &str,
     user_id: Option<i64>,
 ) -> ApiResult<Deployment> {
-    let Some(gh) = &state.github else {
-        return Err(ApiError::bad_request("GitHub App is not configured"));
-    };
-    let installation_id = project
-        .github_installation_id
-        .ok_or_else(|| ApiError::bad_request("project has no GitHub installation"))?;
-    let token = gh
-        .installation_token(&state.db, &state.crypto, installation_id)
-        .await
-        .map_err(ApiError::internal)?;
-    let commit = gh
-        .latest_commit(&token, &project.repo_full_name, branch)
-        .await
-        .map_err(|_| ApiError::bad_request(format!("branch '{branch}' not found on remote")))?;
-
-    let info = CommitInfo {
-        sha: commit["sha"].as_str().unwrap_or_default().to_string(),
-        message: commit["commit"]["message"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string(),
-        author: commit["commit"]["author"]["name"]
-            .as_str()
-            .or_else(|| commit["author"]["login"].as_str())
-            .unwrap_or_default()
-            .to_string(),
-        timestamp: commit["commit"]["author"]["date"]
-            .as_str()
-            .map(String::from),
-    };
+    let info = resolve_commit(state, project, branch).await?;
     if info.sha.is_empty() {
         return Err(ApiError::bad_request("could not resolve commit"));
     }
@@ -191,6 +163,84 @@ pub async fn trigger_deployment(
         None,
     )
     .await?)
+}
+
+/// Resolve `branch`'s head commit through the project's provider —
+/// GitHub installation tokens for github/GHE, stored connection tokens
+/// for gitea/gitlab.
+async fn resolve_commit(
+    state: &AppState,
+    project: &Project,
+    branch: &str,
+) -> ApiResult<CommitInfo> {
+    match project.repo_provider.as_str() {
+        "github" | "github_enterprise" => {
+            let Some(gh) = &state.github else {
+                return Err(ApiError::bad_request("GitHub App is not configured"));
+            };
+            let installation_id = project
+                .github_installation_id
+                .ok_or_else(|| ApiError::bad_request("project has no GitHub installation"))?;
+            let token = gh
+                .installation_token(&state.db, &state.crypto, installation_id)
+                .await
+                .map_err(ApiError::internal)?;
+            let commit = gh
+                .latest_commit(&token, &project.repo_full_name, branch)
+                .await
+                .map_err(|_| {
+                    ApiError::bad_request(format!("branch '{branch}' not found on remote"))
+                })?;
+            Ok(CommitInfo {
+                sha: commit["sha"].as_str().unwrap_or_default().to_string(),
+                message: commit["commit"]["message"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+                author: commit["commit"]["author"]["name"]
+                    .as_str()
+                    .or_else(|| commit["author"]["login"].as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                timestamp: commit["commit"]["author"]["date"]
+                    .as_str()
+                    .map(String::from),
+            })
+        }
+        p @ ("gitea" | "gitlab") => {
+            let conn_id = if p == "gitea" {
+                project.gitea_connection_id
+            } else {
+                project.gitlab_connection_id
+            }
+            .ok_or_else(|| ApiError::bad_request(format!("project has no {p} connection")))?;
+            let conn = runway_core::git_providers::connection(&state.db, &state.crypto, p, conn_id)
+                .await?
+                .ok_or_else(|| ApiError::bad_request(format!("{p} connection not found")))?;
+            let (owner, repo) = project
+                .repo_full_name
+                .rsplit_once('/')
+                .ok_or_else(|| ApiError::bad_request("invalid repo_full_name"))?;
+            let commit = runway_core::git_providers::Client::new(p, conn)
+                .latest_commit(owner, repo, branch)
+                .await
+                .map_err(|_| {
+                    ApiError::bad_request(format!("branch '{branch}' not found on remote"))
+                })?
+                .ok_or_else(|| {
+                    ApiError::bad_request(format!("branch '{branch}' not found on remote"))
+                })?;
+            Ok(CommitInfo {
+                sha: commit.sha,
+                message: commit.message,
+                author: commit.author,
+                timestamp: commit.timestamp,
+            })
+        }
+        other => Err(ApiError::bad_request(format!(
+            "repo provider '{other}' not supported"
+        ))),
+    }
 }
 
 pub async fn get(

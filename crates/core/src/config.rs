@@ -66,6 +66,13 @@ pub struct Settings {
     pub github_app_name: Option<String>,
     pub github_app_private_key: Option<String>,
     pub github_app_webhook_secret: Option<String>,
+    /// GitHub API base — override for GitHub Enterprise
+    /// (`https://ghe.example.com/api/v3`).
+    pub github_api_url: String,
+    /// Gitea/GitLab webhook secrets — verify X-Gitea-Signature /
+    /// X-Gitlab-Token on inbound push events.
+    pub gitea_webhook_secret: Option<String>,
+    pub gitlab_webhook_secret: Option<String>,
     /// Session cookie name.
     pub session_cookie: String,
     /// Session lifetime in seconds.
@@ -140,6 +147,9 @@ impl Settings {
             github_app_name: opt("GITHUB_APP_NAME"),
             github_app_private_key: opt("GITHUB_APP_PRIVATE_KEY"),
             github_app_webhook_secret: opt("GITHUB_APP_WEBHOOK_SECRET"),
+            github_api_url: env_or("GITHUB_API_URL", "https://api.github.com"),
+            gitea_webhook_secret: opt("GITEA_WEBHOOK_SECRET"),
+            gitlab_webhook_secret: opt("GITLAB_WEBHOOK_SECRET"),
             session_cookie: env_or("SESSION_COOKIE", "runway_session"),
             session_max_age: env_u64("SESSION_MAX_AGE", 60 * 60 * 24 * 30),
             smtp_host: opt("SMTP_HOST"),
@@ -254,6 +264,9 @@ pub(crate) fn test_settings() -> Settings {
         github_app_name: None,
         github_app_private_key: None,
         github_app_webhook_secret: None,
+        github_api_url: "https://api.github.com".into(),
+        gitea_webhook_secret: None,
+        gitlab_webhook_secret: None,
         session_cookie: "runway_session".into(),
         session_max_age: 2592000,
         smtp_host: None,

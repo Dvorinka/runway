@@ -34,6 +34,35 @@ pub fn router(state: AppState) -> Router {
         )
         // GitHub integration
         .route("/api/github/webhook", post(routes::github::webhook))
+        // Other git providers — connection CRUD + inbound webhooks
+        .route(
+            "/api/gitea/webhook",
+            post(routes::git_providers::gitea_webhook),
+        )
+        .route(
+            "/api/gitlab/webhook",
+            post(routes::git_providers::gitlab_webhook),
+        )
+        .route(
+            "/api/v1/git/{provider}/connect",
+            post(routes::git_providers::connect),
+        )
+        .route(
+            "/api/v1/git/{provider}/connections",
+            get(routes::git_providers::list_connections),
+        )
+        .route(
+            "/api/v1/git/{provider}/connections/{conn_id}",
+            delete(routes::git_providers::delete_connection),
+        )
+        .route(
+            "/api/v1/git/{provider}/connections/{conn_id}/repos",
+            get(routes::git_providers::list_repos),
+        )
+        .route(
+            "/api/v1/git/{provider}/connections/{conn_id}/branches/{*full}",
+            get(routes::git_providers::list_branches),
+        )
         .route(
             "/api/v1/github/installations",
             get(routes::github::installations),
