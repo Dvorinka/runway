@@ -1,0 +1,19 @@
+[package]
+name = "runway-worker"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Deployment pipeline, monitor loop, cron, reconciliation"
+
+[dependencies]
+anyhow.workspace = true
+bollard.workspace = true
+runway-core = { path = "../core" }
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uuid.workspace = true
