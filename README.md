@@ -1,5 +1,8 @@
 # Runway
 
+[![ci](https://github.com/Dvorinka/runway/actions/workflows/ci.yml/badge.svg)](https://github.com/Dvorinka/runway/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 An open-source, self-hosted deployment platform — the Vercel experience without the meter.
 
 Git-push deploys, preview URLs, instant rollback, custom domains, and real HTTPS on any box — including machines behind CGNAT with no public IP, via built-in Cloudflare Tunnel. One binary, one `runway` CLI.

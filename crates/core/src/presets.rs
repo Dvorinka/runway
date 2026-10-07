@@ -385,4 +385,35 @@ mod tests {
         assert!(file_matches(&files, "*/requirements.txt"));
         assert!(!file_matches(&files, "requirements.txt"));
     }
+
+    #[test]
+    fn runner_overrides() {
+        let dir = std::env::temp_dir().join(format!("runway-preset-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let d = dir.to_str().unwrap();
+
+        // No file → static mapping.
+        assert_eq!(
+            runner_image_resolved(d, "node-20").as_deref(),
+            Some("ghcr.io/devpushhq/runner-node-20:1.0.1")
+        );
+
+        std::fs::write(
+            dir.join("runner-overrides.json"),
+            r#"{"runners": {
+                "node-20": {"image": "registry.local/node:20"},
+                "bun-1.3": {"enabled": false}
+            }}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            runner_image_resolved(d, "node-20").as_deref(),
+            Some("registry.local/node:20")
+        );
+        assert_eq!(runner_image_resolved(d, "bun-1.3"), None);
+        // Unmentioned slugs pass through.
+        assert!(runner_image_resolved(d, "static-web").is_some());
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

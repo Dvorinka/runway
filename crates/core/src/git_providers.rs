@@ -371,6 +371,38 @@ pub struct Commit {
     pub timestamp: Option<String>,
 }
 
+fn normalize_commit(provider: &str, c: &Value) -> Commit {
+    match provider {
+        "gitlab" => Commit {
+            sha: c["id"].as_str().unwrap_or_default().into(),
+            message: c["message"].as_str().unwrap_or_default().into(),
+            author: c["author_name"].as_str().unwrap_or_default().into(),
+            timestamp: c["created_at"].as_str().map(String::from),
+        },
+        "bitbucket" => Commit {
+            sha: c["hash"].as_str().unwrap_or_default().into(),
+            message: c["message"].as_str().unwrap_or_default().into(),
+            author: c["author"]["user"]["nickname"]
+                .as_str()
+                .or_else(|| c["author"]["raw"].as_str())
+                .unwrap_or_default()
+                .into(),
+            timestamp: c["date"].as_str().map(String::from),
+        },
+        _ => Commit {
+            // gitea matches the GitHub shape already
+            sha: c["sha"].as_str().unwrap_or_default().into(),
+            message: c["commit"]["message"].as_str().unwrap_or_default().into(),
+            author: c["commit"]["author"]["name"]
+                .as_str()
+                .or_else(|| c["author"]["login"].as_str())
+                .unwrap_or_default()
+                .into(),
+            timestamp: c["commit"]["author"]["date"].as_str().map(String::from),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -424,37 +456,5 @@ mod tests {
                                 "commit":{"message":"m","author":{"name":"a","date":"t"}}}),
         );
         assert_eq!((gt.sha.as_str(), gt.author.as_str()), ("s", "a"));
-    }
-}
-
-fn normalize_commit(provider: &str, c: &Value) -> Commit {
-    match provider {
-        "gitlab" => Commit {
-            sha: c["id"].as_str().unwrap_or_default().into(),
-            message: c["message"].as_str().unwrap_or_default().into(),
-            author: c["author_name"].as_str().unwrap_or_default().into(),
-            timestamp: c["created_at"].as_str().map(String::from),
-        },
-        "bitbucket" => Commit {
-            sha: c["hash"].as_str().unwrap_or_default().into(),
-            message: c["message"].as_str().unwrap_or_default().into(),
-            author: c["author"]["user"]["nickname"]
-                .as_str()
-                .or_else(|| c["author"]["raw"].as_str())
-                .unwrap_or_default()
-                .into(),
-            timestamp: c["date"].as_str().map(String::from),
-        },
-        _ => Commit {
-            // gitea matches the GitHub shape already
-            sha: c["sha"].as_str().unwrap_or_default().into(),
-            message: c["commit"]["message"].as_str().unwrap_or_default().into(),
-            author: c["commit"]["author"]["name"]
-                .as_str()
-                .or_else(|| c["author"]["login"].as_str())
-                .unwrap_or_default()
-                .into(),
-            timestamp: c["commit"]["author"]["date"].as_str().map(String::from),
-        },
     }
 }
