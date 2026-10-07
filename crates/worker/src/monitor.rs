@@ -56,6 +56,9 @@ async fn tick(
 
     let self_id = dkr::self_container_id();
     let mut used_networks: HashSet<String> = HashSet::new();
+    // Remote-node docker clients + node rows, resolved lazily per tick.
+    let mut node_clients: HashMap<String, bollard::Docker> = HashMap::new();
+    let mut node_hosts: HashMap<String, String> = HashMap::new();
 
     for dep in &deploying {
         let Some(container_id) = dep.container_id.clone() else {
@@ -69,8 +72,30 @@ async fn tick(
             })
             .to_owned();
 
-        let info = match ctx
-            .docker
+        // Remote deployments live on their node's daemon.
+        let node_client = match dep.remote_node_id.as_deref() {
+            Some(nid) => {
+                if !node_clients.contains_key(nid) {
+                    if let Some(c) = dkr::node_client(&ctx.db, nid).await {
+                        node_clients.insert(nid.to_string(), c);
+                    }
+                }
+                if !node_hosts.contains_key(nid) {
+                    if let Some(h) = node_host(&ctx.db, nid).await {
+                        node_hosts.insert(nid.to_string(), h);
+                    }
+                }
+                node_clients.get(nid)
+            }
+            None => None,
+        };
+        let docker = node_client.unwrap_or(&ctx.docker);
+        if dep.remote_node_id.is_some() && node_client.is_none() {
+            // Node gone/unreachable — don't probe local and misjudge.
+            continue;
+        }
+
+        let info = match docker
             .inspect_container(&container_id, None::<InspectContainerOptions>)
             .await
         {
@@ -102,36 +127,47 @@ async fn tick(
             continue;
         }
 
-        // Probe on the workspace network (cross-team isolation lives there;
-        // edge is traefik-facing only).
-        let ws_network = dkr::container_label(&info, "runway.workspace_network");
-        let edge = dkr::container_label(&info, "runway.edge_network")
-            .unwrap_or_else(|| edge_network_name(&dep.id));
-        used_networks.insert(edge);
+        let url = if let Some(nid) = dep.remote_node_id.as_deref() {
+            // Remote: probe the published node port — the same address
+            // Traefik will load-balance to. Container IPs on a remote
+            // daemon aren't reachable from here.
+            let Some(host) = node_hosts.get(nid) else {
+                continue;
+            };
+            let Some(port) = dep.remote_port else {
+                continue;
+            };
+            format!("http://{host}:{port}/")
+        } else {
+            // Probe on the workspace network (cross-team isolation lives
+            // there; edge is traefik-facing only).
+            let ws_network = dkr::container_label(&info, "runway.workspace_network");
+            let edge = dkr::container_label(&info, "runway.edge_network")
+                .unwrap_or_else(|| edge_network_name(&dep.id));
+            used_networks.insert(edge);
 
-        if let Some(net) = ws_network.clone() {
-            used_networks.insert(net.clone());
-            if let Some(self_id) = self_id.as_deref() {
-                let _ = dkr::connect_to_network(&ctx.docker, Some(self_id), Some(&net)).await;
+            if let Some(net) = ws_network.clone() {
+                used_networks.insert(net.clone());
+                if let Some(self_id) = self_id.as_deref() {
+                    let _ = dkr::connect_to_network(&ctx.docker, Some(self_id), Some(&net)).await;
+                }
             }
-        }
 
-        let networks = info
-            .network_settings
-            .as_ref()
-            .and_then(|ns| ns.networks.as_ref())
-            .cloned()
-            .unwrap_or_default();
-        let ip = ws_network
-            .as_ref()
-            .and_then(|net| networks.get(net))
-            .and_then(|ep| ep.ip_address.clone())
-            .filter(|ip| !ip.is_empty());
+            let networks = info
+                .network_settings
+                .as_ref()
+                .and_then(|ns| ns.networks.as_ref())
+                .cloned()
+                .unwrap_or_default();
+            let ip = ws_network
+                .as_ref()
+                .and_then(|net| networks.get(net))
+                .and_then(|ep| ep.ip_address.clone())
+                .filter(|ip| !ip.is_empty());
 
-        let Some(ip) = ip else { continue };
-        let port = dep.serve_port();
-
-        let url = format!("http://{ip}:{port}/");
+            let Some(ip) = ip else { continue };
+            format!("http://{ip}:{}/", dep.serve_port())
+        };
         let ready = http.get(&url).send().await.is_ok();
         if ready {
             ctx.logs.info(&dep.id, "Application is ready").await;
@@ -191,8 +227,21 @@ async fn tick(
         let Some(cid) = dep.container_id.clone() else {
             continue;
         };
-        let (observed, exit_code) = match ctx
-            .docker
+        let docker = match dep.remote_node_id.as_deref() {
+            Some(nid) => {
+                if !node_clients.contains_key(nid) {
+                    if let Some(c) = dkr::node_client(&ctx.db, nid).await {
+                        node_clients.insert(nid.to_string(), c);
+                    }
+                }
+                match node_clients.get(nid) {
+                    Some(c) => c,
+                    None => continue,
+                }
+            }
+            None => &ctx.docker,
+        };
+        let (observed, exit_code) = match docker
             .inspect_container(&cid, None::<InspectContainerOptions>)
             .await
         {
@@ -269,4 +318,14 @@ async fn detach_from_unused(ctx: &Ctx, self_id: &str, used: &HashSet<String>) {
             }
         }
     }
+}
+
+/// Node `host` (the address Traefik/monitor reach) for a remote node.
+async fn node_host(db: &sqlx::PgPool, node_id: &str) -> Option<String> {
+    sqlx::query_scalar("SELECT host FROM remote_node WHERE id = $1")
+        .bind(node_id)
+        .fetch_optional(db)
+        .await
+        .ok()
+        .flatten()
 }

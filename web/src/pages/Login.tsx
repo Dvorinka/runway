@@ -1,11 +1,17 @@
+import { api } from "@/lib/api";
 import { Button, Card, Input } from "@/components/ui";
-import { Github } from "lucide-react";
-import { useState } from "react";
+import { Github, KeyRound } from "lucide-react";
+import { useEffect, useState } from "react";
 
 export default function Login() {
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState(false);
   const [error, setError] = useState("");
+  const [oidc, setOidc] = useState<{ enabled: boolean; display_name: string | null } | null>(null);
+
+  useEffect(() => {
+    api.oidcInfo().then(setOidc).catch(() => {});
+  }, []);
 
   async function magicLink(e: React.FormEvent) {
     e.preventDefault();
@@ -34,6 +40,14 @@ export default function Login() {
             <Github className="h-4 w-4" /> Continue with GitHub
           </Button>
         </a>
+
+        {oidc?.enabled && (
+          <a href="/api/auth/oidc" className="mt-2 block">
+            <Button variant="outline" className="w-full">
+              <KeyRound className="h-4 w-4" /> Continue with {oidc.display_name || "SSO"}
+            </Button>
+          </a>
+        )}
 
         <div className="my-5 flex items-center gap-3 text-xs text-muted-foreground">
           <div className="h-px flex-1 bg-border" /> or <div className="h-px flex-1 bg-border" />

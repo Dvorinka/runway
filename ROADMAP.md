@@ -125,10 +125,11 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
       against `repo_base_url`), `POST /api/gitea/webhook`
       (X-Gitea-Signature) + `POST /api/gitlab/webhook`
       (X-Gitlab-Token) push → deploy with the shared rules filter;
-      Bitbucket = connection CRUD + discovery only (devpush never
-      links projects to it — no deploy path); GitHub Enterprise via
-      `GITHUB_API_URL` + `repo_base_url` clone URL. Bitbucket
-      project linkage + webhook still open (parity: devpush lacks it)
+      Bitbucket = full project linkage beyond devpush parity —
+      `bitbucket_connection_id` on project, create verifies repo access
+      and resolves repo uuid, commit resolution + clone via
+      workspace-username app password against `bitbucket.org`;
+      GitHub Enterprise via `GITHUB_API_URL` + `repo_base_url` clone URL
 - [x] OIDC/SSO + allowlist: `allowlist` table (email/domain/pattern
       rules, empty = open signup, `user.id==1` superadmin CRUD under
       `/api/v1/admin/allowlist`), enforced on magic-link request +
@@ -151,15 +152,34 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 - [x] Remote nodes: `remote_node` CRUD + health probe +
       `project.remote_node_id` assignment; worker resolves a per-node
       Docker client (tcp/http) at deploy time with local fallback.
-      **Caveat**: same ingress gap as devpush — Traefik only watches
-      the local daemon, so remote containers get no routes until a
-      return path lands (per-node cloudflared or Traefik provider);
-      TLS columns exist for parity but are unused (devpush admin UI
-      never sets them)
-- [ ] Remote-node return path — per-node cloudflared or a Traefik
-      docker provider per node (the big remaining item)
-- [ ] Optional: self-hosted runner registry (independence from
-      devpushhq images)
+      Return path: container publishes an allocated host port
+      (`49152+`, `alloc_remote_port`), `deployment.remote_port` is
+      persisted, and Traefik file-provider `loadBalancer` services
+      route `http://{node.host}:{port}` — no extra infra on the node.
+      Monitor/cleanup/teardown use the node's own daemon; local
+      bind-mounted storage is skipped on remote (artifacts/uploads
+      stay local). **Caveats**: upload + static deployments are
+      rejected on remote (local artifacts), TLS/mTLS columns exist
+      for parity but are unused
+- [x] Runner image overrides: `data_dir/runner-overrides.json` maps
+      runner slugs to replacement images (or `enabled:false` to block
+      one) — decouples self-hosted instances from ghcr.io/devpushhq
+      without a full dynamic catalog; read per deploy so edits need
+      no restart
+- [x] Dashboard UI for the new surface: nav layout + Settings page
+      (git provider connect/list, allowlist CRUD, node CRUD + health —
+      admin sections gated on `user.id==1`), OIDC button on Login
+      driven by `/api/auth/oidc/info`, project create form with
+      provider/connection/repo pickers (GitHub installations +
+      gitea/gitlab/bitbucket connections), project tabs for env vars,
+      cron, redirects, domains, webhooks, and settings (node assign +
+      export/import)
+
+## Phase 6 — polish
+
+- [ ] Remote-node mTLS (columns exist; needs cert provisioning flow)
+- [ ] Bitbucket deploys tested against a real workspace
+- [ ] Deeper dashboard work: teams UI, storage UI, notifications feed
 
 ## Non-goals
 

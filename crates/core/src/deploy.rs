@@ -88,11 +88,11 @@ pub async fn resolve_commit(
                     .map(String::from),
             })
         }
-        p @ ("gitea" | "gitlab") => {
-            let conn_id = if p == "gitea" {
-                project.gitea_connection_id
-            } else {
-                project.gitlab_connection_id
+        p @ ("gitea" | "gitlab" | "bitbucket") => {
+            let conn_id = match p {
+                "gitea" => project.gitea_connection_id,
+                "gitlab" => project.gitlab_connection_id,
+                _ => project.bitbucket_connection_id,
             }
             .ok_or_else(|| Error::Validation(format!("project has no {p} connection")))?;
             let conn = crate::git_providers::connection(db, crypto, p, conn_id)
@@ -733,6 +733,8 @@ mod tests {
             status: "deploy".into(),
             conclusion: None,
             trigger: "user".into(),
+            remote_node_id: None,
+            remote_port: None,
             created_by_user_id: None,
             created_at: now,
             concluded_at: None,
@@ -756,6 +758,7 @@ mod tests {
             github_installation_id: None,
             gitea_connection_id: None,
             gitlab_connection_id: None,
+            bitbucket_connection_id: None,
             remote_node_id: None,
             config: json!({}),
             environments: json!([

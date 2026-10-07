@@ -265,3 +265,50 @@ pub async fn disconnect_from_network(
         .or_else(|e| if is_not_found(&e) { Ok(()) } else { Err(e) })?;
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// remote nodes
+// ---------------------------------------------------------------------------
+
+/// Host port range published on remote nodes for app traffic.
+/// Traefik load-balances to `node.host:port`.
+pub const REMOTE_PORT_START: i32 = 49152;
+pub const REMOTE_PORT_END: i32 = 49651;
+
+/// Docker client for a remote node — `None` when the node is gone,
+/// disabled, or unreachable at connect time.
+pub async fn node_client(db: &sqlx::PgPool, node_id: &str) -> Option<Docker> {
+    let node: crate::models::RemoteNode = sqlx::query_as("SELECT * FROM remote_node WHERE id = $1")
+        .bind(node_id)
+        .fetch_optional(db)
+        .await
+        .ok()
+        .flatten()?;
+    if node.status != "online" || node.is_local() {
+        return None;
+    }
+    docker_client(&node.docker_url).ok()
+}
+
+/// First host port in `REMOTE_PORT_START..=REMOTE_PORT_END` not
+/// published by any container on this daemon.
+pub async fn alloc_remote_port(docker: &Docker) -> anyhow::Result<i32> {
+    let containers = docker
+        .list_containers(Some(ListContainersOptions::<String> {
+            all: true,
+            ..Default::default()
+        }))
+        .await?;
+    let used: std::collections::HashSet<u16> = containers
+        .iter()
+        .flat_map(|c| c.ports.clone().unwrap_or_default())
+        .filter_map(|p| p.public_port)
+        .collect();
+    (REMOTE_PORT_START..=REMOTE_PORT_END)
+        .find(|p| !used.contains(&(*p as u16)))
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "remote node: no free publish port in {REMOTE_PORT_START}-{REMOTE_PORT_END}"
+            )
+        })
+}

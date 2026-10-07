@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use serde_json::json;
+use serde_json::{json, Value};
 use sqlx::PgPool;
 
 use crate::config::Settings;
@@ -42,28 +42,43 @@ pub async fn update_project_config(
     let path = config_path(&settings.data_dir, &project.id);
 
     // Aliases pointing at succeeded (or explicitly included) deployments.
-    let aliases: Vec<(String, String, String, Option<String>, i64)> =
-        if include_deployment_ids.is_empty() {
-            sqlx::query_as(
-                "SELECT a.subdomain, a.deployment_id, a.type, a.value, a.id
+    // Remote deployments carry node host + published port → a file-provider
+    // loadBalancer service instead of the `@docker` docker-provider service.
+    type AliasRow = (
+        String,
+        String,
+        String,
+        Option<String>,
+        i64,
+        Option<String>,
+        Option<i32>,
+        Option<String>,
+    );
+    let aliases: Vec<AliasRow> = if include_deployment_ids.is_empty() {
+        sqlx::query_as(
+            "SELECT a.subdomain, a.deployment_id, a.type, a.value, a.id,
+                    d.remote_node_id, d.remote_port, n.host
              FROM alias a JOIN deployment d ON a.deployment_id = d.id
+             LEFT JOIN remote_node n ON n.id = d.remote_node_id
              WHERE d.project_id = $1 AND d.conclusion = 'succeeded'",
-            )
-            .bind(&project.id)
-            .fetch_all(db)
-            .await?
-        } else {
-            sqlx::query_as(
-                "SELECT a.subdomain, a.deployment_id, a.type, a.value, a.id
+        )
+        .bind(&project.id)
+        .fetch_all(db)
+        .await?
+    } else {
+        sqlx::query_as(
+            "SELECT a.subdomain, a.deployment_id, a.type, a.value, a.id,
+                    d.remote_node_id, d.remote_port, n.host
              FROM alias a JOIN deployment d ON a.deployment_id = d.id
+             LEFT JOIN remote_node n ON n.id = d.remote_node_id
              WHERE d.project_id = $1
                AND (d.conclusion = 'succeeded' OR d.id = ANY($2))",
-            )
-            .bind(&project.id)
-            .bind(include_deployment_ids)
-            .fetch_all(db)
-            .await?
-        };
+        )
+        .bind(&project.id)
+        .bind(include_deployment_ids)
+        .fetch_all(db)
+        .await?
+    };
 
     let domains: Vec<Domain> =
         sqlx::query_as("SELECT * FROM domain WHERE project_id = $1 AND status = 'active'")
@@ -88,10 +103,37 @@ pub async fn update_project_config(
         json!(["web"])
     };
 
-    for (subdomain, deployment_id, _ty, _value, alias_id) in &aliases {
+    let mut services = serde_json::Map::new();
+
+    // Router service reference: remote deployments get a file-provider
+    // loadBalancer to `node.host:remote_port`; local ones keep the
+    // docker-provider service created from container labels.
+    let service_ref = |deployment_id: &str,
+                       remote: &Option<String>,
+                       port: Option<i32>,
+                       host: &Option<String>,
+                       services: &mut serde_json::Map<String, Value>|
+     -> String {
+        let name = format!("deployment-{deployment_id}");
+        if let (Some(_node), Some(port), Some(host)) = (remote, port, host) {
+            services.entry(name.clone()).or_insert_with(|| {
+                json!({
+                    "loadBalancer": {
+                        "servers": [{ "url": format!("http://{host}:{port}") }]
+                    }
+                })
+            });
+            name
+        } else {
+            format!("{name}@docker")
+        }
+    };
+
+    for (subdomain, deployment_id, _ty, _value, alias_id, rnode, rport, rhost) in &aliases {
+        let svc = service_ref(deployment_id, rnode, *rport, rhost, &mut services);
         let mut router = json!({
             "rule": format!("Host(`{}.{}`)", subdomain, settings.deploy_domain),
-            "service": format!("deployment-{deployment_id}@docker"),
+            "service": svc,
             "entryPoints": entry_points,
         });
         if https {
@@ -102,17 +144,18 @@ pub async fn update_project_config(
 
     for domain in &domains {
         // Domains route to the current deployment of their environment alias.
-        let env_alias = aliases.iter().find(|(_, _, ty, value, _)| {
+        let env_alias = aliases.iter().find(|(_, _, ty, value, _, _, _, _)| {
             ty == "environment_id" && value.as_deref() == domain.environment_id.as_deref()
         });
-        let Some((_, deployment_id, _, _, _)) = env_alias else {
+        let Some((_, deployment_id, _, _, _, rnode, rport, rhost)) = env_alias else {
             continue;
         };
 
         if domain.r#type == "route" {
+            let svc = service_ref(deployment_id, rnode, *rport, rhost, &mut services);
             let mut router = json!({
                 "rule": format!("Host(`{}`)", domain.hostname),
-                "service": format!("deployment-{deployment_id}@docker"),
+                "service": svc,
                 "entryPoints": entry_points,
             });
             if https {
@@ -185,7 +228,13 @@ pub async fn update_project_config(
         }
     }
 
-    let doc = json!({ "http": { "routers": routers, "middlewares": middlewares } });
+    let doc = json!({
+        "http": {
+            "routers": routers,
+            "middlewares": middlewares,
+            "services": services,
+        }
+    });
     let yaml = serde_yaml::to_string(&doc)
         .map_err(|e| crate::error::Error::Config(format!("traefik yaml: {e}")))?;
     write_atomic(&path, &yaml)

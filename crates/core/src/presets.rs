@@ -28,6 +28,37 @@ pub fn runner_image(slug: &str) -> Option<&'static str> {
     })
 }
 
+/// `runner_image` with `runner-overrides.json` applied — a file under
+/// `data_dir` mapping runner slugs to replacement images, so a
+/// self-hosted instance isn't bound to ghcr.io/devpushhq:
+///
+/// ```json
+/// { "runners": { "node-20": { "image": "registry.example.com/node:20",
+///                              "enabled": true } } }
+/// ```
+///
+/// `enabled: false` blocks a runner entirely. Read per call — edits take
+/// effect without a restart.
+pub fn runner_image_resolved(data_dir: &str, slug: &str) -> Option<String> {
+    let overrides: Option<serde_json::Value> =
+        std::fs::read_to_string(std::path::Path::new(data_dir).join("runner-overrides.json"))
+            .ok()
+            .and_then(|raw| serde_json::from_str(&raw).ok());
+    if let Some(entry) = overrides
+        .as_ref()
+        .and_then(|o| o.get("runners"))
+        .and_then(|r| r.get(slug))
+    {
+        if entry.get("enabled").and_then(|v| v.as_bool()) == Some(false) {
+            return None;
+        }
+        if let Some(img) = entry.get("image").and_then(|v| v.as_str()) {
+            return Some(img.to_string());
+        }
+    }
+    runner_image(slug).map(str::to_string)
+}
+
 /// Detection rule — mirrors devpush registry `detection` objects.
 /// File patterns support a leading `*/` for "in any subdirectory".
 pub struct Detection {

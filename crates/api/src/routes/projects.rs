@@ -86,7 +86,8 @@ pub async fn list(user: AuthUser, State(state): State<AppState>) -> ApiResult<Re
 #[derive(Deserialize)]
 pub struct CreateProject {
     pub name: String,
-    /// Provider: `github` (default) | `github_enterprise` | `gitea` | `gitlab`.
+    /// Provider: `github` (default) | `github_enterprise` | `gitea` |
+    /// `gitlab` | `bitbucket`.
     pub provider: Option<String>,
     /// GitHub repo numeric id (github providers). Gitea/GitLab resolve
     /// the id from `repo_full_name` via the connection.
@@ -146,6 +147,7 @@ pub async fn create(
     let mut repo_base_url = "https://github.com".to_string();
     let mut gitea_connection_id: Option<i64> = None;
     let mut gitlab_connection_id: Option<i64> = None;
+    let mut bitbucket_connection_id: Option<i64> = None;
     let mut root_files: Vec<String> = Vec::new();
     let mut package_json: Option<String> = None;
 
@@ -186,7 +188,7 @@ pub async fn create(
                 }
             }
         }
-        p @ ("gitea" | "gitlab") => {
+        p @ ("gitea" | "gitlab" | "bitbucket") => {
             let conn_id = body
                 .connection_id
                 .ok_or_else(|| ApiError::bad_request("connection_id required"))?;
@@ -199,11 +201,17 @@ pub async fn create(
                 .await
                 .map_err(|_| ApiError::bad_request("repository not accessible via connection"))?;
             repo_id = repo["id"].as_i64().unwrap_or(0);
-            repo_base_url = client.conn.base_url.clone();
-            if p == "gitea" {
-                gitea_connection_id = Some(conn_id);
+            // Bitbucket's API base is api.bitbucket.org — clones go to
+            // bitbucket.org itself.
+            repo_base_url = if p == "bitbucket" {
+                "https://bitbucket.org".into()
             } else {
-                gitlab_connection_id = Some(conn_id);
+                client.conn.base_url.clone()
+            };
+            match p {
+                "gitea" => gitea_connection_id = Some(conn_id),
+                "gitlab" => gitlab_connection_id = Some(conn_id),
+                _ => bitbucket_connection_id = Some(conn_id),
             }
             if body.preset.is_none() && config.get("runner").is_none() {
                 if let Ok(files) = client.list_root_files(&body.repo_full_name, &branch).await {
@@ -248,9 +256,9 @@ pub async fn create(
         "INSERT INTO project (
             id, team_id, name, description, repo_provider, repo_id, repo_full_name,
             repo_base_url, repo_branch, github_installation_id,
-            gitea_connection_id, gitlab_connection_id,
+            gitea_connection_id, gitlab_connection_id, bitbucket_connection_id,
             config, environments, created_by_user_id
-        ) VALUES ($1,$2,$3,'',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+        ) VALUES ($1,$2,$3,'',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
         RETURNING *",
     )
     .bind(&id)
@@ -264,6 +272,7 @@ pub async fn create(
     .bind(body.installation_id)
     .bind(gitea_connection_id)
     .bind(gitlab_connection_id)
+    .bind(bitbucket_connection_id)
     .bind(&config)
     .bind(&environments)
     .bind(user.user.id)
@@ -373,6 +382,7 @@ fn project_json(state: &AppState, p: &Project) -> Value {
         "github_installation_id": p.github_installation_id,
         "gitea_connection_id": p.gitea_connection_id,
         "gitlab_connection_id": p.gitlab_connection_id,
+        "bitbucket_connection_id": p.bitbucket_connection_id,
         "remote_node_id": p.remote_node_id,
         "config": p.config,
         "environments": p.environments,

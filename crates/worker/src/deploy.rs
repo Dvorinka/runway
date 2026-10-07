@@ -71,32 +71,48 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
 
     // Remote node: devpush `get_docker_url_for_project` — an online
     // non-local node gets its own daemon, anything else falls back to
-    // the local socket.
-    // jarvis: Traefik only watches the local daemon, so remote
-    // containers have no return path yet — same limitation as devpush.
-    let node_client;
-    let docker = match project.remote_node_id.as_deref() {
-        Some(nid) => {
-            let node: Option<runway_core::models::RemoteNode> =
-                sqlx::query_as("SELECT * FROM remote_node WHERE id = $1")
-                    .bind(nid)
-                    .fetch_optional(&ctx.db)
-                    .await?;
-            match node {
-                Some(n) if n.status == "online" && !n.is_local() => {
-                    node_client = runway_core::docker::docker_client(&n.docker_url)?;
-                    tracing::info!(node = %nid, name = %n.name, "deploying on remote node");
-                    &node_client
-                }
-                Some(n) => {
-                    tracing::warn!(node = %nid, status = %n.status,
-                        "remote node unavailable, falling back to local daemon");
-                    &ctx.docker
-                }
-                None => &ctx.docker,
+    // the local socket. Unlike devpush we have a return path: the serve
+    // container publishes a host port on the node and the Traefik file
+    // config load-balances to `node.host:port`.
+    let mut remote_node: Option<runway_core::models::RemoteNode> = None;
+    let node_client = if let Some(nid) = project.remote_node_id.as_deref() {
+        let node: Option<runway_core::models::RemoteNode> =
+            sqlx::query_as("SELECT * FROM remote_node WHERE id = $1")
+                .bind(nid)
+                .fetch_optional(&ctx.db)
+                .await?;
+        match node {
+            Some(n) if n.status == "online" && !n.is_local() => {
+                let client = runway_core::docker::docker_client(&n.docker_url)?;
+                tracing::info!(node = %nid, name = %n.name, "deploying on remote node");
+                remote_node = Some(n);
+                Some(client)
             }
+            Some(n) => {
+                tracing::warn!(node = %nid, status = %n.status,
+                    "remote node unavailable, falling back to local daemon");
+                None
+            }
+            None => None,
         }
-        None => &ctx.docker,
+    } else {
+        None
+    };
+    let docker = node_client.as_ref().unwrap_or(&ctx.docker);
+
+    // Persist the node + allocated publish port early so the monitor and
+    // teardown resolve the right daemon even if the pipeline fails later.
+    let remote_port = if let Some(node) = &remote_node {
+        let port = runway_core::docker::alloc_remote_port(docker).await?;
+        sqlx::query("UPDATE deployment SET remote_node_id = $1, remote_port = $2 WHERE id = $3")
+            .bind(&node.id)
+            .bind(port)
+            .bind(deployment_id)
+            .execute(&ctx.db)
+            .await?;
+        Some(port)
+    } else {
+        None
     };
 
     let log = |msg: &str| {
@@ -148,6 +164,12 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
         })
         .map(String::from);
 
+    // Remote nodes can't see local host paths — uploads and static
+    // artifacts live on this machine's data dir.
+    if remote_node.is_some() && source_archive.is_some() {
+        anyhow::bail!("upload deployments are not supported on remote nodes");
+    }
+
     let mut commands: Vec<String> = if let Some(archive) = &source_archive {
         // Upload deploy: tarball pre-staged by the API under data/uploads,
         // bind-mounted at /src. No git involved.
@@ -196,24 +218,34 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
                     sha = deployment.commit_sha,
                 ));
             }
-            p @ ("gitea" | "gitlab") => {
+            p @ ("gitea" | "gitlab" | "bitbucket") => {
                 // Port of devpush's gitea clone arm — token connection,
                 // askpass injection, `<base_url>/<full_name>.git`.
-                let conn_id = if p == "gitea" {
-                    project.gitea_connection_id
-                } else {
-                    project.gitlab_connection_id
+                // Bitbucket clones go to bitbucket.org (api.* is REST).
+                let conn_id = match p {
+                    "gitea" => project.gitea_connection_id,
+                    "gitlab" => project.gitlab_connection_id,
+                    _ => project.bitbucket_connection_id,
                 }
                 .ok_or_else(|| anyhow::anyhow!("project has no {p} connection"))?;
                 let conn = runway_core::git_providers::connection(&ctx.db, &ctx.crypto, p, conn_id)
                     .await?
                     .ok_or_else(|| anyhow::anyhow!("{p} connection {conn_id} not found"))?;
                 env.push(format!("RUNWAY_GIT_TOKEN={}", conn.token));
-                let base = conn.base_url.trim_end_matches('/');
+                // `repo_base_url` was resolved at project create —
+                // bitbucket clones hit bitbucket.org, not api.*.
+                let base = deployment.repo_base_url.trim_end_matches('/');
+                // Bitbucket app passwords authenticate as the workspace
+                // user, not a fixed `x-access-token`.
+                let git_user = if p == "bitbucket" {
+                    conn.username.clone()
+                } else {
+                    "x-access-token".into()
+                };
                 commands.push(format!(
                     "git init -q && \
                      printf '%s\\n' '#!/bin/sh' \
-                     'case \"$1\" in *Username*) echo \"x-access-token\";; *) echo \"$RUNWAY_GIT_TOKEN\";; esac' \
+                     'case \"$1\" in *Username*) echo \"{git_user}\";; *) echo \"$RUNWAY_GIT_TOKEN\";; esac' \
                      > /tmp/runway-git-askpass && \
                      chmod 700 /tmp/runway-git-askpass && \
                      export GIT_ASKPASS=/tmp/runway-git-askpass GIT_TERMINAL_PROMPT=0 && \
@@ -239,6 +271,9 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
         .trim_matches('/')
         .to_string();
     let static_mode = !output_dir.is_empty();
+    if static_mode && remote_node.is_some() {
+        anyhow::bail!("static deploys are not supported on remote nodes (artifact dir is local)");
+    }
     let mut spa_fallback = config
         .get("spa_fallback")
         .and_then(|v| v.as_bool())
@@ -425,7 +460,7 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
                 .or_else(|| config.get("image"))
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow::anyhow!("runner not set in deployment config"))?;
-            runner_image = presets::runner_image(slug).map(str::to_string);
+            runner_image = presets::runner_image_resolved(&ctx.settings.data_dir, slug);
         }
     }
     let Some(runner_image) = runner_image else {
@@ -480,9 +515,8 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
     }
 
     let serve_image = if static_mode {
-        let img = presets::runner_image("static-web")
-            .expect("static-web runner is registered")
-            .to_string();
+        let img = presets::runner_image_resolved(&ctx.settings.data_dir, "static-web")
+            .expect("static-web runner is registered");
         if docker.inspect_image(&img).await.is_err() {
             log(&format!("Pulling static server image ({img})...")).await;
             pull_image(docker, &img).await?;
@@ -529,19 +563,45 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
         host_config.memory = Some(memory_mb * 1024 * 1024);
     }
     // Linked storage: data mounts + network attach (deploy-time wiring).
-    let (storage_nets, storage_mounts) = crate::storage::linked(
-        ctx,
-        &project.id,
-        if deployment.environment_id.is_empty() {
-            None
-        } else {
-            Some(deployment.environment_id.as_str())
-        },
-    )
-    .await;
+    // Remote nodes can't reach local storage containers or their host
+    // binds — skip and note it in the deploy log.
+    let (storage_nets, storage_mounts) = if remote_node.is_some() {
+        let has_linked: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM storage_project WHERE project_id = $1)",
+        )
+        .bind(&project.id)
+        .fetch_one(&ctx.db)
+        .await
+        .unwrap_or(false);
+        if has_linked {
+            log("Note: linked storage is local-only — not attached on remote node").await;
+        }
+        (vec![], vec![])
+    } else {
+        crate::storage::linked(
+            ctx,
+            &project.id,
+            if deployment.environment_id.is_empty() {
+                None
+            } else {
+                Some(deployment.environment_id.as_str())
+            },
+        )
+        .await
+    };
     binds.extend(storage_mounts.clone());
     if !binds.is_empty() {
         host_config.binds = Some(binds);
+    }
+    if let Some(port) = remote_port {
+        host_config.port_bindings = Some(HashMap::from([(
+            format!("{}/tcp", deployment.serve_port()),
+            Some(vec![bollard::models::PortBinding {
+                host_ip: Some("0.0.0.0".into()),
+                host_port: Some(port.to_string()),
+            }]),
+        )]));
+        log(&format!("Publishing node port {port}")).await;
     }
 
     let entrypoint = config.get("entrypoint").and_then(|v| v.as_str());
@@ -1205,6 +1265,14 @@ async fn post_commit_status(
     }
 }
 
+/// Resolve the daemon a deployment's container lives on.
+async fn dep_docker(ctx: &Ctx, remote_node_id: Option<&str>) -> Option<bollard::Docker> {
+    match remote_node_id {
+        Some(nid) => dkr::node_client(&ctx.db, nid).await,
+        None => Some(ctx.docker.clone()),
+    }
+}
+
 /// `delete_container` — remove a stopped deployment container + edge network.
 pub async fn delete_container(ctx: &Ctx, deployment_id: &str) -> anyhow::Result<()> {
     let Some(deployment) = deploy::get(&ctx.db, deployment_id).await? else {
@@ -1214,19 +1282,23 @@ pub async fn delete_container(ctx: &Ctx, deployment_id: &str) -> anyhow::Result<
         return Ok(());
     };
 
-    match ctx
-        .docker
+    let Some(docker) = dep_docker(ctx, deployment.remote_node_id.as_deref()).await else {
+        // Node unreachable — leave the row for a later retry.
+        tracing::warn!(deployment_id, "remote node unreachable, delete deferred");
+        return Ok(());
+    };
+
+    match docker
         .inspect_container(container_id, None::<InspectContainerOptions>)
         .await
     {
         Ok(info) => {
             let edge = dkr::container_label(&info, "runway.edge_network")
                 .unwrap_or_else(|| edge_network_name(deployment_id));
-            let _ = ctx
-                .docker
+            let _ = docker
                 .stop_container(container_id, None::<StopContainerOptions>)
                 .await;
-            ctx.docker
+            docker
                 .remove_container(
                     container_id,
                     Some(RemoveContainerOptions {
@@ -1239,16 +1311,26 @@ pub async fn delete_container(ctx: &Ctx, deployment_id: &str) -> anyhow::Result<
                 .bind(deployment_id)
                 .execute(&ctx.db)
                 .await?;
-            let traefik_id = dkr::service_container_id(&ctx.docker, "traefik").await;
-            dkr::disconnect_from_network(&ctx.docker, traefik_id.as_deref(), Some(&edge)).await?;
-            let _ = dkr::remove_network_if_empty(&ctx.docker, &edge).await;
+            if deployment.remote_node_id.is_none() {
+                let traefik_id = dkr::service_container_id(&ctx.docker, "traefik").await;
+                dkr::disconnect_from_network(&ctx.docker, traefik_id.as_deref(), Some(&edge))
+                    .await?;
+            }
+            let _ = dkr::remove_network_if_empty(&docker, &edge).await;
         }
         Err(e) if dkr::is_not_found(&e) => {
             sqlx::query("UPDATE deployment SET container_status = 'removed' WHERE id = $1")
                 .bind(deployment_id)
                 .execute(&ctx.db)
                 .await?;
-            deploy::cleanup_edge_network(&ctx.docker, deployment_id).await?;
+            if deployment.remote_node_id.is_some() {
+                // Container already gone on the node — drop its empty
+                // edge network there.
+                let _ =
+                    dkr::remove_network_if_empty(&docker, &edge_network_name(deployment_id)).await;
+            } else {
+                deploy::cleanup_edge_network(&ctx.docker, deployment_id).await?;
+            }
         }
         Err(e) => return Err(e.into()),
     }
@@ -1295,18 +1377,18 @@ pub async fn cleanup_inactive(ctx: &Ctx, project_id: &str) -> anyhow::Result<()>
         let Some(container_id) = dep.container_id.clone() else {
             continue;
         };
-        match ctx
-            .docker
+        let Some(docker) = dep_docker(ctx, dep.remote_node_id.as_deref()).await else {
+            continue;
+        };
+        match docker
             .inspect_container(&container_id, None::<InspectContainerOptions>)
             .await
         {
             Ok(info) => {
-                let _ = ctx
-                    .docker
+                let _ = docker
                     .stop_container(&container_id, None::<StopContainerOptions>)
                     .await;
-                let _ = ctx
-                    .docker
+                let _ = docker
                     .remove_container(
                         &container_id,
                         Some(RemoveContainerOptions {
@@ -1321,10 +1403,12 @@ pub async fn cleanup_inactive(ctx: &Ctx, project_id: &str) -> anyhow::Result<()>
                     .await?;
                 let edge = dkr::container_label(&info, "runway.edge_network")
                     .unwrap_or_else(|| edge_network_name(&dep.id));
-                let traefik_id = dkr::service_container_id(&ctx.docker, "traefik").await;
-                dkr::disconnect_from_network(&ctx.docker, traefik_id.as_deref(), Some(&edge))
-                    .await?;
-                let _ = dkr::remove_network_if_empty(&ctx.docker, &edge).await;
+                if dep.remote_node_id.is_none() {
+                    let traefik_id = dkr::service_container_id(&ctx.docker, "traefik").await;
+                    dkr::disconnect_from_network(&ctx.docker, traefik_id.as_deref(), Some(&edge))
+                        .await?;
+                }
+                let _ = dkr::remove_network_if_empty(&docker, &edge).await;
                 drop_artifacts(ctx, dep).await;
             }
             Err(e) if dkr::is_not_found(&e) => {
