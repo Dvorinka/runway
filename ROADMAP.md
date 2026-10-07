@@ -107,7 +107,13 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
       (`notification` table, deploy succeeded/failed fan-out to team,
       `GET /api/v1/notifications` + mark-read), deploy button
       (`GET /api/deploy` → provider/repo prefill JSON)
-- [ ] Storage provisioning: SQLite, Postgres, Mongo, Redis + volumes
+- [x] Storage provisioning: sqlite/postgres/mongo/redis + volumes —
+      `storage`/`storage_project` tables, provision/deprovision/reset
+      jobs, per-storage containers + networks, `/data` binds, link with
+      environment filter; deploy containers join storage networks
+      (fixes devpush's unreachable-DB gap); container-assisted dir
+      wipe for engine-owned files; `PGDATA=/data/pg` fix; password
+      AES-GCM in config (`password_enc`)
 - [ ] Git providers: Gitea, GitLab, Bitbucket, GitHub Enterprise
 - [ ] OIDC/SSO, allowlist
 - [ ] Cron jobs (redeploy + HTTP-call mode)

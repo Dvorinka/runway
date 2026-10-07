@@ -11,6 +11,7 @@
 pub mod deploy;
 pub mod jobs;
 pub mod monitor;
+pub mod storage;
 pub mod tunnel;
 
 use bollard::Docker;

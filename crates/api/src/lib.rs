@@ -135,6 +135,27 @@ pub fn router(state: AppState) -> Router {
             axum::routing::post(routes::notifications::mark_read),
         )
         .route("/api/deploy", get(routes::notifications::deploy_button))
+        // Team storage (Phase 5)
+        .route(
+            "/api/v1/teams/{id}/storage",
+            get(routes::storage::list).post(routes::storage::create),
+        )
+        .route(
+            "/api/v1/teams/{id}/storage/{storage_id}",
+            get(routes::storage::get).delete(routes::storage::delete),
+        )
+        .route(
+            "/api/v1/teams/{id}/storage/{storage_id}/reset",
+            axum::routing::post(routes::storage::reset),
+        )
+        .route(
+            "/api/v1/teams/{id}/storage/{storage_id}/link",
+            axum::routing::post(routes::storage::link),
+        )
+        .route(
+            "/api/v1/teams/{id}/storage/{storage_id}/link/{project_id}",
+            delete(routes::storage::unlink),
+        )
         .route(
             "/api/v1/teams/{id}/webhooks",
             get(routes::teams::list_webhooks).post(routes::teams::create_webhook),

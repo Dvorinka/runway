@@ -468,6 +468,18 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
     if memory_mb > 0 {
         host_config.memory = Some(memory_mb * 1024 * 1024);
     }
+    // Linked storage: data mounts + network attach (deploy-time wiring).
+    let (storage_nets, storage_mounts) = crate::storage::linked(
+        ctx,
+        &project.id,
+        if deployment.environment_id.is_empty() {
+            None
+        } else {
+            Some(deployment.environment_id.as_str())
+        },
+    )
+    .await;
+    binds.extend(storage_mounts.clone());
     if !binds.is_empty() {
         host_config.binds = Some(binds);
     }
@@ -481,6 +493,16 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
             commands.join(" && "),
         ],
     };
+
+    // Serving containers join edge + workspace + linked storage networks
+    // (the fix for devpush never attaching storage nets).
+    let mut serve_endpoints = HashMap::from([
+        (edge_network.clone(), EndpointSettings::default()),
+        (workspace_network.clone(), EndpointSettings::default()),
+    ]);
+    for n in storage_nets {
+        serve_endpoints.insert(n, EndpointSettings::default());
+    }
 
     let body = if static_mode {
         // Phase 1: throwaway build container — clones, builds, copies
@@ -584,6 +606,7 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
 
         // runway.json extracted during build → SWS config + overrides.
         let mut serve_binds = vec![format!("{static_dir}:/public:ro")];
+        serve_binds.extend(storage_mounts);
         let marker = static_local_dir.join(".runway.json");
         if let Ok(raw) = tokio::fs::read_to_string(&marker).await {
             let _ = tokio::fs::remove_file(&marker).await; // never served
@@ -618,10 +641,7 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
             env: Some(serve_env),
             labels: Some(labels),
             networking_config: Some(NetworkingConfig {
-                endpoints_config: HashMap::from([
-                    (edge_network.clone(), EndpointSettings::default()),
-                    (workspace_network.clone(), EndpointSettings::default()),
-                ]),
+                endpoints_config: serve_endpoints.clone(),
             }),
             host_config: Some(HostConfig {
                 binds: Some(serve_binds),
@@ -636,10 +656,7 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
             working_dir: Some("/app".into()),
             labels: Some(labels),
             networking_config: Some(NetworkingConfig {
-                endpoints_config: HashMap::from([
-                    (edge_network.clone(), EndpointSettings::default()),
-                    (workspace_network.clone(), EndpointSettings::default()),
-                ]),
+                endpoints_config: serve_endpoints,
             }),
             host_config: Some(host_config),
             cmd: Some(cmd),
@@ -801,7 +818,11 @@ fn sws_config(val: &serde_json::Value) -> Option<String> {
 }
 
 /// Wait for a container to exit; returns its exit code.
-async fn wait_exit(docker: &bollard::Docker, id: &str, timeout_secs: u64) -> anyhow::Result<i64> {
+pub async fn wait_exit(
+    docker: &bollard::Docker,
+    id: &str,
+    timeout_secs: u64,
+) -> anyhow::Result<i64> {
     use std::time::Duration;
     let mut stream = docker.wait_container::<String>(id, None);
     let code = tokio::time::timeout(Duration::from_secs(timeout_secs.max(1)), async {
@@ -814,7 +835,7 @@ async fn wait_exit(docker: &bollard::Docker, id: &str, timeout_secs: u64) -> any
     Ok(code)
 }
 
-async fn pull_image(docker: &bollard::Docker, image: &str) -> anyhow::Result<()> {
+pub async fn pull_image(docker: &bollard::Docker, image: &str) -> anyhow::Result<()> {
     use bollard::image::CreateImageOptions;
     let (from, tag) = image.rsplit_once(':').unwrap_or((image, "latest"));
     let mut stream = docker.create_image(
@@ -1264,7 +1285,7 @@ pub async fn cleanup_inactive(ctx: &Ctx, project_id: &str) -> anyhow::Result<()>
 /// Host-visible path for bind mounts: `host_data_dir` when runway itself runs
 /// in a container (compose), else `data_dir` resolved to an absolute path —
 /// docker rejects relative bind sources.
-fn docker_host_root(settings: &runway_core::Settings) -> anyhow::Result<std::path::PathBuf> {
+pub fn docker_host_root(settings: &runway_core::Settings) -> anyhow::Result<std::path::PathBuf> {
     let root = settings
         .host_data_dir
         .clone()

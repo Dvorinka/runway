@@ -646,6 +646,62 @@ impl CloudflareConnection {
 }
 
 // ---------------------------------------------------------------------------
+// Storage — port of devpush storage + storage_project (~830)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, FromRow)]
+pub struct Storage {
+    pub id: String,
+    pub name: String,
+    /// database | volume | kv | queue
+    pub r#type: String,
+    /// pending | active | resetting | error | deleted
+    pub status: String,
+    pub config: Value,
+    pub error: Option<Value>,
+    pub team_id: String,
+    pub created_by_user_id: Option<i64>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl Storage {
+    pub fn engine(&self) -> &str {
+        self.config["engine"].as_str().unwrap_or("sqlite")
+    }
+    pub fn container_name(&self) -> String {
+        format!("storage-{}", &self.id[..12])
+    }
+    pub fn network_name(&self) -> String {
+        format!("runway_storage_{}", &self.id[..12])
+    }
+    /// `data/storage/<team>/<type-dir>/<name>` — type-dir is `database`
+    /// for database, `kv` for kv, `volume` for volume (devpush parity).
+    pub fn data_dir(&self, data_dir: &str) -> String {
+        let type_dir = match self.r#type.as_str() {
+            "database" => "database",
+            "kv" => "kv",
+            _ => "volume",
+        };
+        format!(
+            "{data_dir}/storage/{}/{type_dir}/{}",
+            self.team_id, self.name
+        )
+    }
+}
+
+#[derive(Debug, Clone, Serialize, FromRow)]
+pub struct StorageProject {
+    pub id: String,
+    pub storage_id: String,
+    pub project_id: String,
+    pub environment_ids: Option<Value>,
+    pub secrets: Value,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+// ---------------------------------------------------------------------------
 // Job queue
 // ---------------------------------------------------------------------------
 

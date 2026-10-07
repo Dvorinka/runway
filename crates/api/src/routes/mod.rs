@@ -6,4 +6,5 @@ pub mod github;
 pub mod mcp;
 pub mod notifications;
 pub mod projects;
+pub mod storage;
 pub mod teams;

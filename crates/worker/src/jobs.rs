@@ -121,6 +121,13 @@ async fn dispatch(ctx: &Ctx, kind: &str, payload: &Value) -> anyhow::Result<()> 
         }
         "ensure_instance_tunnel" => crate::tunnel::ensure_instance(ctx).await,
         "teardown_instance_tunnel" => crate::tunnel::teardown_instance(ctx).await,
+        "provision_storage" => {
+            crate::storage::provision(ctx, str_payload(payload, "storage_id")?).await
+        }
+        "deprovision_storage" => {
+            crate::storage::deprovision(ctx, str_payload(payload, "storage_id")?).await
+        }
+        "reset_storage" => crate::storage::reset(ctx, str_payload(payload, "storage_id")?).await,
         other => anyhow::bail!("unknown job kind: {other}"),
     }
 }
