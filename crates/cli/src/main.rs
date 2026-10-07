@@ -5,6 +5,9 @@
 
 use clap::{Parser, Subcommand};
 
+mod client;
+mod commands;
+
 #[derive(Parser)]
 #[command(name = "runway", version, about = "Self-hosted deployment platform")]
 struct Cli {
@@ -27,23 +30,54 @@ enum Command {
         #[arg(long)]
         username: Option<String>,
     },
-    /// Deploy the current directory (or the linked repo).
-    Deploy,
+    /// Deploy the current directory (upload tarball to the linked project).
+    Deploy {
+        /// Poll until the deployment reaches a terminal status.
+        #[arg(long)]
+        follow: bool,
+    },
     /// Stream logs for a deployment.
     Logs {
         /// Deployment ID (defaults to latest of the linked project).
         deployment: Option<String>,
+        /// Keep tailing until the deployment concludes.
+        #[arg(long)]
+        follow: bool,
     },
     /// Authenticate this machine against an instance.
-    Login,
+    Login {
+        /// Instance URL (e.g. http://localhost:8000).
+        #[arg(long)]
+        server: Option<String>,
+        /// API key (ak_...).
+        #[arg(long)]
+        key: Option<String>,
+    },
     /// Link the current directory to a project.
-    Link,
-    /// Manage environment variables.
-    Env,
-    /// Manage domains.
-    Domains,
-    /// Open the project in the browser.
-    Open,
+    Link {
+        /// Project ID (interactive list if omitted).
+        project: Option<String>,
+    },
+    /// Manage environment variables: env [list|set KEY=VAL|unset KEY].
+    Env {
+        /// list | set KEY=VALUE | unset KEY
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+        /// Environment slug to scope the variable to.
+        #[arg(long)]
+        environment: Option<String>,
+    },
+    /// Manage domains: domains [list|add <host>|remove <host>|assign-cf <host>].
+    Domains {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Open the project's deployment URL in the browser.
+    Open {
+        /// Print the URL instead of opening a browser.
+        #[arg(long)]
+        print: bool,
+    },
 }
 
 #[tokio::main]
@@ -104,13 +138,13 @@ async fn main() -> anyhow::Result<()> {
             let crypto = runway_core::crypto::Crypto::new(&settings.encryption_key)?;
             bootstrap(&db, &crypto, &email, username.as_deref()).await?;
         }
-        Command::Deploy => anyhow::bail!("not implemented yet (Phase 4)"),
-        Command::Logs { .. } => anyhow::bail!("not implemented yet (Phase 4)"),
-        Command::Login => anyhow::bail!("not implemented yet (Phase 4)"),
-        Command::Link => anyhow::bail!("not implemented yet (Phase 4)"),
-        Command::Env => anyhow::bail!("not implemented yet (Phase 4)"),
-        Command::Domains => anyhow::bail!("not implemented yet (Phase 4)"),
-        Command::Open => anyhow::bail!("not implemented yet (Phase 4)"),
+        Command::Login { server, key } => commands::login(server, key).await?,
+        Command::Link { project } => commands::link(project).await?,
+        Command::Deploy { follow } => commands::deploy(follow).await?,
+        Command::Logs { deployment, follow } => commands::logs(deployment, follow).await?,
+        Command::Env { args, environment } => commands::env(args, environment).await?,
+        Command::Domains { args } => commands::domains(args).await?,
+        Command::Open { print } => commands::open(print).await?,
     }
 
     Ok(())

@@ -108,44 +108,67 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
     }
 
     // -- Commands ------------------------------------------------------
-    let mut commands: Vec<String> = vec![format!(
-        "echo 'Cloning {} (Branch: {}, Commit: {})'",
-        deployment.repo_full_name,
-        deployment.branch,
-        &deployment.commit_sha[..7.min(deployment.commit_sha.len())]
-    )];
+    let config = &deployment.config;
+    let source_archive = config
+        .get("source_archive")
+        .and_then(|v| v.as_str())
+        .filter(|s| {
+            s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+        })
+        .map(String::from);
 
-    match deployment.repo_provider.as_str() {
-        "github" | "github_enterprise" => {
-            let Some(github) = ctx.github.as_ref() else {
-                anyhow::bail!("GitHub App not configured");
-            };
-            let installation_id = project
-                .github_installation_id
-                .ok_or_else(|| anyhow::anyhow!("project has no GitHub installation"))?;
-            let token = github
-                .installation_token(&ctx.db, &ctx.crypto, installation_id)
-                .await?;
-            env.push(format!("RUNWAY_GITHUB_TOKEN={token}"));
-            commands.push(format!(
-                "git init -q && \
-                 printf '%s\\n' '#!/bin/sh' \
-                 'case \"$1\" in *Username*) echo \"x-access-token\";; *) echo \"$RUNWAY_GITHUB_TOKEN\";; esac' \
-                 > /tmp/runway-git-askpass && \
-                 chmod 700 /tmp/runway-git-askpass && \
-                 export GIT_ASKPASS=/tmp/runway-git-askpass GIT_TERMINAL_PROMPT=0 && \
-                 git fetch -q --depth 1 https://github.com/{repo}.git {sha} && \
-                 git checkout -q FETCH_HEAD && \
-                 unset GIT_ASKPASS GIT_TERMINAL_PROMPT RUNWAY_GITHUB_TOKEN && \
-                 rm -f /tmp/runway-git-askpass",
-                repo = deployment.repo_full_name,
-                sha = deployment.commit_sha,
-            ));
+    let mut commands: Vec<String> = if let Some(archive) = &source_archive {
+        // Upload deploy: tarball pre-staged by the API under data/uploads,
+        // bind-mounted at /src. No git involved.
+        let host_root = docker_host_root(&ctx.settings)?;
+        binds.push(format!("{}:/src:ro", host_root.join("uploads").display()));
+        vec![format!(
+            "echo 'Extracting uploaded source...' && \
+             tar -xzf /src/{archive} -C /app && \
+             echo 'Source extracted'"
+        )]
+    } else {
+        vec![format!(
+            "echo 'Cloning {} (Branch: {}, Commit: {})'",
+            deployment.repo_full_name,
+            deployment.branch,
+            &deployment.commit_sha[..7.min(deployment.commit_sha.len())]
+        )]
+    };
+
+    if source_archive.is_none() {
+        match deployment.repo_provider.as_str() {
+            "github" | "github_enterprise" => {
+                let Some(github) = ctx.github.as_ref() else {
+                    anyhow::bail!("GitHub App not configured");
+                };
+                let installation_id = project
+                    .github_installation_id
+                    .ok_or_else(|| anyhow::anyhow!("project has no GitHub installation"))?;
+                let token = github
+                    .installation_token(&ctx.db, &ctx.crypto, installation_id)
+                    .await?;
+                env.push(format!("RUNWAY_GITHUB_TOKEN={token}"));
+                commands.push(format!(
+                    "git init -q && \
+                     printf '%s\\n' '#!/bin/sh' \
+                     'case \"$1\" in *Username*) echo \"x-access-token\";; *) echo \"$RUNWAY_GITHUB_TOKEN\";; esac' \
+                     > /tmp/runway-git-askpass && \
+                     chmod 700 /tmp/runway-git-askpass && \
+                     export GIT_ASKPASS=/tmp/runway-git-askpass GIT_TERMINAL_PROMPT=0 && \
+                     git fetch -q --depth 1 https://github.com/{repo}.git {sha} && \
+                     git checkout -q FETCH_HEAD && \
+                     unset GIT_ASKPASS GIT_TERMINAL_PROMPT RUNWAY_GITHUB_TOKEN && \
+                     rm -f /tmp/runway-git-askpass",
+                    repo = deployment.repo_full_name,
+                    sha = deployment.commit_sha,
+                ));
+            }
+            other => anyhow::bail!("repo provider '{other}' not supported yet"),
         }
-        other => anyhow::bail!("repo provider '{other}' not supported yet"),
     }
 
-    let config = &deployment.config;
     // Static mode: `output_directory` materializes the build to a host
     // dir served by the `static-web` image instead of a runner process.
     let output_dir = config
@@ -165,12 +188,7 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
         .join(deployment_id);
     let static_host_dir = if static_mode {
         tokio::fs::create_dir_all(&static_local_dir).await?;
-        let host_root = ctx
-            .settings
-            .host_data_dir
-            .clone()
-            .unwrap_or_else(|| ctx.settings.data_dir.clone());
-        let host_dir = std::path::PathBuf::from(host_root)
+        let host_dir = docker_host_root(&ctx.settings)?
             .join("static")
             .join(deployment_id)
             .display()
@@ -204,6 +222,12 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
         commands.push(config_command("build_command", cfg_str("build_command")));
     }
     let pre_deploy = cfg_str("pre_deploy_command");
+    // `[ -n ... ]` tests the raw value; the subshell needs a no-op when empty.
+    let pre_deploy_cmd = if pre_deploy.is_empty() {
+        ":"
+    } else {
+        pre_deploy
+    };
     commands.push(format!(
         "if [ -f runway.json ] && command -v jq >/dev/null 2>&1; then \
          OVERRIDE=$(jq -r '.pre_deploy_command // empty' runway.json); \
@@ -212,11 +236,11 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
          ( $OVERRIDE ); \
          elif [ -n '{pre_deploy}' ]; then \
          echo 'Running pre-deploy command...'; \
-         ( {pre_deploy} ); \
+         ( {pre_deploy_cmd} ); \
          fi; else \
          if [ -n '{pre_deploy}' ]; then \
          echo 'Running pre-deploy command...'; \
-         ( {pre_deploy} ); \
+         ( {pre_deploy_cmd} ); \
          fi; fi"
     ));
     if static_mode {
@@ -677,6 +701,8 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
 
 /// `if [ -f runway.json ] && jq ...` wrapper for a config-command step.
 fn config_command(key: &str, command: &str) -> String {
+    // `( )` is a parse error in dash — substitute a no-op for empty commands.
+    let command = if command.is_empty() { ":" } else { command };
     format!(
         "if [ -f runway.json ] && command -v jq >/dev/null 2>&1; then \
          OVERRIDE=$(jq -r '.{key} // empty' runway.json); \
@@ -1151,12 +1177,14 @@ pub async fn cleanup_inactive(ctx: &Ctx, project_id: &str) -> anyhow::Result<()>
                 dkr::disconnect_from_network(&ctx.docker, traefik_id.as_deref(), Some(&edge))
                     .await?;
                 let _ = dkr::remove_network_if_empty(&ctx.docker, &edge).await;
+                drop_artifacts(ctx, dep).await;
             }
             Err(e) if dkr::is_not_found(&e) => {
                 sqlx::query("UPDATE deployment SET container_status = 'removed' WHERE id = $1")
                     .bind(&dep.id)
                     .execute(&ctx.db)
                     .await?;
+                drop_artifacts(ctx, dep).await;
             }
             Err(e) => {
                 tracing::warn!(deployment_id = dep.id, error = %e, "cleanup failed for container")
@@ -1164,6 +1192,33 @@ pub async fn cleanup_inactive(ctx: &Ctx, project_id: &str) -> anyhow::Result<()>
         }
     }
     Ok(())
+}
+
+/// Host-visible path for bind mounts: `host_data_dir` when runway itself runs
+/// in a container (compose), else `data_dir` resolved to an absolute path —
+/// docker rejects relative bind sources.
+fn docker_host_root(settings: &runway_core::Settings) -> anyhow::Result<std::path::PathBuf> {
+    let root = settings
+        .host_data_dir
+        .clone()
+        .unwrap_or_else(|| settings.data_dir.clone());
+    let root = std::path::PathBuf::from(root);
+    Ok(if root.is_absolute() {
+        root
+    } else {
+        std::env::current_dir()?.join(root)
+    })
+}
+
+/// Remove host-side deployment artifacts: static output dir + upload tarball.
+/// The upload tarball is retained until this point because `redeploy` of an
+/// upload deployment re-extracts it.
+async fn drop_artifacts(ctx: &Ctx, dep: &Deployment) {
+    let data = std::path::Path::new(&ctx.settings.data_dir);
+    let _ = tokio::fs::remove_dir_all(data.join("static").join(&dep.id)).await;
+    if let Some(archive) = dep.config.get("source_archive").and_then(|v| v.as_str()) {
+        let _ = tokio::fs::remove_file(data.join("uploads").join(archive)).await;
+    }
 }
 
 /// `reconcile_edge_network` — attach Traefik to edge networks that host

@@ -8,6 +8,7 @@ pub mod error;
 pub mod routes;
 pub mod state;
 
+use axum::extract::DefaultBodyLimit;
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use serde_json::json;
@@ -52,7 +53,9 @@ pub fn router(state: AppState) -> Router {
         )
         .route(
             "/api/v1/projects/{id}/env",
-            get(routes::projects::get_env).put(routes::projects::put_env),
+            get(routes::projects::get_env)
+                .put(routes::projects::put_env)
+                .patch(routes::projects::patch_env),
         )
         .route(
             "/api/v1/projects/{id}/deploy-tokens",
@@ -90,6 +93,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/projects/{id}/events",
             get(routes::deployments::events),
+        )
+        .route(
+            "/api/v1/projects/{id}/deployments/upload",
+            post(routes::deployments::upload).layer(DefaultBodyLimit::disable()),
         )
         .route("/api/v1/deployments/{id}", get(routes::deployments::get))
         .route(

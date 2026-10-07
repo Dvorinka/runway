@@ -74,11 +74,17 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 
 ## Phase 4 — API, CLI, agentic
 
-- [ ] Full REST `/api/v1` surface: projects, deployments, env vars,
-      domains, logs, teams — OpenAPI documented
-- [ ] Source-upload deploys (tarball → build, no git required)
-- [ ] `runway` CLI: `login`, `link`, `deploy`, `logs`, `env`,
-      `domains`, `open` — GitHub releases + npm + brew
+- [~] Full REST `/api/v1` surface: projects, deployments, env vars
+      (PUT replace + PATCH upsert), domains, logs — done; teams CRUD +
+      OpenAPI spec still open
+- [x] Source-upload deploys: `POST .../deployments/upload` (raw gzip,
+      streamed to `data/uploads`, sha256 commit id, `source_archive`
+      pipeline branch — skips git clone; tarball retained for redeploy)
+- [x] `runway` CLI: `login`, `link`, `deploy --follow`,
+      `logs --follow`, `env list|set|unset`,
+      `domains list|add|remove|assign-cf`, `open` — config in
+      `~/.config/runway`, link in `.runway/project.json`
+      (releases/npm/brew publishing deferred)
 - [ ] Real MCP server: JSON-RPC `tools/list` + `tools/call`,
       streamable HTTP, `ak_` auth
 - [ ] Deploy hooks + outbound webhooks (port event types from devpush)

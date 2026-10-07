@@ -370,6 +370,67 @@ pub async fn put_env(
     Ok(Json(json!({ "ok": true })).into_response())
 }
 
+#[derive(Deserialize)]
+pub struct EnvPatchInput {
+    pub key: String,
+    /// Omit or `delete: true` to unset.
+    pub value: Option<String>,
+    #[serde(default)]
+    pub environment: Option<String>,
+    #[serde(default)]
+    pub delete: bool,
+}
+
+/// Upsert/delete individual env vars — values are masked on GET, so the CLI
+/// cannot round-trip the full list; PATCH is the granular counterpart.
+pub async fn patch_env(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<Vec<EnvPatchInput>>,
+) -> ApiResult<Response> {
+    let mut project = accessible_project(&state, user.user.id, &id).await?;
+    let mut vars = project.env_vars(&state.crypto)?;
+    for p in &body {
+        if p.key.is_empty() || !p.key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            return Err(ApiError::bad_request(format!(
+                "invalid env key '{}'",
+                p.key
+            )));
+        }
+        if let Some(env) = &p.environment {
+            if project
+                .environments()
+                .iter()
+                .all(|e| &e.slug != env && &e.id != env)
+            {
+                return Err(ApiError::bad_request(format!(
+                    "unknown environment '{env}'"
+                )));
+            }
+        }
+        vars.retain(|v| !(v.key == p.key && v.environment == p.environment));
+        if !p.delete {
+            let value = p
+                .value
+                .clone()
+                .ok_or_else(|| ApiError::bad_request("value required unless delete=true"))?;
+            vars.push(runway_core::models::EnvVar {
+                key: p.key.clone(),
+                value,
+                environment: p.environment.clone(),
+            });
+        }
+    }
+    project.set_env_vars(&state.crypto, &vars)?;
+    sqlx::query("UPDATE project SET env_vars = $1, updated_at = now() WHERE id = $2")
+        .bind(&project.env_vars)
+        .bind(&project.id)
+        .execute(&state.db)
+        .await?;
+    Ok(Json(json!({ "ok": true, "count": vars.len() })).into_response())
+}
+
 // ---------------------------------------------------------------------------
 // Deploy tokens
 // ---------------------------------------------------------------------------

@@ -233,6 +233,7 @@ async fn handle_push(state: &AppState, data: &Value) {
             &commit,
             "webhook",
             None,
+            None,
         )
         .await
         {
@@ -306,7 +307,8 @@ async fn handle_pull_request(state: &AppState, data: &Value) {
             &project,
             &branch,
             &commit,
-            "pull_request",
+            "webhook",
+            None,
             None,
         )
         .await

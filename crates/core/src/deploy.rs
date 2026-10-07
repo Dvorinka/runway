@@ -75,6 +75,7 @@ pub async fn create(
     commit: &CommitInfo,
     trigger: &str,
     user_id: Option<i64>,
+    extra_config: Option<Value>,
 ) -> Result<Deployment> {
     let environment = project
         .environment_for_branch(branch)
@@ -82,6 +83,15 @@ pub async fn create(
 
     let env_vars = project.env_vars_for(crypto, &environment.slug)?;
     let env_vars_enc = crypto.encrypt(&serde_json::to_string(&env_vars)?)?;
+
+    let mut config = project.config.clone();
+    if let Some(extra) = extra_config {
+        if let (Some(base), Some(over)) = (config.as_object_mut(), extra.as_object()) {
+            for (k, v) in over {
+                base.insert(k.clone(), v.clone());
+            }
+        }
+    }
 
     let id = token_hex(16);
     sqlx::query(
@@ -101,7 +111,7 @@ pub async fn create(
     .bind(branch)
     .bind(&commit.sha)
     .bind(commit.to_meta())
-    .bind(&project.config)
+    .bind(&config)
     .bind(&env_vars_enc)
     .bind(trigger)
     .bind(user_id)

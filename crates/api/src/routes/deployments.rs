@@ -180,6 +180,7 @@ pub async fn trigger_deployment(
         &info,
         trigger,
         user_id,
+        None,
     )
     .await?)
 }
@@ -254,6 +255,7 @@ pub async fn redeploy(
         &info,
         "user",
         Some(user.user.id),
+        None,
     )
     .await?;
     Ok((
@@ -356,5 +358,83 @@ pub async fn events(
     });
     Ok(Sse::new(stream)
         .keep_alive(KeepAlive::default())
+        .into_response())
+}
+
+/// `POST /api/v1/projects/{id}/deployments/upload` — deploy a local tarball
+/// (gzip) without git. Streams the body to `data/uploads/<id>.tar.gz`; the
+/// pipeline extracts it instead of cloning. Port of devpush's upload-deploy
+/// flow, minus multipart (raw `application/gzip` body keeps CLI trivial).
+pub async fn upload(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    body: axum::body::Body,
+) -> ApiResult<Response> {
+    const MAX_UPLOAD: u64 = 512 * 1024 * 1024; // jarvis: 512MB ceiling; revisit if monorepos hurt
+
+    let project = accessible_project(&state, user.user.id, &id).await?;
+
+    let dep_id = runway_core::slugify::token_hex(16);
+    let dir = std::path::Path::new(&state.settings.data_dir).join("uploads");
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(ApiError::internal)?;
+    let path = dir.join(format!("{dep_id}.tar.gz"));
+
+    let mut file = tokio::fs::File::create(&path)
+        .await
+        .map_err(ApiError::internal)?;
+    use sha2::Digest;
+    let mut hasher = sha2::Sha256::new();
+    let mut size: u64 = 0;
+    let mut stream = body.into_data_stream();
+    let result: ApiResult<()> = async {
+        use tokio::io::AsyncWriteExt;
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(ApiError::internal)?;
+            size += chunk.len() as u64;
+            if size > MAX_UPLOAD {
+                return Err(ApiError::bad_request("upload exceeds 512MB limit"));
+            }
+            hasher.update(&chunk);
+            file.write_all(&chunk).await.map_err(ApiError::internal)?;
+        }
+        file.flush().await.map_err(ApiError::internal)?;
+        if size == 0 {
+            return Err(ApiError::bad_request("empty upload body"));
+        }
+        Ok(())
+    }
+    .await;
+    if let Err(e) = result {
+        let _ = tokio::fs::remove_file(&path).await;
+        return Err(e);
+    }
+
+    let sha = hex::encode(hasher.finalize())[..40].to_string();
+    let branch = project.repo_branch.clone();
+    let commit = CommitInfo {
+        sha,
+        message: "Uploaded via CLI".into(),
+        author: user.user.username.clone(),
+        timestamp: None,
+    };
+    let dep = deploy::create(
+        &state.db,
+        &state.bus,
+        &state.crypto,
+        &project,
+        &branch,
+        &commit,
+        "api",
+        Some(user.user.id),
+        Some(json!({ "source_archive": format!("{dep_id}.tar.gz") })),
+    )
+    .await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(deployment_json(&state, &dep, &project)),
+    )
         .into_response())
 }
