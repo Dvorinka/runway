@@ -98,7 +98,10 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 
 ## Phase 5 — Breadth (port from devpush, in order)
 
-- [ ] Teams, invitations, RBAC + per-project permissions
+- [x] Teams CRUD + invitations + RBAC: create/rename/soft-delete,
+      member role change + removal (last-owner protected, self-leave),
+      `team_invite` (30-day expiry, email via SMTP, accept by address
+      match). Project permissions are team-role based (devpush parity)
 - [ ] Audit log, notifications, deploy button route
 - [ ] Storage provisioning: SQLite, Postgres, Mongo, Redis + volumes
 - [ ] Git providers: Gitea, GitLab, Bitbucket, GitHub Enterprise

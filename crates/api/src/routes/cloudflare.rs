@@ -39,7 +39,7 @@ pub async fn team_role(
     row.ok_or_else(|| ApiError::not_found("team"))
 }
 
-fn require_admin(role: &str) -> ApiResult<()> {
+pub fn require_admin(role: &str) -> ApiResult<()> {
     if matches!(role, "owner" | "admin") {
         Ok(())
     } else {

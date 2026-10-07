@@ -99,8 +99,32 @@ pub fn router(state: AppState) -> Router {
             delete(routes::projects::delete_webhook),
         )
         // Teams + team webhooks
-        .route("/api/v1/teams", get(routes::teams::list))
-        .route("/api/v1/teams/{id}", get(routes::teams::get))
+        .route(
+            "/api/v1/teams",
+            get(routes::teams::list).post(routes::teams::create),
+        )
+        .route(
+            "/api/v1/teams/{id}",
+            get(routes::teams::get)
+                .patch(routes::teams::update)
+                .delete(routes::teams::delete),
+        )
+        .route(
+            "/api/v1/teams/{id}/members/{user_id}",
+            axum::routing::patch(routes::teams::update_member).delete(routes::teams::remove_member),
+        )
+        .route(
+            "/api/v1/teams/{id}/invites",
+            get(routes::teams::list_invites).post(routes::teams::create_invite),
+        )
+        .route(
+            "/api/v1/teams/{id}/invites/{invite_id}",
+            delete(routes::teams::revoke_invite),
+        )
+        .route(
+            "/api/v1/invites/{id}/accept",
+            axum::routing::post(routes::teams::accept_invite),
+        )
         .route(
             "/api/v1/teams/{id}/webhooks",
             get(routes::teams::list_webhooks).post(routes::teams::create_webhook),
