@@ -109,6 +109,19 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/teams/{id}/webhooks/{webhook_id}",
             delete(routes::teams::delete_webhook),
         )
+        // Per-team Cloudflare connection + tunnel (Phase 3 remainder).
+        .route(
+            "/api/v1/teams/{id}/cloudflare",
+            get(routes::cloudflare::status).delete(routes::cloudflare::disconnect),
+        )
+        .route(
+            "/api/v1/teams/{id}/cloudflare/connect",
+            axum::routing::post(routes::cloudflare::connect),
+        )
+        .route(
+            "/api/v1/teams/{id}/cloudflare/zones",
+            get(routes::cloudflare::zones),
+        )
         // MCP (JSON-RPC 2.0) + OpenAPI
         .route("/api/mcp", post(routes::mcp::rpc))
         .route("/api/v1/openapi.json", get(routes::api::openapi))

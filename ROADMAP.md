@@ -65,8 +65,12 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 - [x] One-click custom domain assign (CF DNS API)
       `POST .../domains/{id}/assign-cloudflare`; multi-domain,
       apex + subdomain + redirect types in schema/Traefik
-- [ ] Per-team tunnels for custom domains (port from devpush;
-      team OAuth flow remains)
+- [x] Per-team tunnels: `cloudflare_connection` table, token connect
+      (`POST /teams/{id}/cloudflare/connect`), disconnect with cleanup,
+      per-team `cloudflared-<team>` containers + health loop, zone list;
+      domain assign/remove prefers the team connection, falls back to
+      instance CF config. Team OAuth connect deferred (needs CF OAuth
+      client creds)
 - [x] Tunnel health/restart (5-min reconcile loop + restart policy),
       ingress bookkeeping on domain assign/remove
 - [x] Fallback unchanged: direct IP + ACME (`le` TLS-challenge

@@ -11,6 +11,7 @@ description = "HTTP API + web dashboard backend (axum)"
 anyhow.workspace = true
 axum.workspace = true
 axum-extra.workspace = true
+bollard.workspace = true
 chrono.workspace = true
 futures.workspace = true
 hex.workspace = true

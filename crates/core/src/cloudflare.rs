@@ -46,6 +46,20 @@ impl CloudflareClient {
         Ok(res.json().await?)
     }
 
+    /// `GET /accounts` — devpush picks the first account for a token.
+    pub async fn list_accounts(&self) -> Result<Vec<Value>> {
+        let res: Value = self
+            .http
+            .get(format!("{API_BASE}/accounts"))
+            .bearer_auth(&self.token)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        Ok(res["result"].as_array().cloned().unwrap_or_default())
+    }
+
     // -- Zones ---------------------------------------------------------
 
     pub async fn list_zones(&self) -> Result<Vec<Value>> {

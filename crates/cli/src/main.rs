@@ -125,6 +125,7 @@ async fn main() -> anyhow::Result<()> {
                 github: runway_core::github::GithubService::from_settings(&settings),
                 github_oauth: runway_core::github::GithubService::oauth_only(&settings),
                 logs: runway_core::logs::LogStore::new(&settings.data_dir, bus),
+                docker: runway_core::docker::connect(&settings).ok(),
             };
             let app = runway_api::router(state);
             let listener = tokio::net::TcpListener::bind(&settings.listen_addr).await?;

@@ -1,3 +1,4 @@
+use bollard::Docker;
 use runway_core::crypto::Crypto;
 use runway_core::events::EventBus;
 use runway_core::github::GithubService;
@@ -14,4 +15,6 @@ pub struct AppState {
     pub github: Option<GithubService>,
     pub github_oauth: Option<GithubService>,
     pub logs: LogStore,
+    /// Optional — Cloudflare tunnel handlers degrade when absent.
+    pub docker: Option<Docker>,
 }

@@ -95,6 +95,70 @@ pub async fn run(
         });
     }
 
+    // Per-team tunnels: restart any `cloudflared-<team>` container that
+    // vanished (restart policy covers crashes; this covers removal).
+    {
+        let team_ctx = ctx.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(300));
+            loop {
+                ticker.tick().await;
+                let conns: Vec<runway_core::models::CloudflareConnection> = match sqlx::query_as(
+                    "SELECT * FROM cloudflare_connection WHERE tunnel_id IS NOT NULL",
+                )
+                .fetch_all(&team_ctx.db)
+                .await
+                {
+                    Ok(c) => c,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "team tunnel health query failed");
+                        continue;
+                    }
+                };
+                for conn in conns {
+                    let name = format!("cloudflared-{}", conn.team_id);
+                    let status =
+                        runway_core::tunnel::cloudflared_status(&team_ctx.docker, &name).await;
+                    if status == "running" {
+                        continue;
+                    }
+                    let Ok(Some(token)) = conn.tunnel_token_dec(&team_ctx.crypto) else {
+                        tracing::warn!(team = %conn.team_id, "team tunnel: no token, skipping");
+                        continue;
+                    };
+                    let Some(net) = runway_core::tunnel::traefik_network(&team_ctx.docker).await
+                    else {
+                        tracing::warn!("team tunnel: traefik network not found");
+                        continue;
+                    };
+                    tracing::warn!(team = %conn.team_id, status, "restarting team tunnel container");
+                    match runway_core::tunnel::ensure_cloudflared(
+                        &team_ctx.docker,
+                        &name,
+                        &token,
+                        &net,
+                    )
+                    .await
+                    {
+                        Ok(cid) => {
+                            let _ = sqlx::query(
+                                "UPDATE cloudflare_connection SET tunnel_container_id = $1
+                                 WHERE id = $2",
+                            )
+                            .bind(&cid)
+                            .bind(&conn.id)
+                            .execute(&team_ctx.db)
+                            .await;
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, team = %conn.team_id, "team tunnel restart failed")
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     let jobs_ctx = ctx.clone();
     tokio::spawn(async move { jobs::run(jobs_ctx).await });
 

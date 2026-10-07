@@ -580,14 +580,6 @@ pub async fn assign_cloudflare_domain(
     Path((project_id, domain_id)): Path<(String, i64)>,
 ) -> ApiResult<Response> {
     let project = accessible_project(&state, user.user.id, &project_id).await?;
-    let (Some(token), Some(account_id)) = (
-        state.settings.cf_api_token.clone(),
-        state.settings.cf_account_id.clone(),
-    ) else {
-        return Err(ApiError::bad_request(
-            "cloudflare not configured (CF_API_TOKEN/CF_ACCOUNT_ID)",
-        ));
-    };
     let domain: Option<(String,)> =
         sqlx::query_as("SELECT hostname FROM domain WHERE id = $1 AND project_id = $2")
             .bind(domain_id)
@@ -598,12 +590,43 @@ pub async fn assign_cloudflare_domain(
         return Err(ApiError::not_found("domain"));
     };
 
+    // Team connection wins (devpush assign-dns); instance CF config is
+    // the fallback. Tunnel presence decides the CNAME target either way.
+    let conn: Option<runway_core::models::CloudflareConnection> =
+        sqlx::query_as("SELECT * FROM cloudflare_connection WHERE team_id = $1")
+            .bind(&project.team_id)
+            .fetch_optional(&state.db)
+            .await?;
+    let (token, account_id, tunnel_id) = match &conn {
+        Some(c) => (
+            c.api_token_dec(&state.crypto).map_err(ApiError::from)?,
+            c.account_id.clone(),
+            c.tunnel_id.clone(),
+        ),
+        None => {
+            let (Some(token), Some(account_id)) = (
+                state.settings.cf_api_token.clone(),
+                state.settings.cf_account_id.clone(),
+            ) else {
+                return Err(ApiError::bad_request(
+                    "cloudflare not configured (team connection or CF_API_TOKEN/CF_ACCOUNT_ID)",
+                ));
+            };
+            (
+                token,
+                account_id,
+                runway_core::tunnel::read_tunnel_state(&state.settings.data_dir)
+                    .await
+                    .map(|t| t.tunnel_id),
+            )
+        }
+    };
+
     let cf = runway_core::cloudflare::CloudflareClient::new(token);
-    let tunnel = runway_core::tunnel::read_tunnel_state(&state.settings.data_dir).await;
     // Through the tunnel when it exists (CGNAT), else straight at the app.
-    let target = tunnel
+    let target = tunnel_id
         .as_ref()
-        .map(|t| format!("{}.cfargotunnel.com", t.tunnel_id))
+        .map(|t| format!("{t}.cfargotunnel.com"))
         .unwrap_or_else(|| state.settings.app_hostname.clone());
 
     let rec = cf
@@ -612,8 +635,8 @@ pub async fn assign_cloudflare_domain(
         .map_err(ApiError::from)?
         .ok_or_else(|| ApiError::bad_request(format!("no cloudflare zone covers {hostname}")))?;
 
-    if let Some(t) = &tunnel {
-        cf_tunnel_sync(&cf, &account_id, &t.tunnel_id, Some(&hostname), None).await;
+    if let Some(t) = &tunnel_id {
+        cf_tunnel_sync(&cf, &account_id, t, Some(&hostname), None).await;
     }
 
     sqlx::query(
@@ -661,17 +684,43 @@ pub async fn delete_domain(
     .fetch_optional(&state.db)
     .await?;
 
-    // Best-effort upstream cleanup before the row goes.
+    // Best-effort upstream cleanup before the row goes. Team connection
+    // first — the record lives in whichever CF account created it.
     if let Some((hostname, Some(zone_id), Some(record_id))) = &domain {
-        if let (Some(token), Some(account_id)) = (
-            state.settings.cf_api_token.clone(),
-            state.settings.cf_account_id.clone(),
-        ) {
+        let conn: Option<runway_core::models::CloudflareConnection> =
+            sqlx::query_as("SELECT * FROM cloudflare_connection WHERE team_id = $1")
+                .bind(&project.team_id)
+                .fetch_optional(&state.db)
+                .await?;
+        let creds = match &conn {
+            Some(c) => c
+                .api_token_dec(&state.crypto)
+                .ok()
+                .map(|t| (t, c.account_id.clone(), c.tunnel_id.clone())),
+            None => match (
+                state.settings.cf_api_token.clone(),
+                state.settings.cf_account_id.clone(),
+            ) {
+                (Some(t), Some(a)) => Some((
+                    t, a, None, // instance tunnel id resolved below
+                )),
+                _ => None,
+            },
+        };
+        if let Some((token, account_id, tunnel_id)) = creds {
             let cf = runway_core::cloudflare::CloudflareClient::new(token);
             let _ = cf.delete_dns_record(zone_id, record_id).await;
-            if let Some(t) = runway_core::tunnel::read_tunnel_state(&state.settings.data_dir).await
-            {
-                cf_tunnel_sync(&cf, &account_id, &t.tunnel_id, None, Some(hostname)).await;
+            let tunnel_id = tunnel_id.or_else(|| {
+                // Instance tunnel — read blocking-free from disk state.
+                std::fs::read_to_string(runway_core::tunnel::tunnel_state_path(
+                    &state.settings.data_dir,
+                ))
+                .ok()
+                .and_then(|raw| serde_json::from_str::<runway_core::tunnel::TunnelState>(&raw).ok())
+                .map(|t| t.tunnel_id)
+            });
+            if let Some(t) = tunnel_id {
+                cf_tunnel_sync(&cf, &account_id, &t, None, Some(hostname)).await;
             }
         }
     }

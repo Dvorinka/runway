@@ -603,6 +603,49 @@ pub struct ProjectWebhook {
 }
 
 // ---------------------------------------------------------------------------
+// Cloudflare connection (per-team) — port of devpush cloudflare_connection
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, FromRow)]
+pub struct CloudflareConnection {
+    pub id: String,
+    pub team_id: String,
+    pub account_id: String,
+    pub account_name: String,
+    pub auth_method: String,
+    /// AES-GCM ciphertext.
+    #[serde(skip)]
+    pub api_token: String,
+    #[serde(skip)]
+    pub oauth_refresh_token: Option<String>,
+    pub oauth_expires_at: Option<DateTime<Utc>>,
+    pub tunnel_id: Option<String>,
+    pub tunnel_name: Option<String>,
+    /// AES-GCM ciphertext.
+    #[serde(skip)]
+    pub tunnel_token: Option<String>,
+    pub tunnel_container_id: Option<String>,
+    pub created_by_user_id: Option<i64>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl CloudflareConnection {
+    pub fn has_tunnel(&self) -> bool {
+        self.tunnel_id.is_some() && self.tunnel_token.is_some()
+    }
+    pub fn api_token_dec(&self, crypto: &Crypto) -> Result<String> {
+        crypto.decrypt(&self.api_token)
+    }
+    pub fn tunnel_token_dec(&self, crypto: &Crypto) -> Result<Option<String>> {
+        self.tunnel_token
+            .as_deref()
+            .map(|t| crypto.decrypt(t))
+            .transpose()
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Job queue
 // ---------------------------------------------------------------------------
 
