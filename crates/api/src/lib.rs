@@ -126,6 +126,16 @@ pub fn router(state: AppState) -> Router {
             axum::routing::post(routes::teams::accept_invite),
         )
         .route(
+            "/api/v1/teams/{id}/audit",
+            get(routes::notifications::team_audit),
+        )
+        .route("/api/v1/notifications", get(routes::notifications::list))
+        .route(
+            "/api/v1/notifications/mark-read",
+            axum::routing::post(routes::notifications::mark_read),
+        )
+        .route("/api/deploy", get(routes::notifications::deploy_button))
+        .route(
             "/api/v1/teams/{id}/webhooks",
             get(routes::teams::list_webhooks).post(routes::teams::create_webhook),
         )

@@ -102,7 +102,11 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
       member role change + removal (last-owner protected, self-leave),
       `team_invite` (30-day expiry, email via SMTP, accept by address
       match). Project permissions are team-role based (devpush parity)
-- [ ] Audit log, notifications, deploy button route
+- [x] Audit log (`audit_log`, writes on team/member/invite/deploy
+      mutations, `GET /teams/{id}/audit` admin+), notifications
+      (`notification` table, deploy succeeded/failed fan-out to team,
+      `GET /api/v1/notifications` + mark-read), deploy button
+      (`GET /api/deploy` → provider/repo prefill JSON)
 - [ ] Storage provisioning: SQLite, Postgres, Mongo, Redis + volumes
 - [ ] Git providers: Gitea, GitLab, Bitbucket, GitHub Enterprise
 - [ ] OIDC/SSO, allowlist

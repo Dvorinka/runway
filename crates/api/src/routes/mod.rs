@@ -4,5 +4,6 @@ pub mod cloudflare;
 pub mod deployments;
 pub mod github;
 pub mod mcp;
+pub mod notifications;
 pub mod projects;
 pub mod teams;

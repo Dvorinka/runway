@@ -930,6 +930,21 @@ pub async fn finalize(ctx: &Ctx, deployment_id: &str) -> anyhow::Result<()> {
         "succeeded",
     )
     .await;
+    runway_core::audit::notify_team(
+        &ctx.db,
+        &project.team_id,
+        "deployment.succeeded",
+        &format!("Deployment ready: {}", project.name),
+        runway_core::audit::Notify {
+            link: Some(&format!(
+                "/projects/{}/deployments/{deployment_id}",
+                project.id
+            )),
+            project_id: Some(&project.id),
+            ..Default::default()
+        },
+    )
+    .await;
 
     deploy::enqueue(
         &ctx.db,
@@ -1053,6 +1068,22 @@ pub async fn fail(
             )
             .await;
         }
+        runway_core::audit::notify_team(
+            &ctx.db,
+            &project.team_id,
+            "deployment.failed",
+            &format!("Deployment failed: {}", project.name),
+            runway_core::audit::Notify {
+                body: Some(reason.unwrap_or("Deployment failed")),
+                link: Some(&format!(
+                    "/projects/{}/deployments/{deployment_id}",
+                    project.id
+                )),
+                project_id: Some(&project.id),
+                ..Default::default()
+            },
+        )
+        .await;
     }
     Ok(())
 }

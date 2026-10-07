@@ -4,6 +4,7 @@
 //! pool, Docker access, Traefik dynamic config, git provider clients, and
 //! the Cloudflare DNS/Tunnel client.
 
+pub mod audit;
 pub mod cloudflare;
 pub mod config;
 pub mod crypto;

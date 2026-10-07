@@ -235,6 +235,12 @@ pub async fn create(
         .bind(user.user.id)
         .execute(&state.db)
         .await?;
+    let mut a = runway_core::audit::Audit::new("team.create");
+    a.user_id = Some(user.user.id);
+    a.team_id = Some(id.clone());
+    a.resource_type = Some("team");
+    a.resource_id = Some(id.clone());
+    runway_core::audit::log(&state.db, a).await;
     Ok(Json(json!({ "team": { "id": id, "name": name, "slug": candidate } })).into_response())
 }
 
@@ -279,6 +285,10 @@ pub async fn delete(
         .bind(&team_id)
         .execute(&state.db)
         .await?;
+    let mut a = runway_core::audit::Audit::new("team.delete");
+    a.user_id = Some(user.user.id);
+    a.team_id = Some(team_id);
+    runway_core::audit::log(&state.db, a).await;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
@@ -328,6 +338,13 @@ pub async fn update_member(
     if res.rows_affected() == 0 {
         return Err(ApiError::not_found("member"));
     }
+    let mut a = runway_core::audit::Audit::new("member.role");
+    a.user_id = Some(user.user.id);
+    a.team_id = Some(team_id);
+    a.resource_type = Some("user");
+    a.resource_id = Some(member_id.to_string());
+    a.detail = Some(format!("role={}", body.role));
+    runway_core::audit::log(&state.db, a).await;
     Ok(Json(json!({ "ok": true })).into_response())
 }
 
@@ -367,6 +384,12 @@ pub async fn remove_member(
         .bind(member_id)
         .execute(&state.db)
         .await?;
+    let mut a = runway_core::audit::Audit::new("member.remove");
+    a.user_id = Some(user.user.id);
+    a.team_id = Some(team_id);
+    a.resource_type = Some("user");
+    a.resource_id = Some(member_id.to_string());
+    runway_core::audit::log(&state.db, a).await;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
@@ -464,6 +487,13 @@ pub async fn create_invite(
     )
     .await;
 
+    let mut a = runway_core::audit::Audit::new("invite.create");
+    a.user_id = Some(user.user.id);
+    a.team_id = Some(team_id);
+    a.resource_type = Some("invite");
+    a.resource_id = Some(iid.clone());
+    a.detail = Some(format!("email={email} role={role}"));
+    runway_core::audit::log(&state.db, a).await;
     Ok(Json(json!({ "invite": { "id": iid, "email": email, "role": role } })).into_response())
 }
 
@@ -527,5 +557,11 @@ pub async fn accept_invite(
         .bind(&invite_id)
         .execute(&state.db)
         .await?;
+    let mut a = runway_core::audit::Audit::new("invite.accept");
+    a.user_id = Some(user.user.id);
+    a.team_id = Some(team_id.clone());
+    a.resource_type = Some("invite");
+    a.resource_id = Some(invite_id);
+    runway_core::audit::log(&state.db, a).await;
     Ok(Json(json!({ "ok": true, "team_id": team_id })).into_response())
 }

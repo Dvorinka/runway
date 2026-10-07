@@ -122,6 +122,14 @@ pub async fn create(
         });
 
     let dep = trigger_deployment(&state, &project, &branch, "user", Some(user.user.id)).await?;
+    let mut a = runway_core::audit::Audit::new("deployment.create");
+    a.user_id = Some(user.user.id);
+    a.team_id = Some(project.team_id.clone());
+    a.project_id = Some(project.id.clone());
+    a.resource_type = Some("deployment");
+    a.resource_id = Some(dep.id.clone());
+    a.detail = Some(format!("branch={branch}"));
+    runway_core::audit::log(&state.db, a).await;
     Ok((
         StatusCode::CREATED,
         Json(deployment_json(&state, &dep, &project)),
