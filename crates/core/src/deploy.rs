@@ -51,6 +51,76 @@ impl CommitInfo {
     }
 }
 
+/// Resolve `branch`'s head commit through the project's provider —
+/// GitHub installation tokens for github/GHE, stored connection
+/// tokens for gitea/gitlab. Shared by API routes and the cron tick.
+pub async fn resolve_commit(
+    db: &PgPool,
+    crypto: &Crypto,
+    github: Option<&crate::github::GithubService>,
+    project: &Project,
+    branch: &str,
+) -> Result<CommitInfo> {
+    match project.repo_provider.as_str() {
+        "github" | "github_enterprise" => {
+            let gh =
+                github.ok_or_else(|| Error::Validation("GitHub App is not configured".into()))?;
+            let installation_id = project
+                .github_installation_id
+                .ok_or_else(|| Error::Validation("project has no GitHub installation".into()))?;
+            let token = gh.installation_token(db, crypto, installation_id).await?;
+            let commit = gh
+                .latest_commit(&token, &project.repo_full_name, branch)
+                .await?;
+            Ok(CommitInfo {
+                sha: commit["sha"].as_str().unwrap_or_default().to_string(),
+                message: commit["commit"]["message"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+                author: commit["commit"]["author"]["name"]
+                    .as_str()
+                    .or_else(|| commit["author"]["login"].as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                timestamp: commit["commit"]["author"]["date"]
+                    .as_str()
+                    .map(String::from),
+            })
+        }
+        p @ ("gitea" | "gitlab") => {
+            let conn_id = if p == "gitea" {
+                project.gitea_connection_id
+            } else {
+                project.gitlab_connection_id
+            }
+            .ok_or_else(|| Error::Validation(format!("project has no {p} connection")))?;
+            let conn = crate::git_providers::connection(db, crypto, p, conn_id)
+                .await?
+                .ok_or_else(|| Error::Validation(format!("{p} connection not found")))?;
+            let (owner, repo) = project
+                .repo_full_name
+                .rsplit_once('/')
+                .ok_or_else(|| Error::Validation("invalid repo_full_name".into()))?;
+            let commit = crate::git_providers::Client::new(p, conn)
+                .latest_commit(owner, repo, branch)
+                .await?
+                .ok_or_else(|| {
+                    Error::Validation(format!("branch '{branch}' not found on remote"))
+                })?;
+            Ok(CommitInfo {
+                sha: commit.sha,
+                message: commit.message,
+                author: commit.author,
+                timestamp: commit.timestamp,
+            })
+        }
+        other => Err(Error::Validation(format!(
+            "repo provider '{other}' not supported"
+        ))),
+    }
+}
+
 pub async fn enqueue(db: &PgPool, kind: &str, payload: Value, defer_seconds: i64) -> Result<i64> {
     let run_at = Utc::now() + Duration::seconds(defer_seconds);
     let (id,): (i64,) =
@@ -686,6 +756,7 @@ mod tests {
             github_installation_id: None,
             gitea_connection_id: None,
             gitlab_connection_id: None,
+            remote_node_id: None,
             config: json!({}),
             environments: json!([
                 { "id": "prod", "name": "Production", "slug": "production",

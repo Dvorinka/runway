@@ -49,6 +49,13 @@ fn decode_session(secret: &str, token: &str) -> Option<SessionClaims> {
     .map(|d| d.claims)
 }
 
+/// User id from a session JWT, if valid and unexpired.
+pub(crate) fn session_user_id(secret: &str, token: &str) -> Option<i64> {
+    decode_session(secret, token)
+        .filter(|c| c.exp > Utc::now().timestamp() as u64)
+        .map(|c| c.sub)
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LoginClaims {
     /// Email being signed in.

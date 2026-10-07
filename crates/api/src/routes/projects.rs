@@ -304,6 +304,8 @@ pub struct PatchProject {
     pub description: Option<String>,
     /// Shallow-merged into project.config.
     pub config: Option<Value>,
+    /// Assign to a remote Docker node (null = local daemon).
+    pub remote_node_id: Option<Option<String>>,
 }
 
 pub async fn patch(
@@ -326,14 +328,30 @@ pub async fn patch(
             }
         }
     }
+    if let Some(node) = body.remote_node_id {
+        // null clears the assignment; a value must reference a real node.
+        if let Some(nid) = &node {
+            let exists: bool =
+                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM remote_node WHERE id = $1)")
+                    .bind(nid)
+                    .fetch_one(&state.db)
+                    .await?;
+            if !exists {
+                return Err(ApiError::bad_request("remote node not found"));
+            }
+        }
+        project.remote_node_id = node;
+    }
     let updated: Project = sqlx::query_as(
-        "UPDATE project SET name = $2, description = $3, config = $4, updated_at = now()
+        "UPDATE project SET name = $2, description = $3, config = $4,
+                remote_node_id = $5, updated_at = now()
          WHERE id = $1 RETURNING *",
     )
     .bind(&project.id)
     .bind(&project.name)
     .bind(&project.description)
     .bind(&project.config)
+    .bind(&project.remote_node_id)
     .fetch_one(&state.db)
     .await?;
     Ok(Json(project_json(&state, &updated)).into_response())
@@ -353,6 +371,9 @@ fn project_json(state: &AppState, p: &Project) -> Value {
         "repo_branch": p.repo_branch,
         "repo_status": p.repo_status,
         "github_installation_id": p.github_installation_id,
+        "gitea_connection_id": p.gitea_connection_id,
+        "gitlab_connection_id": p.gitlab_connection_id,
+        "remote_node_id": p.remote_node_id,
         "config": p.config,
         "environments": p.environments,
         "status": p.status,
@@ -920,4 +941,453 @@ pub async fn delete_webhook(
         return Err(ApiError::not_found("webhook"));
     }
     Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+// ---------------------------------------------------------------------------
+// Cron jobs — scheduled deployments (devpush project cron handlers)
+// ---------------------------------------------------------------------------
+
+type CronRow = (
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    bool,
+    Option<chrono::DateTime<chrono::Utc>>,
+    Option<chrono::DateTime<chrono::Utc>>,
+);
+
+fn cron_json(r: &CronRow) -> Value {
+    json!({
+        "id": r.0,
+        "name": r.1,
+        "schedule": r.2,
+        "branch": r.3,
+        "environment_id": r.4,
+        "enabled": r.5,
+        "last_run_at": r.6.map(|t| t.to_rfc3339()),
+        "next_run_at": r.7.map(|t| t.to_rfc3339()),
+    })
+}
+
+/// `GET /projects/{id}/cron` — the project's scheduled jobs.
+pub async fn list_cron(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Response> {
+    let project = accessible_project(&state, user.user.id, &id).await?;
+    let rows: Vec<CronRow> = sqlx::query_as(
+        "SELECT id, name, schedule, branch, environment_id, enabled,
+                last_run_at, next_run_at
+         FROM cron_job WHERE project_id = $1 ORDER BY created_at DESC",
+    )
+    .bind(&project.id)
+    .fetch_all(&state.db)
+    .await?;
+    let jobs: Vec<Value> = rows.iter().map(cron_json).collect();
+    Ok(Json(json!({ "cron_jobs": jobs })).into_response())
+}
+
+#[derive(Deserialize)]
+pub struct CreateCronJob {
+    pub name: String,
+    /// "every N minutes" | "every N hours" | "*/N * * * *" | minutes.
+    pub schedule: String,
+    pub branch: Option<String>,
+    pub environment_id: Option<String>,
+}
+
+/// `POST /projects/{id}/cron` — add a scheduled deployment.
+pub async fn create_cron(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<CreateCronJob>,
+) -> ApiResult<Response> {
+    let project = accessible_project(&state, user.user.id, &id).await?;
+    let name = body.name.trim();
+    let schedule = body.schedule.trim();
+    if name.is_empty() || schedule.is_empty() {
+        return Err(ApiError::bad_request("name and schedule are required"));
+    }
+    let interval = runway_core::cron::parse_schedule(schedule);
+    if interval == 0 {
+        return Err(ApiError::bad_request(
+            "invalid schedule — use 'every N minutes', 'every N hours', '*/N * * * *', or minutes",
+        ));
+    }
+    let branch = body.branch.unwrap_or_else(|| "main".into());
+    let next_run = chrono::Utc::now() + chrono::Duration::minutes(interval as i64);
+    let jid = token_hex(16);
+    let row: CronRow = sqlx::query_as(
+        "INSERT INTO cron_job (id, project_id, name, schedule, branch,
+                               environment_id, next_run_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)
+         RETURNING id, name, schedule, branch, environment_id, enabled,
+                   last_run_at, next_run_at",
+    )
+    .bind(&jid)
+    .bind(&project.id)
+    .bind(name)
+    .bind(schedule)
+    .bind(&branch)
+    .bind(&body.environment_id)
+    .bind(next_run)
+    .fetch_one(&state.db)
+    .await?;
+    Ok((StatusCode::CREATED, Json(cron_json(&row))).into_response())
+}
+
+#[derive(Deserialize)]
+pub struct PatchCronJob {
+    pub enabled: Option<bool>,
+}
+
+/// `PATCH /projects/{id}/cron/{job_id}` — enable/disable.
+pub async fn patch_cron(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path((id, job_id)): Path<(String, String)>,
+    Json(body): Json<PatchCronJob>,
+) -> ApiResult<Response> {
+    let project = accessible_project(&state, user.user.id, &id).await?;
+    let Some(enabled) = body.enabled else {
+        return Err(ApiError::bad_request("nothing to update"));
+    };
+    // Re-enabling a job whose next_run lapsed re-arms it: next tick
+    // fires it and pushes next_run forward by the interval.
+    let row: Option<CronRow> = sqlx::query_as(
+        "UPDATE cron_job SET enabled = $3,
+            next_run_at = CASE WHEN $3 AND (next_run_at IS NULL OR next_run_at < now())
+                THEN now() ELSE next_run_at END,
+            updated_at = now()
+         WHERE id = $1 AND project_id = $2
+         RETURNING id, name, schedule, branch, environment_id, enabled,
+                   last_run_at, next_run_at",
+    )
+    .bind(&job_id)
+    .bind(&project.id)
+    .bind(enabled)
+    .fetch_optional(&state.db)
+    .await?;
+    row.map(|r| Json(cron_json(&r)).into_response())
+        .ok_or_else(|| ApiError::not_found("cron job"))
+}
+
+/// `DELETE /projects/{id}/cron/{job_id}` — remove.
+pub async fn delete_cron(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path((id, job_id)): Path<(String, String)>,
+) -> ApiResult<Response> {
+    let project = accessible_project(&state, user.user.id, &id).await?;
+    let res = sqlx::query("DELETE FROM cron_job WHERE id = $1 AND project_id = $2")
+        .bind(&job_id)
+        .bind(&project.id)
+        .execute(&state.db)
+        .await?;
+    if res.rows_affected() == 0 {
+        return Err(ApiError::not_found("cron job"));
+    }
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+// ---------------------------------------------------------------------------
+// Redirect rules — path-level redirects via Traefik middlewares
+// ---------------------------------------------------------------------------
+
+type RedirectRow = (String, String, String, i32, bool, String);
+
+fn redirect_json(r: &RedirectRow) -> Value {
+    json!({
+        "id": r.0,
+        "source_path": r.1,
+        "target_url": r.2,
+        "status_code": r.3,
+        "enabled": r.4,
+        "created_at": r.5,
+    })
+}
+
+/// Rebuild the project's Traefik config after rule mutations.
+async fn rewrite_traefik(state: &AppState, project: &Project) -> ApiResult<()> {
+    runway_core::traefik::update_project_config(&state.db, project, &state.settings, &[])
+        .await
+        .map_err(ApiError::from)
+}
+
+/// `GET /projects/{id}/redirects`.
+pub async fn list_redirects(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Response> {
+    let project = accessible_project(&state, user.user.id, &id).await?;
+    let rows: Vec<RedirectRow> = sqlx::query_as(
+        "SELECT id, source_path, target_url, status_code, enabled,
+                created_at::text
+         FROM redirect_rule WHERE project_id = $1 ORDER BY created_at",
+    )
+    .bind(&project.id)
+    .fetch_all(&state.db)
+    .await?;
+    let rules: Vec<Value> = rows.iter().map(redirect_json).collect();
+    Ok(Json(json!({ "redirect_rules": rules })).into_response())
+}
+
+#[derive(Deserialize)]
+pub struct CreateRedirect {
+    /// Literal source path, e.g. `/old-blog`.
+    pub source_path: String,
+    /// Absolute target URL, e.g. `https://example.com/new`.
+    pub target_url: String,
+    /// 301/302/307/308 — default 301.
+    pub status_code: Option<i32>,
+}
+
+/// `POST /projects/{id}/redirects`.
+pub async fn create_redirect(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<CreateRedirect>,
+) -> ApiResult<Response> {
+    let project = accessible_project(&state, user.user.id, &id).await?;
+    let source = body.source_path.trim();
+    let target = body.target_url.trim();
+    if !source.starts_with('/') {
+        return Err(ApiError::bad_request("source_path must start with /"));
+    }
+    if !(target.starts_with("http://") || target.starts_with("https://")) {
+        return Err(ApiError::bad_request("target_url must be absolute"));
+    }
+    let status_code = body.status_code.unwrap_or(301);
+    if !matches!(status_code, 301 | 302 | 307 | 308) {
+        return Err(ApiError::bad_request("status_code must be 301/302/307/308"));
+    }
+    let rid = token_hex(16);
+    let row: RedirectRow = sqlx::query_as(
+        "INSERT INTO redirect_rule (id, project_id, source_path, target_url,
+                                    status_code)
+         VALUES ($1,$2,$3,$4,$5)
+         RETURNING id, source_path, target_url, status_code, enabled,
+                   created_at::text",
+    )
+    .bind(&rid)
+    .bind(&project.id)
+    .bind(source)
+    .bind(target)
+    .bind(status_code)
+    .fetch_one(&state.db)
+    .await?;
+    rewrite_traefik(&state, &project).await?;
+    Ok((StatusCode::CREATED, Json(redirect_json(&row))).into_response())
+}
+
+#[derive(Deserialize)]
+pub struct PatchRedirect {
+    pub enabled: Option<bool>,
+    pub source_path: Option<String>,
+    pub target_url: Option<String>,
+    pub status_code: Option<i32>,
+}
+
+/// `PATCH /projects/{id}/redirects/{rid}`.
+pub async fn patch_redirect(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path((id, rid)): Path<(String, String)>,
+    Json(body): Json<PatchRedirect>,
+) -> ApiResult<Response> {
+    let project = accessible_project(&state, user.user.id, &id).await?;
+    if let Some(sc) = body.status_code {
+        if !matches!(sc, 301 | 302 | 307 | 308) {
+            return Err(ApiError::bad_request("status_code must be 301/302/307/308"));
+        }
+    }
+    let row: Option<RedirectRow> = sqlx::query_as(
+        "UPDATE redirect_rule SET
+            enabled = COALESCE($3, enabled),
+            source_path = COALESCE($4, source_path),
+            target_url = COALESCE($5, target_url),
+            status_code = COALESCE($6, status_code)
+         WHERE id = $1 AND project_id = $2
+         RETURNING id, source_path, target_url, status_code, enabled,
+                   created_at::text",
+    )
+    .bind(&rid)
+    .bind(&project.id)
+    .bind(body.enabled)
+    .bind(&body.source_path)
+    .bind(&body.target_url)
+    .bind(body.status_code)
+    .fetch_optional(&state.db)
+    .await?;
+    let Some(row) = row else {
+        return Err(ApiError::not_found("redirect rule"));
+    };
+    rewrite_traefik(&state, &project).await?;
+    Ok(Json(redirect_json(&row)).into_response())
+}
+
+/// `DELETE /projects/{id}/redirects/{rid}`.
+pub async fn delete_redirect(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path((id, rid)): Path<(String, String)>,
+) -> ApiResult<Response> {
+    let project = accessible_project(&state, user.user.id, &id).await?;
+    let res = sqlx::query("DELETE FROM redirect_rule WHERE id = $1 AND project_id = $2")
+        .bind(&rid)
+        .bind(&project.id)
+        .execute(&state.db)
+        .await?;
+    if res.rows_affected() == 0 {
+        return Err(ApiError::not_found("redirect rule"));
+    }
+    rewrite_traefik(&state, &project).await?;
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+// ---------------------------------------------------------------------------
+// Export / import — devpush `project_export` / `project_import`
+// ---------------------------------------------------------------------------
+
+/// `GET /projects/{id}/export` — JSON dump of config + env vars +
+/// redirect rules. Env values are decrypted in the export (devpush
+/// parity — the file is the secrets container; treat it as such).
+pub async fn export_project(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Response> {
+    let project = accessible_project(&state, user.user.id, &id).await?;
+    let vars = project.env_vars(&state.crypto)?;
+    let rules: Vec<RedirectRow> = sqlx::query_as(
+        "SELECT id, source_path, target_url, status_code, enabled,
+                created_at::text
+         FROM redirect_rule WHERE project_id = $1 ORDER BY created_at",
+    )
+    .bind(&project.id)
+    .fetch_all(&state.db)
+    .await?;
+    let body = json!({
+        "version": "1.0",
+        "project": {
+            "name": project.name,
+            "repo_provider": project.repo_provider,
+            "repo_full_name": project.repo_full_name,
+            "repo_base_url": project.repo_base_url,
+            "config": project.config,
+        },
+        "environment_variables": vars,
+        "redirect_rules": rules.iter().map(|r| json!({
+            "source_path": r.1,
+            "target_url": r.2,
+            "status_code": r.3,
+            "enabled": r.4,
+        })).collect::<Vec<_>>(),
+    });
+    Ok((
+        [(
+            axum::http::header::CONTENT_DISPOSITION,
+            format!("attachment; filename=\"{}-export.json\"", project.name),
+        )],
+        Json(body),
+    )
+        .into_response())
+}
+
+/// `POST /projects/{id}/import` — merge an export into the project.
+/// devpush parity: config keys are merged (imported wins), env vars are
+/// appended when (key, environment) isn't already present, redirect
+/// rules are added unconditionally.
+pub async fn import_project(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<Value>,
+) -> ApiResult<Response> {
+    let mut project = accessible_project(&state, user.user.id, &id).await?;
+
+    // config merge
+    if let Some(imported) = body
+        .get("project")
+        .and_then(|p| p.get("config"))
+        .and_then(|c| c.as_object())
+    {
+        let cfg = project
+            .config
+            .as_object_mut()
+            .ok_or_else(|| ApiError::bad_request("project config is not an object"))?;
+        for (k, v) in imported {
+            cfg.insert(k.clone(), v.clone());
+        }
+    }
+
+    // env var merge — skip duplicates on (key, environment)
+    if let Some(imported) = body.get("environment_variables").and_then(|v| v.as_array()) {
+        let mut vars = project.env_vars(&state.crypto)?;
+        let existing: std::collections::HashSet<(String, Option<String>)> = vars
+            .iter()
+            .map(|v| (v.key.clone(), v.environment.clone()))
+            .collect();
+        for ev in imported {
+            let var: runway_core::models::EnvVar = serde_json::from_value(ev.clone())
+                .map_err(|_| ApiError::bad_request("malformed environment_variables entry"))?;
+            if var.key.is_empty() {
+                return Err(ApiError::bad_request("env var key must not be empty"));
+            }
+            if !existing.contains(&(var.key.clone(), var.environment.clone())) {
+                vars.push(var);
+            }
+        }
+        project.set_env_vars(&state.crypto, &vars)?;
+        sqlx::query("UPDATE project SET env_vars = $1, updated_at = now() WHERE id = $2")
+            .bind(&project.env_vars)
+            .bind(&project.id)
+            .execute(&state.db)
+            .await?;
+    }
+
+    // redirect rules — added unconditionally (devpush parity: no dedupe)
+    let mut added = 0i64;
+    if let Some(rules) = body.get("redirect_rules").and_then(|v| v.as_array()) {
+        for r in rules {
+            let source = r.get("source_path").and_then(|v| v.as_str()).unwrap_or("");
+            let target = r.get("target_url").and_then(|v| v.as_str()).unwrap_or("");
+            if source.is_empty() || target.is_empty() {
+                return Err(ApiError::bad_request(
+                    "redirect rule requires source_path and target_url",
+                ));
+            }
+            let status_code = r.get("status_code").and_then(|v| v.as_i64()).unwrap_or(301) as i32;
+            let enabled = r.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true);
+            sqlx::query(
+                "INSERT INTO redirect_rule (id, project_id, source_path,
+                                           target_url, status_code, enabled)
+                 VALUES ($1,$2,$3,$4,$5,$6)",
+            )
+            .bind(token_hex(16))
+            .bind(&project.id)
+            .bind(source)
+            .bind(target)
+            .bind(status_code)
+            .bind(enabled)
+            .execute(&state.db)
+            .await?;
+            added += 1;
+        }
+        rewrite_traefik(&state, &project).await?;
+    }
+
+    sqlx::query("UPDATE project SET config = $1, updated_at = now() WHERE id = $2")
+        .bind(&project.config)
+        .bind(&project.id)
+        .execute(&state.db)
+        .await?;
+
+    Ok(Json(json!({ "ok": true, "redirect_rules_added": added })).into_response())
 }

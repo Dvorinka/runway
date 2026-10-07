@@ -11,9 +11,23 @@ use serde_json::json;
 use runway_core::models::{Team, User, UserIdentity};
 use runway_core::slugify::{slugify, token_hex};
 
+use runway_core::access::is_email_allowed;
+
 use crate::auth::{mint_session, AuthUser};
 use crate::error::{ApiError, ApiResult};
 use crate::state::AppState;
+
+/// Fire the access-denied webhook (best effort — devpush `notify_denied`).
+pub(crate) async fn notify_denied(state: &AppState, email: &str, provider: &str) {
+    let Some(url) = &state.settings.access_denied_webhook else {
+        return;
+    };
+    let _ = reqwest::Client::new()
+        .post(url)
+        .json(&json!({ "email": email, "provider": provider }))
+        .send()
+        .await;
+}
 
 pub async fn github_login(State(state): State<AppState>, jar: CookieJar) -> ApiResult<Response> {
     let Some(gh) = &state.github_oauth else {
@@ -87,6 +101,12 @@ pub async fn github_callback(
         let user = match user {
             Some(u) => u,
             None => {
+                if !is_email_allowed(&state.db, &email).await? {
+                    notify_denied(&state, &email, "github").await;
+                    return Err(ApiError::forbidden(
+                        state.settings.access_denied_message.clone(),
+                    ));
+                }
                 let username = unique_username(&state, &login).await?;
                 sqlx::query_as::<_, User>(
                     "INSERT INTO \"user\" (email, username, name, email_verified)
@@ -121,7 +141,7 @@ pub async fn github_callback(
     Ok((jar, Redirect::to("/")).into_response())
 }
 
-fn session_cookie(state: &AppState, user_id: i64) -> ApiResult<Cookie<'static>> {
+pub(crate) fn session_cookie(state: &AppState, user_id: i64) -> ApiResult<Cookie<'static>> {
     let jwt = mint_session(
         &state.settings.secret_key,
         user_id,
@@ -158,6 +178,13 @@ pub async fn magic_link(
     let email = body.email.trim().to_lowercase();
     if !email.contains('@') {
         return Err(ApiError::bad_request("invalid email"));
+    }
+    // Allowlist gate at request time (devpush denies visibly).
+    if !is_email_allowed(&state.db, &email).await? {
+        notify_denied(&state, &email, "email").await;
+        return Err(ApiError::forbidden(
+            state.settings.access_denied_message.clone(),
+        ));
     }
     let token = crate::auth::mint_login_token(&state.settings.secret_key, &email)
         .map_err(ApiError::internal)?;
@@ -198,6 +225,13 @@ pub async fn magic_link_verify(
     let user = match user {
         Some(u) => u,
         None => {
+            // Allowlist is enforced again here — the link may be shared.
+            if !is_email_allowed(&state.db, &email).await? {
+                notify_denied(&state, &email, "email").await;
+                return Err(ApiError::forbidden(
+                    state.settings.access_denied_message.clone(),
+                ));
+            }
             let local = email.split('@').next().unwrap_or("user");
             let username = unique_username(&state, local).await?;
             sqlx::query_as::<_, User>(
@@ -217,7 +251,7 @@ pub async fn magic_link_verify(
 }
 
 /// Create the personal team + owner membership on first login.
-async fn ensure_personal_team(state: &AppState, user: User) -> ApiResult<User> {
+pub(crate) async fn ensure_personal_team(state: &AppState, user: User) -> ApiResult<User> {
     if user.default_team_id.is_some() {
         return Ok(user);
     }
@@ -263,7 +297,7 @@ pub async fn me(user: AuthUser) -> ApiResult<Response> {
     .into_response())
 }
 
-async fn unique_username(state: &AppState, login: &str) -> ApiResult<String> {
+pub(crate) async fn unique_username(state: &AppState, login: &str) -> ApiResult<String> {
     let base = {
         let s = slugify(login, 50);
         if s.is_empty() {

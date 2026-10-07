@@ -129,11 +129,35 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
       links projects to it — no deploy path); GitHub Enterprise via
       `GITHUB_API_URL` + `repo_base_url` clone URL. Bitbucket
       project linkage + webhook still open (parity: devpush lacks it)
-- [ ] OIDC/SSO, allowlist
-- [ ] Cron jobs (redeploy + HTTP-call mode)
-- [ ] Redirect rules UI, project export/import
-- [ ] Remote nodes — with a real return path (per-node cloudflared or
-      WireGuard); devpush's version is ingress-broken, do not port the bug
+- [x] OIDC/SSO + allowlist: `allowlist` table (email/domain/pattern
+      rules, empty = open signup, `user.id==1` superadmin CRUD under
+      `/api/v1/admin/allowlist`), enforced on magic-link request +
+      verify, GitHub OAuth, OIDC signup (`ACCESS_DENIED_MESSAGE` +
+      `ACCESS_DENIED_WEBHOOK`); OIDC login + session-linking superset
+      of devpush's link-only flow (`OIDC_*` settings, state cookie,
+      encrypted access token, `GET /api/auth/oidc/info`)
+- [x] Cron jobs: `cron_job` table + API CRUD
+      (`/projects/{id}/cron`), `parse_schedule` (every N
+      minutes|hours / `*/N` / minutes), worker tick loop resolves the
+      real branch head (devpush uses a `cron-trigger` placeholder sha
+      — we do better) and creates `trigger='cron'` deployments;
+      `next_run_at` advances even on failure
+- [x] Redirect rules + project export/import: `redirect_rule` CRUD
+      writes Traefik `redirectRegex` middlewares onto deployment
+      routers (regex fixed for full-URL matching — devpush's `^/path`
+      never matches); `GET /projects/{id}/export` +
+      `POST /projects/{id}/import` (config merge, env dedupe on
+      key+environment, rules appended)
+- [x] Remote nodes: `remote_node` CRUD + health probe +
+      `project.remote_node_id` assignment; worker resolves a per-node
+      Docker client (tcp/http) at deploy time with local fallback.
+      **Caveat**: same ingress gap as devpush — Traefik only watches
+      the local daemon, so remote containers get no routes until a
+      return path lands (per-node cloudflared or Traefik provider);
+      TLS columns exist for parity but are unused (devpush admin UI
+      never sets them)
+- [ ] Remote-node return path — per-node cloudflared or a Traefik
+      docker provider per node (the big remaining item)
 - [ ] Optional: self-hosted runner registry (independence from
       devpushhq images)
 

@@ -68,7 +68,37 @@ pub async fn start(ctx: &Ctx, deployment_id: &str) -> anyhow::Result<()> {
 
 async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> anyhow::Result<()> {
     let deployment_id = &deployment.id;
-    let docker = &ctx.docker;
+
+    // Remote node: devpush `get_docker_url_for_project` — an online
+    // non-local node gets its own daemon, anything else falls back to
+    // the local socket.
+    // jarvis: Traefik only watches the local daemon, so remote
+    // containers have no return path yet — same limitation as devpush.
+    let node_client;
+    let docker = match project.remote_node_id.as_deref() {
+        Some(nid) => {
+            let node: Option<runway_core::models::RemoteNode> =
+                sqlx::query_as("SELECT * FROM remote_node WHERE id = $1")
+                    .bind(nid)
+                    .fetch_optional(&ctx.db)
+                    .await?;
+            match node {
+                Some(n) if n.status == "online" && !n.is_local() => {
+                    node_client = runway_core::docker::docker_client(&n.docker_url)?;
+                    tracing::info!(node = %nid, name = %n.name, "deploying on remote node");
+                    &node_client
+                }
+                Some(n) => {
+                    tracing::warn!(node = %nid, status = %n.status,
+                        "remote node unavailable, falling back to local daemon");
+                    &ctx.docker
+                }
+                None => &ctx.docker,
+            }
+        }
+        None => &ctx.docker,
+    };
+
     let log = |msg: &str| {
         let logs = ctx.logs.clone();
         let id = deployment_id.clone();

@@ -32,6 +32,32 @@ pub fn router(state: AppState) -> Router {
             "/api/auth/magic-link/verify",
             get(routes::auth::magic_link_verify),
         )
+        // OIDC / SSO
+        .route("/api/auth/oidc", get(routes::oidc::authorize))
+        .route("/api/auth/oidc/callback", get(routes::oidc::callback))
+        .route("/api/auth/oidc/info", get(routes::oidc::info))
+        // Admin — sign-up allowlist
+        .route(
+            "/api/v1/admin/allowlist",
+            get(routes::admin::list_allowlist).post(routes::admin::add_allowlist_rule),
+        )
+        .route(
+            "/api/v1/admin/allowlist/{id}",
+            delete(routes::admin::delete_allowlist_rule),
+        )
+        // Admin — remote Docker nodes
+        .route(
+            "/api/v1/admin/nodes",
+            get(routes::admin::list_nodes).post(routes::admin::create_node),
+        )
+        .route(
+            "/api/v1/admin/nodes/{id}",
+            delete(routes::admin::delete_node),
+        )
+        .route(
+            "/api/v1/admin/nodes/{id}/health",
+            post(routes::admin::check_node),
+        )
         // GitHub integration
         .route("/api/github/webhook", post(routes::github::webhook))
         // Other git providers — connection CRUD + inbound webhooks
@@ -122,6 +148,34 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/projects/{id}/webhooks",
             get(routes::projects::list_webhooks).post(routes::projects::create_webhook),
+        )
+        // Cron jobs + redirect rules
+        .route(
+            "/api/v1/projects/{id}/cron",
+            get(routes::projects::list_cron).post(routes::projects::create_cron),
+        )
+        .route(
+            "/api/v1/projects/{id}/cron/{job_id}",
+            axum::routing::patch(routes::projects::patch_cron)
+                .delete(routes::projects::delete_cron),
+        )
+        .route(
+            "/api/v1/projects/{id}/redirects",
+            get(routes::projects::list_redirects).post(routes::projects::create_redirect),
+        )
+        .route(
+            "/api/v1/projects/{id}/redirects/{rid}",
+            axum::routing::patch(routes::projects::patch_redirect)
+                .delete(routes::projects::delete_redirect),
+        )
+        // Project export / import
+        .route(
+            "/api/v1/projects/{id}/export",
+            get(routes::projects::export_project),
+        )
+        .route(
+            "/api/v1/projects/{id}/import",
+            post(routes::projects::import_project),
         )
         .route(
             "/api/v1/projects/{id}/webhooks/{webhook_id}",

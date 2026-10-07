@@ -8,6 +8,7 @@
 //! - `jobs`:    claim queued jobs -> deploy pipeline handlers.
 //! - `monitor`: probe containers in `deploy`, sweep observed state.
 
+pub mod cron;
 pub mod deploy;
 pub mod jobs;
 pub mod monitor;
@@ -163,8 +164,11 @@ pub async fn run(
     let jobs_ctx = ctx.clone();
     tokio::spawn(async move { jobs::run(jobs_ctx).await });
 
-    tokio::spawn(async move { monitor::run(ctx).await });
+    let monitor_ctx = ctx.clone();
+    tokio::spawn(async move { monitor::run(monitor_ctx).await });
 
-    tracing::info!("worker loops started (jobs, monitor)");
+    cron::spawn(ctx);
+
+    tracing::info!("worker loops started (jobs, monitor, cron)");
     Ok(())
 }

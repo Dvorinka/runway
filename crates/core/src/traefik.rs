@@ -147,6 +147,44 @@ pub async fn update_project_config(
         }
     }
 
+    // Path-level redirect rules → redirectRegex middlewares attached to
+    // every router serving this project (devpush parity).
+    let rules: Vec<(String, String, String, i32)> = sqlx::query_as(
+        "SELECT id, source_path, target_url, status_code
+         FROM redirect_rule WHERE project_id = $1 AND enabled",
+    )
+    .bind(&project.id)
+    .fetch_all(db)
+    .await?;
+    for (rule_id, source_path, target_url, status_code) in &rules {
+        let mw = format!("redirect-rule-{rule_id}");
+        middlewares.insert(
+            mw.clone(),
+            json!({
+                "redirectRegex": {
+                    // Traefik matches the full URL; anchor past the
+                    // host so `/old` matches `https://h/old`. devpush's
+                    // `^/path` never matches a full URL — fixed here.
+                    "regex": format!("^https?://[^/]+{}(.*)", regex_escape(source_path)),
+                    "replacement": format!("{target_url}$1"),
+                    "permanent": matches!(status_code, 301 | 308),
+                }
+            }),
+        );
+        for router in routers.values_mut() {
+            if router["service"]
+                .as_str()
+                .is_some_and(|s| s.starts_with("deployment-"))
+            {
+                if let Some(arr) = router["middlewares"].as_array_mut() {
+                    arr.push(json!(mw.clone()));
+                } else {
+                    router["middlewares"] = json!([mw.clone()]);
+                }
+            }
+        }
+    }
+
     let doc = json!({ "http": { "routers": routers, "middlewares": middlewares } });
     let yaml = serde_yaml::to_string(&doc)
         .map_err(|e| crate::error::Error::Config(format!("traefik yaml: {e}")))?;
@@ -165,6 +203,19 @@ fn env_hostname_for(env_id: Option<&str>, project: &Project, settings: &Settings
             project.environment_hostname(&slug, settings)
         }
     }
+}
+
+/// Escape regex metacharacters in a literal path (devpush `re.escape`).
+fn regex_escape(s: &str) -> String {
+    s.chars()
+        .flat_map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '/' | '-' | '_' | ' ' | '~') {
+                c.to_string().chars().collect::<Vec<_>>()
+            } else {
+                vec!['\\', c]
+            }
+        })
+        .collect()
 }
 
 /// Delete a project's dynamic config entirely.

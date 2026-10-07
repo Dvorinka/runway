@@ -73,6 +73,18 @@ pub struct Settings {
     /// X-Gitlab-Token on inbound push events.
     pub gitea_webhook_secret: Option<String>,
     pub gitlab_webhook_secret: Option<String>,
+
+    // OIDC / SSO (login + account link)
+    pub oidc_client_id: Option<String>,
+    pub oidc_client_secret: Option<String>,
+    /// e.g. `https://idp.example.com/.well-known/openid-configuration`
+    pub oidc_discovery_url: Option<String>,
+    pub oidc_display_name: String,
+
+    /// Sign-up allowlist UX — message + optional webhook on denial.
+    pub access_denied_message: String,
+    pub access_denied_webhook: Option<String>,
+
     /// Session cookie name.
     pub session_cookie: String,
     /// Session lifetime in seconds.
@@ -150,6 +162,15 @@ impl Settings {
             github_api_url: env_or("GITHUB_API_URL", "https://api.github.com"),
             gitea_webhook_secret: opt("GITEA_WEBHOOK_SECRET"),
             gitlab_webhook_secret: opt("GITLAB_WEBHOOK_SECRET"),
+            oidc_client_id: opt("OIDC_CLIENT_ID"),
+            oidc_client_secret: opt("OIDC_CLIENT_SECRET"),
+            oidc_discovery_url: opt("OIDC_DISCOVERY_URL"),
+            oidc_display_name: env_or("OIDC_DISPLAY_NAME", "SSO"),
+            access_denied_message: env_or(
+                "ACCESS_DENIED_MESSAGE",
+                "Sign-in not allowed for this email.",
+            ),
+            access_denied_webhook: opt("ACCESS_DENIED_WEBHOOK"),
             session_cookie: env_or("SESSION_COOKIE", "runway_session"),
             session_max_age: env_u64("SESSION_MAX_AGE", 60 * 60 * 24 * 30),
             smtp_host: opt("SMTP_HOST"),
@@ -179,6 +200,13 @@ impl Settings {
     /// True when the GitHub OAuth login flow is configured.
     pub fn github_oauth_configured(&self) -> bool {
         self.github_client_id.is_some() && self.github_client_secret.is_some()
+    }
+
+    /// True when OIDC SSO is fully configured.
+    pub fn oidc_configured(&self) -> bool {
+        self.oidc_client_id.is_some()
+            && self.oidc_client_secret.is_some()
+            && self.oidc_discovery_url.is_some()
     }
 
     pub fn traefik_dir(&self) -> PathBuf {
@@ -267,6 +295,12 @@ pub(crate) fn test_settings() -> Settings {
         github_api_url: "https://api.github.com".into(),
         gitea_webhook_secret: None,
         gitlab_webhook_secret: None,
+        oidc_client_id: None,
+        oidc_client_secret: None,
+        oidc_discovery_url: None,
+        oidc_display_name: "SSO".into(),
+        access_denied_message: "Sign-in not allowed for this email.".into(),
+        access_denied_webhook: None,
         session_cookie: "runway_session".into(),
         session_max_age: 2592000,
         smtp_host: None,

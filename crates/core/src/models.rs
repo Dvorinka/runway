@@ -158,6 +158,7 @@ pub struct Project {
     pub github_installation_id: Option<i64>,
     pub gitea_connection_id: Option<i64>,
     pub gitlab_connection_id: Option<i64>,
+    pub remote_node_id: Option<String>,
     pub config: Value,
     pub environments: Value,
     /// AES-GCM ciphertext holding a `Vec<EnvVar>` JSON array.
@@ -602,6 +603,35 @@ pub struct ProjectWebhook {
     pub updated_at: DateTime<Utc>,
 }
 
+/// Remote Docker node — port of devpush `RemoteNode`. TLS material is
+/// AES-GCM ciphertext; devpush's admin UI never populates it, the
+/// columns exist for schema parity (tcp:// URLs are the working path).
+#[derive(Debug, Clone, Serialize, FromRow)]
+pub struct RemoteNode {
+    pub id: String,
+    pub name: String,
+    pub host: String,
+    pub docker_url: String,
+    #[serde(skip)]
+    pub tls_ca: Option<String>,
+    #[serde(skip)]
+    pub tls_cert: Option<String>,
+    #[serde(skip)]
+    pub tls_key: Option<String>,
+    pub labels: Value,
+    pub status: String,
+    pub max_deployments: i32,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl RemoteNode {
+    /// devpush `is_local` — empty or docker-proxy URL means local daemon.
+    pub fn is_local(&self) -> bool {
+        self.docker_url.is_empty() || self.docker_url.starts_with("docker-proxy")
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Cloudflare connection (per-team) — port of devpush cloudflare_connection
 // ---------------------------------------------------------------------------
@@ -742,6 +772,7 @@ mod tests {
             github_installation_id: None,
             gitea_connection_id: None,
             gitlab_connection_id: None,
+            remote_node_id: None,
             config: json!({}),
             environments: envs,
             env_vars: String::new(),

@@ -16,6 +16,8 @@ chrono.workspace = true
 futures.workspace = true
 hex.workspace = true
 jsonwebtoken.workspace = true
+rand.workspace = true
+regex.workspace = true
 reqwest.workspace = true
 runway-core = { path = "../core" }
 runway-worker = { path = "../worker" }
