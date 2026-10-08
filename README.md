@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="web/public/runway-mark.svg" alt="Runway" width="120">
+  <img src="docs/assets/readme-logo.svg" alt="Runway" width="120">
 </p>
 
 <h1 align="center">Runway</h1>
