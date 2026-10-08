@@ -69,6 +69,33 @@ fn deployment_json(state: &AppState, d: &Deployment, project: &Project) -> Value
     })
 }
 
+/// `GET /api/v1/deployments` — latest deployments across all projects the
+/// user can see. Powers the global Deployments view + dashboard.
+pub async fn index(user: AuthUser, State(state): State<AppState>) -> ApiResult<Response> {
+    let projects = crate::routes::projects::user_projects(&state, user.user.id).await?;
+    let ids: Vec<&str> = projects.iter().map(|p| p.id.as_str()).collect();
+    let by_id: std::collections::HashMap<&str, &Project> =
+        projects.iter().map(|p| (p.id.as_str(), p)).collect();
+    let deployments: Vec<Deployment> = sqlx::query_as(
+        "SELECT * FROM deployment WHERE project_id = ANY($1) \
+         ORDER BY created_at DESC LIMIT 50",
+    )
+    .bind(&ids)
+    .fetch_all(&state.db)
+    .await?;
+    let items: Vec<Value> = deployments
+        .iter()
+        .filter_map(|d| {
+            by_id.get(d.project_id.as_str()).map(|p| {
+                let mut v = deployment_json(&state, d, p);
+                v["project_name"] = json!(p.name);
+                v
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "deployments": items })).into_response())
+}
+
 pub async fn list(
     user: AuthUser,
     State(state): State<AppState>,
@@ -121,7 +148,34 @@ pub async fn create(
             }
         });
 
-    let dep = trigger_deployment(&state, &project, &branch, "user", Some(user.user.id)).await?;
+    let has_remote = match project.repo_provider.as_str() {
+        "github" | "github_enterprise" => project.github_installation_id.is_some(),
+        "gitea" => project.gitea_connection_id.is_some(),
+        "gitlab" => project.gitlab_connection_id.is_some(),
+        "bitbucket" => project.bitbucket_connection_id.is_some(),
+        _ => false,
+    };
+
+    let dep = if has_remote {
+        trigger_deployment(&state, &project, &branch, "user", Some(user.user.id)).await?
+    } else {
+        // No git remote — redeploy the latest uploaded archive on this branch.
+        let prev: Option<Deployment> = sqlx::query_as(
+            "SELECT * FROM deployment WHERE project_id = $1 AND branch = $2 \
+             AND config->>'source_archive' IS NOT NULL \
+             ORDER BY created_at DESC LIMIT 1",
+        )
+        .bind(&project.id)
+        .bind(&branch)
+        .fetch_optional(&state.db)
+        .await?;
+        let Some(prev) = prev else {
+            return Err(ApiError::bad_request(
+                "project has no git remote — deploy via `runway deploy` first",
+            ));
+        };
+        redeploy_dep(&state, user.user.id, &prev, &project).await?
+    };
     let mut a = runway_core::audit::Audit::new("deployment.create");
     a.user_id = Some(user.user.id);
     a.team_id = Some(project.team_id.clone());
@@ -227,13 +281,13 @@ pub async fn skip(
     Ok(Json(json!({ "ok": true })).into_response())
 }
 
-/// Redeploy: same branch + same commit, fresh deployment.
-pub async fn redeploy(
-    user: AuthUser,
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> ApiResult<Response> {
-    let (dep, project) = accessible_deployment(&state, user.user.id, &id).await?;
+/// Shared redeploy: same branch + commit + source archive as `dep`.
+async fn redeploy_dep(
+    state: &AppState,
+    user_id: i64,
+    dep: &Deployment,
+    project: &Project,
+) -> ApiResult<Deployment> {
     let info = CommitInfo {
         sha: dep.commit_sha.clone(),
         message: dep
@@ -254,18 +308,48 @@ pub async fn redeploy(
             .and_then(|v| v.as_str())
             .map(String::from),
     };
-    let new_dep = deploy::create(
+    let extra = dep
+        .config
+        .get("source_archive")
+        .cloned()
+        .map(|a| json!({ "source_archive": a }));
+    if let Some(archive) = dep.config.get("source_archive").and_then(|v| v.as_str()) {
+        let safe = archive
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-');
+        let exists = safe
+            && std::path::Path::new(&state.settings.data_dir)
+                .join("uploads")
+                .join(archive)
+                .exists();
+        if !exists {
+            return Err(ApiError::bad_request(
+                "uploaded source no longer retained — deploy again via `runway deploy`",
+            ));
+        }
+    }
+    Ok(deploy::create(
         &state.db,
         &state.bus,
         &state.crypto,
-        &project,
+        project,
         &dep.branch,
         &info,
         "user",
-        Some(user.user.id),
-        None,
+        Some(user_id),
+        extra,
     )
-    .await?;
+    .await?)
+}
+
+/// Redeploy: same branch + same commit, fresh deployment.
+pub async fn redeploy(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Response> {
+    let (dep, project) = accessible_deployment(&state, user.user.id, &id).await?;
+    let new_dep = redeploy_dep(&state, user.user.id, &dep, &project).await?;
     Ok((
         StatusCode::CREATED,
         Json(deployment_json(&state, &new_dep, &project)),

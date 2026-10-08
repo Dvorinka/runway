@@ -417,6 +417,28 @@ pub async fn app_status(_user: AuthUser, State(state): State<AppState>) -> ApiRe
     .into_response())
 }
 
+/// True when a hostname is reachable from the public Internet —
+/// i.e. GitHub could deliver webhooks to it.
+fn is_public_hostname(host: &str) -> bool {
+    let host = host.split(':').next().unwrap_or(host);
+    if host.is_empty() || host.parse::<std::net::IpAddr>().is_ok() {
+        return false;
+    }
+    let local = [
+        "localhost",
+        "local",
+        "test",
+        "internal",
+        "invalid",
+        "lan",
+        "home",
+    ];
+    !local
+        .iter()
+        .any(|t| host == *t || host.ends_with(&format!(".{t}")))
+        && host.contains('.')
+}
+
 /// `GET /api/v1/github/app/register` — admin only. Returns an
 /// auto-submitting HTML form that POSTs the manifest to GitHub; GitHub
 /// then redirects to `app_callback` with `?code=`.
@@ -434,13 +456,12 @@ pub async fn app_register(
     let scheme = &state.settings.url_scheme;
     let host = &state.settings.app_hostname;
     let base = format!("{scheme}://{host}");
-    let manifest = json!({
+    // GitHub validates the webhook URL is publicly reachable at registration —
+    // omit it entirely on localhost/intranet installs (push events can't reach
+    // them anyway) rather than failing manifest validation.
+    let mut manifest = json!({
         "name": format!("runway-{}", host.replace('.', "-")),
         "url": base,
-        "hook_attributes": {
-            "url": format!("{base}/api/github/webhook"),
-            "active": true,
-        },
         "redirect_url": format!("{base}/api/v1/github/app/callback"),
         "callback_urls": [base],
         "setup_url": format!("{base}/settings"),
@@ -451,8 +472,14 @@ pub async fn app_register(
             "pull_requests": "read",
             "statuses": "write",
         },
-        "default_events": ["push", "pull_request", "repository"],
     });
+    if is_public_hostname(host) {
+        manifest["hook_attributes"] = json!({
+            "url": format!("{base}/api/github/webhook"),
+            "active": true,
+        });
+        manifest["default_events"] = json!(["push", "pull_request", "repository"]);
+    }
     let state_token = runway_core::slugify::token_hex(16);
     let cookie = Cookie::build(("gh_app_state", state_token.clone()))
         .path("/")
@@ -560,4 +587,21 @@ pub async fn app_callback(
             .build(),
     );
     Ok((jar, Redirect::to("/settings")).into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_public_hostname;
+
+    #[test]
+    fn public_hostname() {
+        assert!(is_public_hostname("runway.example.com"));
+        assert!(is_public_hostname("deploys.example.co.uk:443"));
+        assert!(!is_public_hostname("runway.localhost"));
+        assert!(!is_public_hostname("localhost"));
+        assert!(!is_public_hostname("runway.lan"));
+        assert!(!is_public_hostname("192.168.1.10"));
+        assert!(!is_public_hostname("runway")); // single-label
+        assert!(!is_public_hostname(""));
+    }
 }

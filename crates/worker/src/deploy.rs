@@ -349,6 +349,26 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
              (cp runway.json /out/.runway.json 2>/dev/null || true) && \
              echo 'Static output published'"
         ));
+        // Analytics snippet: injected post-publish into every .html under /out.
+        // Passed via env so arbitrary HTML never touches shell interpolation.
+        let snippet = config
+            .get("analytics_snippet")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty());
+        if let Some(s) = snippet {
+            env.push(format!("RUNWAY_ANALYTICS_SNIPPET={s}"));
+            commands.push(
+                "if command -v node >/dev/null 2>&1; then \
+                 echo 'Injecting analytics snippet...'; \
+                 node -e 'const fs=require(\"fs\"),p=require(\"path\"),s=process.env.RUNWAY_ANALYTICS_SNIPPET; \
+                 function w(d){for(const f of fs.readdirSync(d)){const q=p.join(d,f); \
+                 if(fs.statSync(q).isDirectory()){w(q)}else if(f.endsWith(\".html\")){let h=fs.readFileSync(q,\"utf8\"); \
+                 if(!h.includes(s)){h=h.includes(\"</body>\")?h.replace(\"</body>\",s+\"</body>\"):h+s;fs.writeFileSync(q,h)}}}} \
+                 w(\"/out\")'; \
+                 else echo 'Analytics snippet skipped (node unavailable)'; fi"
+                    .to_string(),
+            );
+        }
     } else {
         commands.push("echo 'Starting application...'".into());
         commands.push(config_command("start_command", cfg_str("start_command")));

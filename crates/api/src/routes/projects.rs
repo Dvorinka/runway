@@ -8,7 +8,7 @@ use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use runway_core::models::{DeployToken, Domain, Environment, Project};
+use runway_core::models::{DeployToken, Deployment, Domain, Environment, Project};
 use runway_core::slugify::token_hex;
 
 use crate::auth::AuthUser;
@@ -19,7 +19,7 @@ use crate::state::AppState;
 // Helpers
 // ---------------------------------------------------------------------------
 
-async fn user_projects(state: &AppState, user_id: i64) -> ApiResult<Vec<Project>> {
+pub(crate) async fn user_projects(state: &AppState, user_id: i64) -> ApiResult<Vec<Project>> {
     Ok(sqlx::query_as::<_, Project>(
         "SELECT p.* FROM project p
          JOIN team_member tm ON tm.team_id = p.team_id
@@ -64,6 +64,14 @@ async fn default_team_id(state: &AppState, user: &runway_core::models::User) -> 
 
 pub async fn list(user: AuthUser, State(state): State<AppState>) -> ApiResult<Response> {
     let projects = user_projects(&state, user.user.id).await?;
+    let latest: Vec<Deployment> = sqlx::query_as(
+        "SELECT DISTINCT ON (project_id) * FROM deployment \
+         ORDER BY project_id, created_at DESC",
+    )
+    .fetch_all(&state.db)
+    .await?;
+    let latest_by_project: std::collections::HashMap<&str, &Deployment> =
+        latest.iter().map(|d| (d.project_id.as_str(), d)).collect();
     let items: Vec<Value> = projects
         .iter()
         .map(|p| {
@@ -74,9 +82,22 @@ pub async fn list(user: AuthUser, State(state): State<AppState>) -> ApiResult<Re
                 "url": p.url(&state.settings),
                 "repo_provider": p.repo_provider,
                 "repo_full_name": p.repo_full_name,
+                "repo_branch": p.repo_branch,
                 "repo_status": p.repo_status,
+                "preset": p.config.get("preset"),
                 "environments": p.environments,
                 "created_at": p.created_at,
+                "latest_deployment": latest_by_project.get(p.id.as_str()).map(|d| json!({
+                    "id": d.id,
+                    "status": d.status,
+                    "conclusion": d.conclusion,
+                    "commit_sha": d.commit_sha,
+                    "commit_meta": d.commit_meta,
+                    "branch": d.branch,
+                    "environment_id": d.environment_id,
+                    "created_at": d.created_at,
+                    "concluded_at": d.concluded_at,
+                })),
             })
         })
         .collect();

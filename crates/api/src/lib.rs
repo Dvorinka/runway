@@ -272,6 +272,7 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/projects/{id}/deployments/upload",
             post(routes::deployments::upload).layer(DefaultBodyLimit::disable()),
         )
+        .route("/api/v1/deployments", get(routes::deployments::index))
         .route("/api/v1/deployments/{id}", get(routes::deployments::get))
         .route(
             "/api/v1/deployments/{id}/cancel",
