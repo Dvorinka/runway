@@ -11,13 +11,15 @@ import {
   type Webhook,
 } from "@/lib/api";
 import { Badge, Button, Card, Input, Skeleton, StatusDot, statusVariant } from "@/components/ui";
-import { timeAgo } from "@/lib/utils";
+import { filesToTarGz } from "@/lib/tarball";
+import { duration, firstLine, timeAgo } from "@/lib/utils";
 import { useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 
 const TABS = [
   "deployments",
   "environment",
+  "analytics",
   "cron",
   "redirects",
   "domains",
@@ -25,6 +27,143 @@ const TABS = [
   "settings",
 ] as const;
 type Tab = (typeof TABS)[number];
+
+type AnalyticsProvider = "none" | "umami" | "rybbit" | "plausible" | "custom";
+
+function buildSnippet(p: AnalyticsProvider, fields: { siteId: string; src: string; domain: string; custom: string }): string {
+  switch (p) {
+    case "umami":
+      return `<script defer src="${fields.src || "https://cloud.umami.is/script.js"}" data-website-id="${fields.siteId}"></script>`;
+    case "rybbit":
+      return `<script defer src="${fields.src || "https://app.rybbit.io/api/script.js"}" data-site-id="${fields.siteId}"></script>`;
+    case "plausible":
+      return `<script defer data-domain="${fields.domain}" src="https://plausible.io/js/script.js"></script>`;
+    case "custom":
+      return fields.custom.trim();
+    default:
+      return "";
+  }
+}
+
+function Analytics({ id }: { id: string }) {
+  const [provider, setProvider] = useState<AnalyticsProvider>("none");
+  const [siteId, setSiteId] = useState("");
+  const [src, setSrc] = useState("");
+  const [domain, setDomain] = useState("");
+  const [custom, setCustom] = useState("");
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState("");
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    api
+      .project(id)
+      .then((p) => {
+        const a = (p.config?.analytics ?? {}) as Record<string, string>;
+        setProvider((a.provider as AnalyticsProvider) ?? "none");
+        setSiteId(a.site_id ?? "");
+        setSrc(a.src ?? "");
+        setDomain(a.domain ?? "");
+        setCustom(a.custom ?? "");
+      })
+      .catch(() => {})
+      .finally(() => setLoaded(true));
+  }, [id]);
+
+  const snippet = buildSnippet(provider, { siteId, src, domain, custom });
+  const needsFields =
+    ((provider === "umami" || provider === "rybbit") && !siteId) ||
+    (provider === "plausible" && !domain) ||
+    (provider === "custom" && !custom.trim());
+
+  async function save() {
+    setError("");
+    setSaved(false);
+    try {
+      await api.patchProject(id, {
+        config: {
+          analytics: { provider, site_id: siteId, src, domain, custom },
+          analytics_snippet: provider === "none" ? null : snippet,
+        },
+      });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "save failed");
+    }
+  }
+
+  if (!loaded) return <Skeleton className="h-40" />;
+
+  return (
+    <Card className="max-w-2xl p-5">
+      <h2 className="mb-1 text-sm font-medium">Web analytics</h2>
+      <p className="mb-4 text-xs text-muted-foreground">
+        Injects a tracking snippet into every HTML page on the next static deploy.
+        Works with Umami, Rybbit, Plausible, or any provider's script tag.
+      </p>
+      <div className="grid gap-3">
+        <select
+          className={selectCls}
+          value={provider}
+          onChange={(e) => setProvider(e.target.value as AnalyticsProvider)}
+        >
+          <option value="none">Disabled</option>
+          <option value="umami">Umami</option>
+          <option value="rybbit">Rybbit</option>
+          <option value="plausible">Plausible</option>
+          <option value="custom">Custom snippet</option>
+        </select>
+        {(provider === "umami" || provider === "rybbit") && (
+          <>
+            <Input
+              placeholder={provider === "umami" ? "Website ID" : "Site ID"}
+              value={siteId}
+              onChange={(e) => setSiteId(e.target.value)}
+            />
+            <Input
+              placeholder={
+                provider === "umami"
+                  ? "Script URL (default: cloud.umami.is)"
+                  : "Script URL (default: app.rybbit.io)"
+              }
+              value={src}
+              onChange={(e) => setSrc(e.target.value)}
+            />
+          </>
+        )}
+        {provider === "plausible" && (
+          <Input
+            placeholder="Domain (e.g. example.com)"
+            value={domain}
+            onChange={(e) => setDomain(e.target.value)}
+          />
+        )}
+        {provider === "custom" && (
+          <textarea
+            value={custom}
+            onChange={(e) => setCustom(e.target.value)}
+            placeholder="<script defer src=…></script>"
+            rows={3}
+            className="w-full rounded-md border border-border bg-transparent px-3 py-2 font-mono text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+          />
+        )}
+        {provider !== "none" && !needsFields && (
+          <pre className="overflow-x-auto rounded-md border border-border bg-black/40 p-3 font-mono text-xs text-muted-foreground">
+            {snippet}
+          </pre>
+        )}
+        <Err msg={error} />
+        <div className="flex items-center gap-3">
+          <Button size="sm" onClick={save} disabled={provider !== "none" && needsFields}>
+            Save
+          </Button>
+          {saved && <span className="text-xs text-muted-foreground">Saved — applies to the next deploy.</span>}
+        </div>
+      </div>
+    </Card>
+  );
+}
 
 const selectCls =
   "h-9 w-full rounded-md border border-border bg-transparent px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring";
@@ -34,7 +173,11 @@ function Err({ msg }: { msg: string }) {
 }
 
 function Deployments({ id }: { id: string }) {
+  const nav = useNavigate();
   const [deployments, setDeployments] = useState<Deployment[] | null>(null);
+  const [deploying, setDeploying] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -46,11 +189,69 @@ function Deployments({ id }: { id: string }) {
     return () => es.close();
   }, [id]);
 
+  async function drop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragging(false);
+    const files = [...(e.dataTransfer?.files ?? [])];
+    if (files.length === 0 || uploading) return;
+    setError("");
+    setUploading(true);
+    try {
+      const single = files[0];
+      const blob =
+        files.length === 1 && single.name.endsWith(".tar.gz")
+          ? single
+          : await filesToTarGz(files);
+      const d = await api.uploadDeploy(id, blob);
+      nav(`/deployments/${d.id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "upload failed");
+      setUploading(false);
+    }
+  }
+
   return (
-    <>
-      <div className="mb-4 flex justify-end">
-        <Button size="sm" onClick={() => api.deploy(id).catch((e) => setError(e.message))}>
-          Deploy now
+    <div
+      onDragOver={(e) => {
+        if (e.dataTransfer.types.includes("Files")) {
+          e.preventDefault();
+          setDragging(true);
+        }
+      }}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragging(false);
+      }}
+      onDrop={drop}
+      className="relative"
+    >
+      {dragging && (
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-lg border-2 border-dashed border-primary/60 bg-background/80">
+          <div className="text-center">
+            <p className="font-medium">Drop to deploy</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              HTML files, folders, or a .tar.gz — live in seconds
+            </p>
+          </div>
+        </div>
+      )}
+      <div className="mb-4 flex items-center justify-between">
+        <span className="text-xs text-muted-foreground">
+          {uploading ? "Uploading…" : "Tip: drop files here to deploy instantly"}
+        </span>
+        <Button
+          size="sm"
+          disabled={deploying}
+          onClick={() => {
+            setDeploying(true);
+            setError("");
+            api
+              .deploy(id)
+              .then((d) => nav(`/deployments/${d.id}`))
+              .catch((e) => setError(e.message))
+              .finally(() => setDeploying(false));
+          }}
+        >
+          {deploying ? "Deploying…" : "Deploy now"}
         </Button>
       </div>
       <Err msg={error} />
@@ -59,27 +260,42 @@ function Deployments({ id }: { id: string }) {
         {deployments?.map((d) => (
           <Link key={d.id} to={`/deployments/${d.id}`}>
             <Card className="flex items-center justify-between p-4 transition-colors hover:border-muted-foreground/25 hover:bg-accent/50">
-              <div className="flex items-center gap-4">
+              <div className="flex min-w-0 items-center gap-4">
                 <StatusDot status={d.status} conclusion={d.conclusion} />
-                <div>
-                  <div className="font-mono text-sm">{d.commit_sha.slice(0, 7)}</div>
+                <div className="min-w-0">
+                  <div className="truncate text-sm">
+                    <span className="font-mono">{d.commit_sha.slice(0, 7)}</span>
+                    {firstLine(d.commit_meta?.message) && (
+                      <span className="ml-2 text-muted-foreground">
+                        {firstLine(d.commit_meta?.message)}
+                      </span>
+                    )}
+                  </div>
                   <div className="text-xs text-muted-foreground">
                     {d.branch} · {d.environment_id}
+                    {d.commit_meta?.author && ` · ${d.commit_meta.author}`}
                   </div>
                 </div>
-                <Badge variant={statusVariant(d.status, d.conclusion)}>
+                <Badge variant={statusVariant(d.status, d.conclusion)} className="shrink-0">
                   {d.conclusion ?? d.status}
                 </Badge>
               </div>
-              <div className="text-xs text-muted-foreground">{timeAgo(d.created_at)}</div>
+              <div className="shrink-0 text-right text-xs text-muted-foreground">
+                <div>{timeAgo(d.created_at)}</div>
+                {duration(d.created_at, d.concluded_at) && (
+                  <div className="font-mono">{duration(d.created_at, d.concluded_at)}</div>
+                )}
+              </div>
             </Card>
           </Link>
         ))}
         {deployments !== null && deployments.length === 0 && (
-          <p className="text-sm text-muted-foreground">No deployments yet — hit Deploy now.</p>
+          <p className="text-sm text-muted-foreground">
+            No deployments yet — hit Deploy now, or drop files here.
+          </p>
         )}
       </div>
-    </>
+    </div>
   );
 }
 
@@ -87,6 +303,8 @@ function Environment({ id }: { id: string }) {
   const [vars, setVars] = useState<EnvVar[]>([]);
   const [key, setKey] = useState("");
   const [value, setValue] = useState("");
+  const [bulk, setBulk] = useState(false);
+  const [bulkText, setBulkText] = useState("");
   const [error, setError] = useState("");
 
   const load = () => api.getEnv(id).then((r) => setVars(r.env)).catch((e) => setError(e.message));
@@ -107,15 +325,65 @@ function Environment({ id }: { id: string }) {
     }
   }
 
+  async function addBulk(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    const pairs = bulkText
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith("#") && l.includes("="))
+      .map((l) => {
+        const i = l.indexOf("=");
+        return { key: l.slice(0, i).trim(), value: l.slice(i + 1).trim() };
+      })
+      .filter((p) => p.key);
+    if (pairs.length === 0) {
+      setError("no KEY=value lines found");
+      return;
+    }
+    try {
+      await api.patchEnv(id, pairs);
+      setBulkText("");
+      setBulk(false);
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "failed");
+    }
+  }
+
   return (
     <>
-      <form onSubmit={add} className="mb-4 grid grid-cols-[1fr_1fr_auto] gap-2">
-        <Input placeholder="KEY" value={key} onChange={(e) => setKey(e.target.value)} required />
-        <Input placeholder="value" value={value} onChange={(e) => setValue(e.target.value)} />
-        <Button type="submit" size="sm">
-          Add
-        </Button>
-      </form>
+      {bulk ? (
+        <form onSubmit={addBulk} className="mb-4 grid gap-2">
+          <textarea
+            value={bulkText}
+            onChange={(e) => setBulkText(e.target.value)}
+            placeholder={"KEY=value\nANOTHER=thing\n# comments ignored"}
+            rows={6}
+            autoFocus
+            className="w-full rounded-md border border-border bg-transparent px-3 py-2 font-mono text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+          />
+          <div className="flex gap-2">
+            <Button type="submit" size="sm" disabled={!bulkText.trim()}>
+              Add all
+            </Button>
+            <Button type="button" variant="ghost" size="sm" onClick={() => setBulk(false)}>
+              Cancel
+            </Button>
+          </div>
+        </form>
+      ) : (
+        <form onSubmit={add} className="mb-4 grid grid-cols-[1fr_1fr_auto_auto] gap-2">
+          <Input placeholder="KEY" value={key} onChange={(e) => setKey(e.target.value)} required />
+          <Input placeholder="value" value={value} onChange={(e) => setValue(e.target.value)} />
+          <Button type="submit" size="sm">
+            Add
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={() => setBulk(true)}>
+            Paste .env
+          </Button>
+        </form>
+      )}
       <Err msg={error} />
       <div className="stagger grid gap-2">
         {vars.map((v) => (
@@ -544,37 +812,62 @@ export default function ProjectPage() {
   const { id = "" } = useParams();
   const [project, setProject] = useState<Project | null>(null);
   const [tab, setTab] = useState<Tab>("deployments");
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     api.project(id).then(setProject).catch(() => {});
   }, [id]);
 
+  function copyUrl() {
+    if (!project?.url) return;
+    navigator.clipboard
+      .writeText(project.url)
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      })
+      .catch(() => {});
+  }
+
   return (
-    <div className="page-enter mx-auto max-w-5xl p-8">
-      <div className="mb-6 flex items-baseline justify-between">
-        <div>
+    <div className="page-enter mx-auto max-w-5xl p-4 sm:p-8">
+      <div className="mb-6 flex items-center justify-between">
+        <div className="min-w-0">
           <h1 className="text-xl font-semibold">{project?.name ?? "Project"}</h1>
           {project && (
-            <p className="mt-1 text-xs text-muted-foreground">
-              {project.repo_provider}:{project.repo_full_name} · {project.repo_branch}
+            <div className="mt-1.5 flex items-center gap-3 text-xs text-muted-foreground">
+              <span className="font-mono">
+                {project.repo_provider}:{project.repo_full_name}
+              </span>
+              <span className="font-mono">{project.repo_branch}</span>
               {project.url && (
-                <>
-                  {" · "}
-                  <a href={project.url} target="_blank" className="underline">
-                    {project.url}
+                <span className="inline-flex items-center overflow-hidden rounded-md border border-border">
+                  <a
+                    href={project.url}
+                    target="_blank"
+                    className="max-w-40 truncate px-2 py-1 font-mono transition-colors hover:bg-accent hover:text-foreground sm:max-w-none"
+                  >
+                    {project.url.replace(/^https?:\/\//, "")}
                   </a>
-                </>
+                  <button
+                    onClick={copyUrl}
+                    className="border-l border-border px-2 py-1 transition-colors hover:bg-accent hover:text-foreground"
+                    title="Copy URL"
+                  >
+                    {copied ? "✓" : "⧉"}
+                  </button>
+                </span>
               )}
-            </p>
+            </div>
           )}
         </div>
       </div>
-      <div className="mb-6 flex gap-4 border-b border-border">
+      <div className="-mx-4 mb-6 flex gap-4 overflow-x-auto border-b border-border px-4 sm:mx-0 sm:px-0">
         {TABS.map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
-            className={`-mb-px border-b-2 pb-2 text-sm capitalize ${
+            className={`-mb-px shrink-0 border-b-2 pb-2 text-sm capitalize ${
               tab === t
                 ? "border-foreground text-foreground"
                 : "border-transparent text-muted-foreground hover:text-foreground"
@@ -586,6 +879,7 @@ export default function ProjectPage() {
       </div>
       {tab === "deployments" && <Deployments id={id} />}
       {tab === "environment" && <Environment id={id} />}
+      {tab === "analytics" && <Analytics id={id} />}
       {tab === "cron" && <Cron id={id} />}
       {tab === "redirects" && <Redirects id={id} />}
       {tab === "domains" && <Domains id={id} />}

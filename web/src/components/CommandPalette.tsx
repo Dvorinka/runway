@@ -1,6 +1,6 @@
 import { api, type Project } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { Bell, FolderGit2, Plus, Settings, Users } from "lucide-react";
+import { Bell, FolderGit2, LayoutDashboard, Plus, Rocket, Settings, Users } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -13,7 +13,19 @@ interface Item {
 }
 
 const PAGES: Item[] = [
+  {
+    id: "nav:overview",
+    label: "Overview",
+    icon: <LayoutDashboard className="h-4 w-4" />,
+    to: "/",
+  },
   { id: "nav:new", label: "New project", icon: <Plus className="h-4 w-4" />, to: "/projects" },
+  {
+    id: "nav:deployments",
+    label: "Deployments",
+    icon: <Rocket className="h-4 w-4" />,
+    to: "/deployments",
+  },
   { id: "nav:teams", label: "Teams", icon: <Users className="h-4 w-4" />, to: "/teams" },
   {
     id: "nav:notifications",

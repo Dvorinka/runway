@@ -22,3 +22,14 @@ export function elapsed(iso: string): string {
   const m = Math.floor(s / 60);
   return m ? `${m}m ${s % 60}s` : `${s}s`;
 }
+
+export function duration(fromIso: string, toIso: string | null | undefined): string | null {
+  if (!toIso) return null;
+  const s = Math.max(0, Math.floor((new Date(toIso).getTime() - new Date(fromIso).getTime()) / 1000));
+  const m = Math.floor(s / 60);
+  return m ? `${m}m ${s % 60}s` : `${s}s`;
+}
+
+export function firstLine(s?: string): string {
+  return (s ?? "").split("\n")[0].trim();
+}

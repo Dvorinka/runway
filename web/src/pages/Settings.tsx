@@ -313,7 +313,7 @@ function Nodes() {
 
 export default function SettingsPage({ me }: { me: Me }) {
   return (
-    <div className="page-enter mx-auto max-w-5xl p-8">
+    <div className="page-enter mx-auto max-w-5xl p-4 sm:p-8">
       <h1 className="mb-6 text-xl font-semibold">Settings</h1>
       <div className="grid gap-4">
         <GitProviders />

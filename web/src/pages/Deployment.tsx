@@ -1,11 +1,18 @@
 import { api, deploymentLogsStream, type Deployment } from "@/lib/api";
 import { Badge, Button, StatusDot, statusVariant, isRunning } from "@/components/ui";
 import { Ansi } from "@/lib/ansi";
-import { cn, elapsed, timeAgo } from "@/lib/utils";
+import { cn, duration, elapsed, firstLine, timeAgo } from "@/lib/utils";
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 
 const STEPS = ["prepare", "deploy", "finalize", "live"];
+
+// Log lines arrive as "<rfc3339>\t<stream>\t<text>"; render the text.
+const logText = (l: string) => {
+  const i = l.indexOf("\t");
+  const j = i < 0 ? -1 : l.indexOf("\t", i + 1);
+  return j < 0 ? l : l.slice(j + 1);
+};
 
 function Stepper({ dep }: { dep: Deployment }) {
   const idx = Math.max(0, STEPS.indexOf(dep.status));
@@ -74,6 +81,7 @@ export default function DeploymentPage() {
   const [lines, setLines] = useState<string[]>([]);
   const [filter, setFilter] = useState("");
   const [copied, setCopied] = useState(false);
+  const [following, setFollowing] = useState(true);
   const [, setTick] = useState(0);
   const logRef = useRef<HTMLDivElement>(null);
 
@@ -88,6 +96,8 @@ export default function DeploymentPage() {
 
   // Re-fetch the deployment while it is running so status/conclusion settle live.
   const active = dep ? isRunning(dep.status, dep.conclusion) : false;
+  const errMsg =
+    typeof dep?.error === "string" ? dep.error : (dep?.error?.message ?? null);
   useEffect(() => {
     if (!active) return;
     const poll = setInterval(
@@ -102,8 +112,14 @@ export default function DeploymentPage() {
   }, [id, active]);
 
   useEffect(() => {
-    logRef.current?.scrollTo(0, logRef.current.scrollHeight);
-  }, [lines]);
+    if (following) logRef.current?.scrollTo(0, logRef.current.scrollHeight);
+  }, [lines, following]);
+
+  function onLogScroll() {
+    const el = logRef.current;
+    if (!el) return;
+    setFollowing(el.scrollHeight - el.scrollTop - el.clientHeight < 40);
+  }
 
   function copyLogs() {
     navigator.clipboard
@@ -115,8 +131,17 @@ export default function DeploymentPage() {
       .catch(() => {});
   }
 
+  function downloadLogs() {
+    const blob = new Blob([lines.join("\n")], { type: "text/plain" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `deploy-${id.slice(0, 8)}.log`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
   return (
-    <div className="page-enter mx-auto flex h-[calc(100vh-3.5rem)] max-w-5xl flex-col px-8 py-6">
+    <div className="page-enter mx-auto flex h-[calc(100vh-3.5rem)] max-w-5xl flex-col px-4 py-6 sm:px-8">
       <div className="mb-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
           {dep && <StatusDot status={dep.status} conclusion={dep.conclusion} />}
@@ -129,10 +154,13 @@ export default function DeploymentPage() {
             </Badge>
           )}
           {dep && (
-            <span className="text-xs text-muted-foreground">
+            <span className="truncate text-xs text-muted-foreground">
               {dep.branch}
               {dep.environment_id && ` · ${dep.environment_id}`} · {timeAgo(dep.created_at)}
               {active && ` · running ${elapsed(dep.created_at)}`}
+              {!active && duration(dep.created_at, dep.concluded_at) &&
+                ` · took ${duration(dep.created_at, dep.concluded_at)}`}
+              {dep.commit_meta?.author && ` · ${dep.commit_meta.author}`}
             </span>
           )}
         </div>
@@ -164,8 +192,18 @@ export default function DeploymentPage() {
           </Button>
         </div>
       </div>
+      {dep && firstLine(dep.commit_meta?.message) && (
+        <p className="mb-3 truncate text-sm text-muted-foreground">
+          {firstLine(dep.commit_meta?.message)}
+        </p>
+      )}
       {dep && <Stepper dep={dep} />}
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-black/40">
+      {errMsg && (
+        <div className="mb-4 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 font-mono text-xs text-red-400">
+          {errMsg}
+        </div>
+      )}
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-black/40">
         <div className="flex items-center justify-between border-b border-border px-3 py-2">
           <span className="flex items-center gap-2 text-xs text-muted-foreground">
             {active ? (
@@ -193,10 +231,17 @@ export default function DeploymentPage() {
             >
               {copied ? "copied" : "copy"}
             </button>
+            <button
+              className="text-xs text-muted-foreground transition-colors hover:text-foreground"
+              onClick={downloadLogs}
+            >
+              download
+            </button>
           </div>
         </div>
         <div
           ref={logRef}
+          onScroll={onLogScroll}
           className="flex-1 overflow-auto p-4 font-mono text-xs leading-relaxed text-zinc-300"
         >
           {lines.length === 0 ? (
@@ -204,17 +249,25 @@ export default function DeploymentPage() {
           ) : (
             lines.map((l, i) =>
               filter &&
-              !l
+              !logText(l)
                 .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "")
                 .toLowerCase()
                 .includes(filter.toLowerCase()) ? null : (
                 <div key={i} className="whitespace-pre-wrap break-all">
-                  <Ansi text={l} />
+                  <Ansi text={logText(l)} />
                 </div>
               ),
             )
           )}
         </div>
+        {!following && (
+          <button
+            onClick={() => setFollowing(true)}
+            className="absolute bottom-3 right-3 rounded-md border border-border bg-card px-2.5 py-1 text-xs text-muted-foreground shadow-lg transition-colors hover:text-foreground"
+          >
+            ↓ latest
+          </button>
+        )}
       </div>
     </div>
   );

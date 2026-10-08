@@ -34,10 +34,14 @@ export default function Layout({ me, children }: { me: Me; children: React.React
   const nav = useNavigate();
   const [unread, setUnread] = useState(0);
   useEffect(() => {
-    api
-      .notifications()
-      .then((r) => setUnread(r.unread))
-      .catch(() => {});
+    const poll = () =>
+      api
+        .notifications()
+        .then((r) => setUnread(r.unread))
+        .catch(() => {});
+    poll();
+    const t = setInterval(poll, 30_000);
+    return () => clearInterval(t);
   }, []);
 
   return (
@@ -45,12 +49,14 @@ export default function Layout({ me, children }: { me: Me; children: React.React
       <header className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur-md">
         <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-8">
           <div className="flex items-center gap-6">
-            <Link to="/projects" className="flex items-center gap-2.5 font-semibold tracking-tight">
+            <Link to="/" className="flex items-center gap-2.5 font-semibold tracking-tight">
               <img src="/runway-mark-white.svg" alt="" className="h-5 w-5" />
               Runway
             </Link>
             <nav className="flex items-center gap-5">
+              <NavItem to="/">Overview</NavItem>
               <NavItem to="/projects">Projects</NavItem>
+              <NavItem to="/deployments">Deployments</NavItem>
               <NavItem to="/teams">Teams</NavItem>
               <NavItem to="/notifications">
                 <span className="flex items-center gap-1.5">

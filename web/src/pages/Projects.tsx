@@ -5,8 +5,9 @@ import {
   type Project,
   type Repo,
 } from "@/lib/api";
-import { Badge, Button, Card, Input, Skeleton, StatusDot } from "@/components/ui";
-import { timeAgo } from "@/lib/utils";
+import { Button, Card, Input, Skeleton, StatusDot } from "@/components/ui";
+import { duration, firstLine, timeAgo } from "@/lib/utils";
+import { LayoutGrid, List, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
@@ -269,64 +270,187 @@ function NewProject({ onDone }: { onDone: () => void }) {
   );
 }
 
+export function ProjectCard({ p }: { p: Project }) {
+  const dep = p.latest_deployment;
+  return (
+    <Link key={p.id} to={`/projects/${p.id}`} className="block">
+      <Card className="flex h-full flex-col gap-3 p-4 transition-colors hover:border-muted-foreground/25 hover:bg-accent/50">
+        <div className="flex items-center justify-between">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="truncate font-medium">{p.name}</span>
+            {p.preset && (
+              <span className="shrink-0 rounded border border-border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
+                {p.preset}
+              </span>
+            )}
+          </div>
+          {dep && <StatusDot status={dep.status} conclusion={dep.conclusion} />}
+        </div>
+        {p.url ? (
+          <div className="truncate font-mono text-xs text-muted-foreground">
+            {p.url.replace(/^https?:\/\//, "")}
+          </div>
+        ) : (
+          <div className="text-xs text-muted-foreground/50">No domain yet</div>
+        )}
+        <div className="mt-auto border-t border-border pt-3">
+          {dep ? (
+            <>
+              <div className="truncate text-xs">
+                {firstLine(dep.commit_meta?.message) ?? dep.commit_sha.slice(0, 7)}
+              </div>
+              <div className="mt-1 flex items-center justify-between text-xs text-muted-foreground">
+                <span className="truncate font-mono">
+                  {p.repo_full_name} · {dep.branch}
+                </span>
+                <span className="ml-2 shrink-0">
+                  {timeAgo(dep.created_at)}
+                  {duration(dep.created_at, dep.concluded_at) &&
+                    ` · ${duration(dep.created_at, dep.concluded_at)}`}
+                </span>
+              </div>
+            </>
+          ) : (
+            <div className="text-xs text-muted-foreground/50">No deployments yet</div>
+          )}
+        </div>
+      </Card>
+    </Link>
+  );
+}
+
 export default function Projects() {
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
+  const [query, setQuery] = useState("");
+  const [view, setView] = useState<"grid" | "list">("grid");
 
   useEffect(() => {
     api.projects().then((r) => setProjects(r.projects)).catch((e) => setError(e.message));
   }, []);
 
+  const filtered = projects?.filter((p) => {
+    const q = query.toLowerCase();
+    return (
+      !q ||
+      p.name.toLowerCase().includes(q) ||
+      p.repo_full_name.toLowerCase().includes(q) ||
+      (p.url ?? "").toLowerCase().includes(q)
+    );
+  });
+
   return (
-    <div className="page-enter mx-auto max-w-5xl p-8">
-      <div className="mb-6 flex items-center justify-between">
+    <div className="page-enter mx-auto max-w-6xl p-4 sm:p-8">
+      <div className="mb-6 flex items-center justify-between gap-3">
         <h1 className="text-xl font-semibold">Projects</h1>
         <Button size="sm" onClick={() => setCreating(true)} disabled={creating}>
           New project
         </Button>
       </div>
+      <div className="mb-5 flex items-center gap-2">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Search projects…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            className="pl-9"
+          />
+        </div>
+        <div className="flex overflow-hidden rounded-md border border-border">
+          {(
+            [
+              ["grid", LayoutGrid],
+              ["list", List],
+            ] as const
+          ).map(([v, Icon]) => (
+            <button
+              key={v}
+              onClick={() => setView(v)}
+              className={`p-2 transition-colors ${
+                view === v ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground"
+              }`}
+              title={`${v} view`}
+            >
+              <Icon className="h-3.5 w-3.5" />
+            </button>
+          ))}
+        </div>
+      </div>
       {creating && <NewProject onDone={() => setCreating(false)} />}
       {error && <p className="text-sm text-destructive">{error}</p>}
       {projects === null && !error && (
-        <div className="grid gap-3">
+        <div className={view === "grid" ? "grid gap-3 sm:grid-cols-2 lg:grid-cols-3" : "grid gap-3"}>
           {[0, 1, 2].map((i) => (
-            <Skeleton key={i} className="h-[68px]" />
+            <Skeleton key={i} className="h-[104px]" />
           ))}
         </div>
       )}
-      {projects !== null && projects.length === 0 && !error && !creating && (
+      {filtered !== undefined && filtered !== null && filtered.length === 0 && !error && !creating && (
         <div className="rounded-lg border border-dashed border-border p-12 text-center">
-          <p className="text-sm font-medium">No projects yet</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Connect a repository and ship your first deploy.
+          <p className="text-sm font-medium">
+            {projects?.length === 0 ? "No projects yet" : "No matches"}
           </p>
-          <Button size="sm" className="mt-4" onClick={() => setCreating(true)}>
-            New project
-          </Button>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {projects?.length === 0
+              ? "Connect a repository and ship your first deploy."
+              : `Nothing matches "${query}".`}
+          </p>
+          {projects?.length === 0 && (
+            <Button size="sm" className="mt-4" onClick={() => setCreating(true)}>
+              New project
+            </Button>
+          )}
         </div>
       )}
-      <div className="stagger grid gap-3">
-        {projects?.map((p) => (
-          <Link key={p.id} to={`/projects/${p.id}`}>
-            <Card className="flex items-center justify-between p-4 transition-colors hover:border-muted-foreground/25 hover:bg-accent/50">
-              <div className="flex items-center gap-3">
-                <StatusDot status={p.status} />
-                <div>
-                  <div className="font-medium">{p.name}</div>
-                  <div className="font-mono text-xs text-muted-foreground">
-                    {p.repo_full_name} · {p.repo_branch}
+      {view === "grid" ? (
+        <div className="stagger grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {filtered?.map((p) => <ProjectCard key={p.id} p={p} />)}
+        </div>
+      ) : (
+        <div className="stagger grid gap-2">
+          {filtered?.map((p) => {
+            const dep = p.latest_deployment;
+            return (
+              <Link key={p.id} to={`/projects/${p.id}`}>
+                <Card className="flex items-center justify-between gap-4 p-3 transition-colors hover:border-muted-foreground/25 hover:bg-accent/50">
+                  <div className="flex min-w-0 items-center gap-3">
+                    {dep ? (
+                      <StatusDot status={dep.status} conclusion={dep.conclusion} />
+                    ) : (
+                      <StatusDot status="idle" />
+                    )}
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="truncate font-medium">{p.name}</span>
+                        {p.preset && (
+                          <span className="font-mono text-[10px] uppercase text-muted-foreground">
+                            {p.preset}
+                          </span>
+                        )}
+                      </div>
+                      <div className="truncate font-mono text-xs text-muted-foreground">
+                        {p.repo_full_name} · {p.repo_branch}
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
-              <div className="flex items-center gap-4">
-                <span className="text-xs text-muted-foreground">{timeAgo(p.created_at)}</span>
-                <Badge variant={p.status === "active" ? "success" : "secondary"}>{p.status}</Badge>
-              </div>
-            </Card>
-          </Link>
-        ))}
-      </div>
+                  <div className="flex shrink-0 items-center gap-4 text-xs text-muted-foreground">
+                    {dep && (
+                      <span className="hidden truncate sm:block">
+                        {firstLine(dep.commit_meta?.message)}
+                      </span>
+                    )}
+                    <span className="shrink-0">
+                      {dep ? timeAgo(dep.created_at) : timeAgo(p.created_at)}
+                    </span>
+                  </div>
+                </Card>
+              </Link>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

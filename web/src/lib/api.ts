@@ -11,19 +11,27 @@ export interface Project {
   remote_node_id: string | null;
   config: Record<string, unknown>;
   status: string;
+  preset?: string | null;
+  latest_deployment?: Deployment | null;
   created_at: string;
 }
 
 export interface Deployment {
   id: string;
   project_id: string;
+  project_name?: string;
   environment_id: string;
   branch: string;
   commit_sha: string;
+  commit_meta?: { message?: string; author?: string; author_name?: string };
   status: string;
   conclusion: string | null;
   container_status: string | null;
+  trigger?: string;
+  error?: string | { message?: string; status?: string } | null;
   url?: string;
+  urls?: { immutable?: string | null; environment?: string | null; branch?: string | null };
+  concluded_at?: string | null;
   created_at: string;
 }
 
@@ -249,6 +257,7 @@ export const api = {
 
   deployments: (projectId: string) =>
     req<{ deployments: Deployment[] }>(`/api/v1/projects/${projectId}/deployments`),
+  deploymentsIndex: () => req<{ deployments: Deployment[] }>("/api/v1/deployments"),
   deploy: (projectId: string, body: { branch?: string } = {}) =>
     req<Deployment>(`/api/v1/projects/${projectId}/deployments`, {
       method: "POST",
@@ -261,6 +270,17 @@ export const api = {
     }).then((r) => r.text()),
   redeploy: (id: string) =>
     req<Deployment>(`/api/v1/deployments/${id}/redeploy`, { method: "POST" }),
+  uploadDeploy: (projectId: string, body: Blob) =>
+    fetch(`/api/v1/projects/${projectId}/deployments/upload`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/gzip" },
+      body,
+    }).then(async (r) => {
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error ?? `upload failed (${r.status})`);
+      return d as Deployment;
+    }),
   cancel: (id: string) =>
     req<Deployment>(`/api/v1/deployments/${id}/cancel`, { method: "POST" }),
 

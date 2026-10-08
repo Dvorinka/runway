@@ -26,7 +26,7 @@ export default function TeamsPage() {
   }
 
   return (
-    <div className="page-enter mx-auto max-w-5xl p-8">
+    <div className="page-enter mx-auto max-w-5xl p-4 sm:p-8">
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-xl font-semibold">Teams</h1>
         <form onSubmit={create} className="flex gap-2">
