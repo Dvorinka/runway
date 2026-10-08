@@ -653,6 +653,8 @@ async fn send_token_mail(state: &AppState, email: &str, kind: &str, raw: &str) -
 pub async fn providers(State(state): State<AppState>) -> Response {
     axum::Json(json!({
         "magic_link": runway_core::mail::smtp_configured(&state.settings),
+        "github": state.settings.oauth_configured("github"),
+        "google": state.settings.oauth_configured("google"),
     }))
     .into_response()
 }

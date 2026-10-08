@@ -46,6 +46,12 @@ pub fn router(state: AppState) -> Router {
             put(routes::avatars::put_user).delete(routes::avatars::delete_user),
         )
         .route("/api/avatars/{kind}/{id}", get(routes::avatars::get))
+        // Dedicated OAuth sign-in (github/google)
+        .route("/api/auth/oauth/{provider}", get(routes::oauth::authorize))
+        .route(
+            "/api/auth/oauth/{provider}/callback",
+            get(routes::oauth::callback),
+        )
         // OIDC / SSO
         .route("/api/auth/oidc", get(routes::oidc::authorize))
         .route("/api/auth/oidc/callback", get(routes::oidc::callback))

@@ -348,6 +348,15 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
       `GET /api/auth/providers` reports SMTP configured; Settings shows
       an inline "verify" control on an unverified email (migration
       0020). Verified end-to-end through a captured SMTP session
+- [x] **Dedicated GitHub/Google OAuth** — `GET /api/auth/oauth/{p}` +
+      `/oauth/{p}/callback` (`GITHUB_OAUTH_CLIENT_ID/SECRET`,
+      `GOOGLE_CLIENT_ID/SECRET`); state-cookie CSRF, allowlist-gated
+      signup, identity upsert storing the encrypted access token
+      (GitHub's doubles as personal-repo credentials). `providers`
+      endpoint reports all methods; Login renders per-provider
+      buttons. Fixed a latent schema bug: the `user_identity` provider
+      CHECK rejected `'oidc'` rows the OIDC callback writes (migration
+      0021)
 
 ## Non-goals
 

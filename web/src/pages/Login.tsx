@@ -19,6 +19,7 @@ export default function Login() {
   const [busy, setBusy] = useState(false);
   const [oidc, setOidc] = useState<{ enabled: boolean; display_name: string | null } | null>(null);
   const [magic, setMagic] = useState(false);
+  const [oauth, setOauth] = useState({ github: false, google: false });
   const [sent, setSent] = useState(false);
   const [pending, setPending] = useState("");
   const [code, setCode] = useState("");
@@ -26,7 +27,12 @@ export default function Login() {
 
   useEffect(() => {
     api.oidcInfo().then(setOidc).catch(() => {});
-    api.providers().then((p) => setMagic(p.magic_link)).catch(() => {});
+    api.providers()
+      .then((p) => {
+        setMagic(p.magic_link);
+        setOauth({ github: p.github, google: p.google });
+      })
+      .catch(() => {});
     if (new URLSearchParams(location.search).get("error") === "invalid_link") {
       setError("That sign-in link is invalid or has expired.");
     }
@@ -228,22 +234,38 @@ export default function Login() {
             </Button>
           </form>
 
-          {(oidc?.enabled || (magic && mode === "login")) && (
+          {(oidc?.enabled || oauth.github || oauth.google || (magic && mode === "login")) && (
             <div className="my-6 flex items-center gap-3 text-xs text-muted-foreground">
               <div className="h-px flex-1 bg-border" /> or <div className="h-px flex-1 bg-border" />
             </div>
           )}
-          {oidc?.enabled && (
-            <a href="/api/auth/oidc" className="block">
-              <Button variant="outline" className="w-full">
-                <KeyRound className="h-4 w-4" /> Continue with {oidc.display_name || "SSO"}
-              </Button>
-            </a>
-          )}
+          <div className="space-y-3">
+            {oidc?.enabled && (
+              <a href="/api/auth/oidc" className="block">
+                <Button variant="outline" className="w-full">
+                  <KeyRound className="h-4 w-4" /> Continue with {oidc.display_name || "SSO"}
+                </Button>
+              </a>
+            )}
+            {oauth.github && (
+              <a href="/api/auth/oauth/github" className="block">
+                <Button variant="outline" className="w-full">
+                  <GitBranch className="h-4 w-4" /> Continue with GitHub
+                </Button>
+              </a>
+            )}
+            {oauth.google && (
+              <a href="/api/auth/oauth/google" className="block">
+                <Button variant="outline" className="w-full">
+                  <KeyRound className="h-4 w-4" /> Continue with Google
+                </Button>
+              </a>
+            )}
+          </div>
           {magic && mode === "login" && !pending && (
             <Button
               variant="outline"
-              className={`w-full ${oidc?.enabled ? "mt-3" : ""}`}
+              className={`w-full ${oidc?.enabled || oauth.github || oauth.google ? "mt-3" : ""}`}
               disabled={busy || !email.includes("@")}
               onClick={async () => {
                 setError("");

@@ -8,6 +8,7 @@ pub mod git_providers;
 pub mod github;
 pub mod mcp;
 pub mod notifications;
+pub mod oauth;
 pub mod oidc;
 pub mod projects;
 pub mod rum;

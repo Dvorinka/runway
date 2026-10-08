@@ -260,7 +260,10 @@ export const api = {
       body: JSON.stringify({ email, password, username }),
     }),
   logout: () => req<void>("/api/auth/logout", { method: "POST" }),
-  providers: () => req<{ magic_link: boolean }>("/api/auth/providers"),
+  providers: () =>
+    req<{ magic_link: boolean; github: boolean; google: boolean }>(
+      "/api/auth/providers",
+    ),
   magicLink: (email: string) =>
     req<{ ok: boolean }>("/api/auth/email/login", {
       method: "POST",

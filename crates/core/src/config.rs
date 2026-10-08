@@ -75,6 +75,14 @@ pub struct Settings {
     /// payloads; when set, the hook URL must carry `?secret=`.
     pub bitbucket_webhook_secret: Option<String>,
 
+    // Dedicated OAuth sign-in (github/google) — separate from the
+    // GitHub App creds: these carry `read:user user:email` scopes and
+    // exist purely for "Continue with …" login.
+    pub github_oauth_client_id: Option<String>,
+    pub github_oauth_client_secret: Option<String>,
+    pub google_oauth_client_id: Option<String>,
+    pub google_oauth_client_secret: Option<String>,
+
     // OIDC / SSO (login + account link)
     pub oidc_client_id: Option<String>,
     pub oidc_client_secret: Option<String>,
@@ -162,6 +170,10 @@ impl Settings {
             gitea_webhook_secret: opt("GITEA_WEBHOOK_SECRET"),
             gitlab_webhook_secret: opt("GITLAB_WEBHOOK_SECRET"),
             bitbucket_webhook_secret: opt("BITBUCKET_WEBHOOK_SECRET"),
+            github_oauth_client_id: opt("GITHUB_OAUTH_CLIENT_ID"),
+            github_oauth_client_secret: opt("GITHUB_OAUTH_CLIENT_SECRET"),
+            google_oauth_client_id: opt("GOOGLE_CLIENT_ID"),
+            google_oauth_client_secret: opt("GOOGLE_CLIENT_SECRET"),
             oidc_client_id: opt("OIDC_CLIENT_ID"),
             oidc_client_secret: opt("OIDC_CLIENT_SECRET"),
             oidc_discovery_url: opt("OIDC_DISCOVERY_URL"),
@@ -195,6 +207,19 @@ impl Settings {
         self.github_app_id.is_some()
             && self.github_app_private_key.is_some()
             && self.github_app_webhook_secret.is_some()
+    }
+
+    /// True when a dedicated OAuth sign-in provider is configured.
+    pub fn oauth_configured(&self, provider: &str) -> bool {
+        match provider {
+            "github" => {
+                self.github_oauth_client_id.is_some() && self.github_oauth_client_secret.is_some()
+            }
+            "google" => {
+                self.google_oauth_client_id.is_some() && self.google_oauth_client_secret.is_some()
+            }
+            _ => false,
+        }
     }
 
     /// True when OIDC SSO is fully configured.
@@ -289,6 +314,10 @@ pub(crate) fn test_settings() -> Settings {
         gitea_webhook_secret: None,
         gitlab_webhook_secret: None,
         bitbucket_webhook_secret: None,
+        github_oauth_client_id: None,
+        github_oauth_client_secret: None,
+        google_oauth_client_id: None,
+        google_oauth_client_secret: None,
         oidc_client_id: None,
         oidc_client_secret: None,
         oidc_discovery_url: None,
