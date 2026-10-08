@@ -296,3 +296,90 @@ pub async fn clear_node_tls(
     }
     Ok(StatusCode::NO_CONTENT.into_response())
 }
+
+// ---------------------------------------------------------------------------
+// Job queue — instance-level inspection + manual retry of failed work.
+// Beyond devpush (its admin surface has no queue view).
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub struct JobsQuery {
+    status: Option<String>,
+    limit: Option<i64>,
+}
+
+type JobRow = (
+    i64,
+    String,
+    String,
+    i32,
+    Option<String>,
+    chrono::DateTime<chrono::Utc>,
+    chrono::DateTime<chrono::Utc>,
+);
+
+/// `GET /api/v1/admin/jobs[?status=failed&limit=50]` — queue counts by
+/// status plus the newest matching rows.
+pub async fn list_jobs(
+    user: AuthUser,
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<JobsQuery>,
+) -> ApiResult<Response> {
+    require_superadmin(&user)?;
+    let limit = q.limit.unwrap_or(50).clamp(1, 200);
+    let counts: Vec<(String, i64)> =
+        sqlx::query_as("SELECT status, count(*)::bigint FROM job GROUP BY status ORDER BY status")
+            .fetch_all(&state.db)
+            .await?;
+    let rows: Vec<JobRow> = match &q.status {
+        Some(s) => {
+            sqlx::query_as(
+                "SELECT id, kind, status, attempts, last_error, created_at, updated_at
+                 FROM job WHERE status = $1 ORDER BY id DESC LIMIT $2",
+            )
+            .bind(s)
+            .bind(limit)
+            .fetch_all(&state.db)
+            .await?
+        }
+        None => {
+            sqlx::query_as(
+                "SELECT id, kind, status, attempts, last_error, created_at, updated_at
+                 FROM job ORDER BY id DESC LIMIT $1",
+            )
+            .bind(limit)
+            .fetch_all(&state.db)
+            .await?
+        }
+    };
+    Ok(Json(json!({
+        "counts": counts.iter().map(|(s, n)| json!({ "status": s, "count": n })).collect::<Vec<_>>(),
+        "jobs": rows.iter().map(|r| json!({
+            "id": r.0, "kind": r.1, "status": r.2, "attempts": r.3,
+            "last_error": r.4, "created_at": r.5, "updated_at": r.6,
+        })).collect::<Vec<_>>(),
+    }))
+    .into_response())
+}
+
+/// `POST /api/v1/admin/jobs/{id}/retry` — requeue a failed job.
+/// Resets attempts so max_attempts doesn't immediately re-fail it.
+pub async fn retry_job(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> ApiResult<Response> {
+    require_superadmin(&user)?;
+    let res = sqlx::query(
+        "UPDATE job SET status = 'pending', attempts = 0, locked_at = NULL,
+         last_error = 'manual retry', updated_at = now()
+         WHERE id = $1 AND status = 'failed'",
+    )
+    .bind(id)
+    .execute(&state.db)
+    .await?;
+    if res.rows_affected() == 0 {
+        return Err(ApiError::not_found("failed job"));
+    }
+    Ok(Json(json!({ "ok": true })).into_response())
+}

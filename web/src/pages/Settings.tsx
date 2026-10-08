@@ -224,6 +224,95 @@ function Allowlist() {
   );
 }
 
+function JobQueue() {
+  const [data, setData] = useState<Awaited<ReturnType<typeof api.adminJobs>> | null>(null);
+  const [filter, setFilter] = useState("");
+  const [error, setError] = useState("");
+
+  const load = (status = filter) =>
+    api.adminJobs(status || undefined).then(setData).catch((e) => setError(e.message));
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 5000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filter]);
+
+  const jobs = data?.jobs ?? [];
+  return (
+    <Card className="p-5">
+      <h2 className="mb-1 text-sm font-medium">Job queue</h2>
+      <p className="mb-4 text-xs text-muted-foreground">
+        Background work — deploys, cleanups, tunnel syncs. Failed jobs can be retried.
+      </p>
+      <div className="mb-3 flex flex-wrap gap-1.5">
+        <Badge
+          variant={filter === "" ? "default" : "outline"}
+          className="cursor-pointer"
+          onClick={() => setFilter("")}
+        >
+          all
+        </Badge>
+        {(data?.counts ?? []).map((c) => (
+          <Badge
+            key={c.status}
+            variant={filter === c.status ? "default" : "outline"}
+            className="cursor-pointer"
+            onClick={() => setFilter(c.status === filter ? "" : c.status)}
+          >
+            {c.status} {c.count}
+          </Badge>
+        ))}
+      </div>
+      {error && <p className="mb-3 text-xs text-destructive">{error}</p>}
+      {jobs.length === 0 ? (
+        <p className="text-xs text-muted-foreground">Queue is empty.</p>
+      ) : (
+        <div className="grid gap-1.5">
+          {jobs.map((j) => (
+            <div
+              key={j.id}
+              className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2 text-xs"
+            >
+              <div className="min-w-0">
+                <span className="font-mono">#{j.id}</span>{" "}
+                <span className="font-medium">{j.kind}</span>{" "}
+                <Badge
+                  variant={
+                    j.status === "failed"
+                      ? "destructive"
+                      : j.status === "running"
+                        ? "default"
+                        : "outline"
+                  }
+                  className="ml-1"
+                >
+                  {j.status}
+                </Badge>
+                {j.last_error && (
+                  <p className="mt-1 truncate text-muted-foreground">{j.last_error}</p>
+                )}
+              </div>
+              <div className="flex shrink-0 items-center gap-2 text-muted-foreground">
+                <span title={`attempts: ${j.attempts}`}>×{j.attempts}</span>
+                {j.status === "failed" && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => api.retryJob(j.id).then(() => load()).catch(() => {})}
+                  >
+                    Retry
+                  </Button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function Nodes() {
   const [nodes, setNodes] = useState<RemoteNode[]>([]);
   const [name, setName] = useState("");
@@ -685,6 +774,7 @@ export default function SettingsPage({ me }: { me: Me }) {
           <>
             <GithubApp />
             <Allowlist />
+            <JobQueue />
             <Nodes />
           </>
         )}

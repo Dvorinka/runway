@@ -65,6 +65,11 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/admin/allowlist/{id}",
             delete(routes::admin::delete_allowlist_rule),
         )
+        .route("/api/v1/admin/jobs", get(routes::admin::list_jobs))
+        .route(
+            "/api/v1/admin/jobs/{id}/retry",
+            post(routes::admin::retry_job),
+        )
         // Admin — remote Docker nodes
         .route(
             "/api/v1/admin/nodes",

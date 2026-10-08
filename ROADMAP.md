@@ -362,6 +362,11 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
       status-page opt-in; 60s cache; Settings card shows a live preview
       + one-click README markdown. `env pull` added to the CLI —
       dotenv via the export endpoint (0600, `--force`, `--environment`)
+- [x] **Job queue visibility** — `GET /api/v1/admin/jobs` (counts by
+      status + recent rows, `?status=` filter) and
+      `POST /admin/jobs/{id}/retry` requeues failed jobs with attempts
+      reset; superadmin-gated. Settings gains a live-refreshing Job
+      queue card with status filter chips and per-row retry
 
 ## Non-goals
 
