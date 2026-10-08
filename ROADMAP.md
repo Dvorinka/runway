@@ -55,7 +55,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 - [x] Per-PR preview deployments + commit status with URL
       (`pull_request` webhook → deploy on head branch, `runway/deploy`
       commit status with target URL, `preview_prs` config opt-out)
-      (PR comment deferred — commit status carries the link)
+      plus an upserted `runway-preview` PR comment (Phase 8)
 - [x] Build-output caching (`.next/cache`, `.turbo` volumes, per project)
 - [x] SPA rewrites/redirects/headers via `runway.json`
       (translated to static-web-server config)
@@ -93,9 +93,9 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
       pipeline branch — skips git clone; tarball retained for redeploy)
 - [x] `runway` CLI: `login`, `link`, `deploy --follow`,
       `logs [--follow] [--project]`, `deployments`, `rollback`,
-      `stats`, `env list|set|unset`, `domains list|add|remove|assign-cf`,
+      `stats`, `env list|set|unset|pull`, `domains list|add|remove|assign-cf`,
       `open` — config in `~/.config/runway`, link in
-      `.runway/project.json` (releases/npm/brew publishing deferred)
+      `.runway/project.json` (release packaging in Phase 8)
 - [x] Real MCP server: JSON-RPC 2.0 `initialize`/`tools/list`/`tools/call`
       on `POST /api/mcp`, `ak_` auth — 12 tools: reads (projects,
       deployments, logs, domains) + writes (`deploy_project`,

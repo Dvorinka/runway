@@ -13,6 +13,7 @@ runway logs --follow              # runtime logs (deployment)
 runway logs --project             # merged tail across recent deployments
 runway stats                      # live CPU/mem/net snapshot
 runway env set KEY=value          # env vars
+runway env pull                   # .env.local from project (decrypted)
 runway domains add app.example.com
 runway domains assign-cf app.example.com
 runway rollback                   # instant alias re-point to previous deploy

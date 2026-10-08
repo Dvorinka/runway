@@ -266,7 +266,59 @@ pub async fn env(args: Vec<String>, environment: Option<String>) -> anyhow::Resu
                 .await?;
             println!("Unset {key}");
         }
-        Some(other) => bail!("unknown env action '{other}' — list|set|unset"),
+        // `runway env pull [path] [--force]` — dotenv via the project
+        // export (the only read that decrypts; writer-gated like the
+        // UI's export button). Defaults to `.env.local`, `-` for stdout.
+        Some("pull") => {
+            let path = match args.get(1).map(String::as_str) {
+                Some("-") => "-",
+                Some(a) if !a.starts_with('-') => a,
+                _ => ".env.local",
+            };
+            let force = args.iter().any(|a| a == "--force" || a == "-f");
+            let res = client
+                .get(&format!("/api/v1/projects/{}/export", link.project_id))
+                .await?;
+            let mut out = String::new();
+            for v in res["environment_variables"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+            {
+                let var_env = v["environment"].as_str();
+                if environment.is_some() && var_env.is_some() && var_env != environment.as_deref() {
+                    continue;
+                }
+                let (key, value) = (
+                    v["key"].as_str().unwrap_or(""),
+                    v["value"].as_str().unwrap_or(""),
+                );
+                if value
+                    .chars()
+                    .any(|c| c.is_whitespace() || c == '"' || c == '#')
+                {
+                    out.push_str(&format!("{key}=\"{}\"\n", value.replace('"', "\\\"")));
+                } else {
+                    out.push_str(&format!("{key}={value}\n"));
+                }
+            }
+            if path == "-" {
+                print!("{out}");
+                return Ok(());
+            }
+            let file = std::path::Path::new(path);
+            if file.exists() && !force {
+                bail!("{path} exists — pass --force to overwrite");
+            }
+            tokio::fs::write(file, &out).await?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o600));
+            }
+            println!("Wrote {path}");
+        }
+        Some(other) => bail!("unknown env action '{other}' — list|set|unset|pull"),
     }
     Ok(())
 }

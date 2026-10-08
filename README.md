@@ -120,6 +120,7 @@ runway link                  # link cwd to a project
 runway deploy --follow       # upload source, stream build logs
 runway logs --follow         # runtime logs
 runway env set KEY=value
+runway env pull               # write .env.local (decrypted, 0600)
 runway domains add app.example.com
 runway domains assign-cf app.example.com   # one-click CF DNS via team tunnel
 runway open                  # current deployment URL
