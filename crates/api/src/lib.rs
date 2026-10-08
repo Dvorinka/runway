@@ -178,6 +178,10 @@ pub fn router(state: AppState) -> Router {
         // Speed insights — beacon (public, host-routed) + aggregates.
         .route("/_runway-rum", post(routes::rum::beacon))
         .route("/api/v1/rum", post(routes::rum::beacon))
+        .route(
+            "/api/v1/projects/{id}/logs",
+            get(routes::deployments::project_logs),
+        )
         .route("/api/v1/projects/{id}/speed", get(routes::rum::speed))
         // Project export / import
         .route(

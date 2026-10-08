@@ -293,6 +293,10 @@ export const api = {
       net_tx?: number;
       pids?: number;
     }>(`/api/v1/deployments/${id}/stats`),
+  projectLogs: (projectId: string, tail = 300) =>
+    fetch(`/api/v1/projects/${projectId}/logs?tail=${tail}`, {
+      credentials: "include",
+    }).then((r) => r.text()),
   deploymentLogs: (id: string, tail = 500) =>
     fetch(`/api/v1/deployments/${id}/logs?tail=${tail}`, {
       credentials: "include",

@@ -409,6 +409,52 @@ pub async fn logs(
         .into_response())
 }
 
+/// `GET /api/v1/projects/{id}/logs` — merged tail across the project's
+/// recent deployments (devpush `project_logs`, file-backed instead of
+/// Loki). Output lines: `<rfc3339>\t<dep7>\t<text>`, sorted by time.
+pub async fn project_logs(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+    Query(q): Query<LogsQuery>,
+) -> ApiResult<Response> {
+    let project = accessible_project(&state, user.user.id, &project_id).await?;
+    let tail = q.tail.unwrap_or(200).clamp(1, 5000);
+    let dep_ids: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM deployment WHERE project_id = $1 \
+         ORDER BY created_at DESC LIMIT 8",
+    )
+    .bind(&project.id)
+    .fetch_all(&state.db)
+    .await?;
+    // (timestamp prefix, short id, text) — RFC3339 sorts lexically.
+    let mut merged: Vec<(String, String, String)> = Vec::new();
+    for id in dep_ids {
+        let short = id[..7.min(id.len())].to_string();
+        for line in state.logs.tail(&id, tail).await.unwrap_or_default() {
+            let mut parts = line.splitn(3, '\t');
+            let ts = parts.next().unwrap_or_default().to_string();
+            let _stream = parts.next();
+            let text = parts.next().unwrap_or_default().to_string();
+            merged.push((ts, short.clone(), text));
+        }
+    }
+    merged.sort();
+    let body = merged
+        .iter()
+        .rev()
+        .take(tail)
+        .rev()
+        .map(|(ts, dep, text)| format!("{ts}\t{dep}\t{text}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    Ok(axum::response::Response::builder()
+        .header("content-type", "text/plain; charset=utf-8")
+        .body(axum::body::Body::from(body))
+        .unwrap()
+        .into_response())
+}
+
 /// SSE stream: replays the log file, then follows live lines.
 pub async fn logs_stream(
     user: AuthUser,

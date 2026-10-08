@@ -272,13 +272,22 @@ async fn tick(
         if down && matches!(dep.observed_status.as_deref(), None | Some("running")) {
             notify_crash(ctx, &dep, observed, exit_code.map(|c| c as i32)).await;
         }
+        // Reconcile-parity: consecutive 404s accumulate so other
+        // consumers can tell "blip" from "gone".
+        let missing_count = if observed == "not_found" {
+            dep.observed_missing_count + 1
+        } else {
+            0
+        };
         sqlx::query(
             "UPDATE deployment SET observed_status = $1, observed_exit_code = $2,
-             observed_at = now(), observed_last_seen_at = now() WHERE id = $3",
+             observed_at = now(), observed_last_seen_at = now(),
+             observed_missing_count = $4 WHERE id = $3",
         )
         .bind(observed)
         .bind(exit_code)
         .bind(&dep.id)
+        .bind(missing_count)
         .execute(&ctx.db)
         .await?;
     }
