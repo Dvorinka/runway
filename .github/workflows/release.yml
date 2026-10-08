@@ -1,14 +1,50 @@
 name: release
 
+# Runs on every merge to main. If Cargo.toml's version has no matching
+# vX.Y.Z tag yet, it cuts the release: GitHub release + binaries + GHCR image.
+# Pushing a v* tag manually also works. Docs-only merges are skipped.
 on:
   push:
+    branches: [main]
     tags: ["v*"]
+  workflow_dispatch:
 
 env:
   IMAGE: ghcr.io/dvorinka/runway
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.v.outputs.tag }}
+      major_minor: ${{ steps.v.outputs.major_minor }}
+      release: ${{ steps.v.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        shell: bash
+        run: |
+          release=true
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            ver=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+            tag="v$ver"
+            if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+              release=false
+              echo "::notice::$tag already exists — skipping release"
+            fi
+          fi
+          mm=$(echo "$tag" | sed -E 's/^v([0-9]+\.[0-9]+).*/\1/')
+          { echo "tag=$tag"; echo "major_minor=$mm"; echo "release=$release"; } >> "$GITHUB_OUTPUT"
+
   binaries:
+    needs: prepare
+    if: needs.prepare.outputs.release == 'true'
     permissions:
       contents: write
     strategy:
@@ -39,9 +75,13 @@ jobs:
           tar -czf runway-${{ matrix.name }}.tar.gz -C dist runway
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          generate_release_notes: true
           files: runway-${{ matrix.name }}.tar.gz
 
   image:
+    needs: prepare
+    if: needs.prepare.outputs.release == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -59,8 +99,9 @@ jobs:
         with:
           images: ${{ env.IMAGE }}
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=${{ needs.prepare.outputs.tag }}
+            type=raw,value=${{ needs.prepare.outputs.major_minor }}
+            type=raw,value=latest
             type=sha
       - uses: docker/build-push-action@v6
         with:

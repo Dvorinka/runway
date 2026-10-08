@@ -64,27 +64,25 @@ pub async fn webhook(
                     .execute(&state.db)
                     .await?;
                 }
-                "created" => {
-                    if state.github.configured() {
-                        if let Ok((token, expires)) = state
-                            .github
-                            .installation_access_token(installation_id)
-                            .await
-                        {
-                            let enc = state.crypto.encrypt(&token)?;
-                            sqlx::query(
-                                "INSERT INTO github_installation
-                                 (installation_id, token, token_expires_at, status)
-                                 VALUES ($1,$2,$3,'active')
-                                 ON CONFLICT (installation_id) DO UPDATE
-                                 SET token = $2, token_expires_at = $3, status = 'active'",
-                            )
-                            .bind(installation_id)
-                            .bind(&enc)
-                            .bind(expires)
-                            .execute(&state.db)
-                            .await?;
-                        }
+                "created" if state.github.configured() => {
+                    if let Ok((token, expires)) = state
+                        .github
+                        .installation_access_token(installation_id)
+                        .await
+                    {
+                        let enc = state.crypto.encrypt(&token)?;
+                        sqlx::query(
+                            "INSERT INTO github_installation
+                             (installation_id, token, token_expires_at, status)
+                             VALUES ($1,$2,$3,'active')
+                             ON CONFLICT (installation_id) DO UPDATE
+                             SET token = $2, token_expires_at = $3, status = 'active'",
+                        )
+                        .bind(installation_id)
+                        .bind(&enc)
+                        .bind(expires)
+                        .execute(&state.db)
+                        .await?;
                     }
                 }
                 _ => {}

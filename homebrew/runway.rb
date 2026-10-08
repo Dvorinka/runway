@@ -5,7 +5,7 @@
 class Runway < Formula
   desc "Runway — self-hosted deployment platform CLI"
   homepage "https://github.com/Dvorinka/runway"
-  version "0.1.0"
+  version "0.2.0"
   license "MIT"
 
   on_macos do
