@@ -298,6 +298,10 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/deployments/{id}/logs/stream",
             get(routes::deployments::logs_stream),
         )
+        .route(
+            "/api/v1/deployments/{id}/stats",
+            get(routes::deployments::stats),
+        )
         // API keys + deploy-token deploy
         .route(
             "/api/v1/keys",

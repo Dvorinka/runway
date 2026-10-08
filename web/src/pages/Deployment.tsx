@@ -14,6 +14,40 @@ const logText = (l: string) => {
   return j < 0 ? l : l.slice(j + 1);
 };
 
+function fmtBytes(n: number): string {
+  if (n >= 1 << 30) return `${(n / (1 << 30)).toFixed(1)} GB`;
+  if (n >= 1 << 20) return `${(n / (1 << 20)).toFixed(0)} MB`;
+  if (n >= 1 << 10) return `${(n / (1 << 10)).toFixed(0)} KB`;
+  return `${n} B`;
+}
+
+function LiveStats({ id }: { id: string }) {
+  const [s, setS] = useState<Awaited<ReturnType<typeof api.deploymentStats>> | null>(null);
+  useEffect(() => {
+    const pull = () => api.deploymentStats(id).then(setS).catch(() => {});
+    pull();
+    const t = setInterval(pull, 5000);
+    return () => clearInterval(t);
+  }, [id]);
+  if (!s?.running) return null;
+  const memPct = s.mem_limit ? Math.min(100, ((s.mem_used ?? 0) / s.mem_limit) * 100) : 0;
+  return (
+    <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+      {[
+        ["cpu", `${s.cpu_pct?.toFixed(1)}%`],
+        ["memory", `${fmtBytes(s.mem_used ?? 0)}${s.mem_limit ? ` / ${fmtBytes(s.mem_limit)}` : ""} (${memPct.toFixed(0)}%)`],
+        ["network", `↓${fmtBytes(s.net_rx ?? 0)} ↑${fmtBytes(s.net_tx ?? 0)}`],
+        ["pids", String(s.pids ?? 0)],
+      ].map(([k, v]) => (
+        <div key={k} className="rounded-md border border-border px-3 py-2">
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{k}</div>
+          <div className="font-mono text-sm tabular-nums">{v}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function Stepper({ dep }: { dep: Deployment }) {
   const idx = Math.max(0, STEPS.indexOf(dep.status));
   const done = dep.conclusion === "succeeded";
@@ -198,6 +232,9 @@ export default function DeploymentPage() {
         </p>
       )}
       {dep && <Stepper dep={dep} />}
+      {dep?.conclusion === "succeeded" && dep.container_status === "running" && (
+        <LiveStats id={id} />
+      )}
       {errMsg && (
         <div className="mb-4 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 font-mono text-xs text-red-400">
           {errMsg}

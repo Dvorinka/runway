@@ -434,6 +434,98 @@ pub async fn logs_stream(
         .into_response())
 }
 
+/// One-shot container resource stats: cpu %, memory bytes, network io,
+/// pids. 404-shape `{running:false}` when the container isn't live.
+pub async fn stats(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Response> {
+    let (dep, _p) = accessible_deployment(&state, user.user.id, &id).await?;
+    let Some(cid) = dep.container_id.clone() else {
+        return Ok(Json(json!({ "running": false })).into_response());
+    };
+    let docker = if let Some(nid) = dep.remote_node_id.as_deref() {
+        match runway_core::docker::node_client(&state.db, nid).await {
+            Some(c) => c,
+            None => return Ok(Json(json!({ "running": false })).into_response()),
+        }
+    } else {
+        match state.docker.clone() {
+            Some(d) => d,
+            None => return Ok(Json(json!({ "running": false })).into_response()),
+        }
+    };
+    let mut stream = docker.stats(
+        &cid,
+        Some(bollard::container::StatsOptions {
+            stream: false,
+            one_shot: true,
+        }),
+    );
+    let frame = tokio::time::timeout(std::time::Duration::from_secs(8), stream.next())
+        .await
+        .ok()
+        .flatten();
+    let Some(Ok(s)) = frame else {
+        return Ok(Json(json!({ "running": false })).into_response());
+    };
+
+    let cpu_delta = s
+        .cpu_stats
+        .cpu_usage
+        .total_usage
+        .saturating_sub(s.precpu_stats.cpu_usage.total_usage);
+    let sys_delta = s
+        .cpu_stats
+        .system_cpu_usage
+        .unwrap_or(0)
+        .saturating_sub(s.precpu_stats.system_cpu_usage.unwrap_or(0));
+    let ncpu = s
+        .cpu_stats
+        .online_cpus
+        .or_else(|| {
+            s.cpu_stats
+                .cpu_usage
+                .percpu_usage
+                .as_ref()
+                .map(|p| p.len() as u64)
+        })
+        .unwrap_or(1)
+        .max(1);
+    let cpu_pct = if sys_delta > 0 {
+        (cpu_delta as f64 / sys_delta as f64) * ncpu as f64 * 100.0
+    } else {
+        0.0
+    };
+    // Page cache counts toward cgroup usage — v1 calls it `cache`,
+    // v2 `inactive_file`. Subtract so the number reads like RSS.
+    let cache = match s.memory_stats.stats {
+        Some(bollard::container::MemoryStatsStats::V1(v1)) => v1.cache,
+        Some(bollard::container::MemoryStatsStats::V2(v2)) => v2.inactive_file,
+        None => 0,
+    };
+    let mem_used = s.memory_stats.usage.unwrap_or(0).saturating_sub(cache);
+    let mut rx = 0u64;
+    let mut tx = 0u64;
+    if let Some(nets) = &s.networks {
+        for n in nets.values() {
+            rx += n.rx_bytes;
+            tx += n.tx_bytes;
+        }
+    }
+    Ok(Json(json!({
+        "running": true,
+        "cpu_pct": (cpu_pct * 100.0).round() / 100.0,
+        "mem_used": mem_used,
+        "mem_limit": s.memory_stats.limit.unwrap_or(0),
+        "net_rx": rx,
+        "net_tx": tx,
+        "pids": s.pids_stats.current.unwrap_or(0),
+    }))
+    .into_response())
+}
+
 /// SSE stream of project-level deployment events.
 pub async fn events(
     user: AuthUser,

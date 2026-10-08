@@ -273,6 +273,16 @@ export const api = {
       body: JSON.stringify(body),
     }),
   deployment: (id: string) => req<Deployment>(`/api/v1/deployments/${id}`),
+  deploymentStats: (id: string) =>
+    req<{
+      running: boolean;
+      cpu_pct?: number;
+      mem_used?: number;
+      mem_limit?: number;
+      net_rx?: number;
+      net_tx?: number;
+      pids?: number;
+    }>(`/api/v1/deployments/${id}/stats`),
   deploymentLogs: (id: string, tail = 500) =>
     fetch(`/api/v1/deployments/${id}/logs?tail=${tail}`, {
       credentials: "include",
