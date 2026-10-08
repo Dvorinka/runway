@@ -293,6 +293,17 @@ export const api = {
       net_tx?: number;
       pids?: number;
     }>(`/api/v1/deployments/${id}/stats`),
+  deploymentMetrics: (id: string) =>
+    req<{
+      samples: {
+        ts: string;
+        cpu_pct: number;
+        mem_used: number;
+        net_rx: number;
+        net_tx: number;
+        pids: number;
+      }[];
+    }>(`/api/v1/deployments/${id}/metrics`),
   projectLogs: (projectId: string, tail = 300) =>
     fetch(`/api/v1/projects/${projectId}/logs?tail=${tail}`, {
       credentials: "include",

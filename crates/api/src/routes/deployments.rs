@@ -502,74 +502,47 @@ pub async fn stats(
             None => return Ok(Json(json!({ "running": false })).into_response()),
         }
     };
-    let mut stream = docker.stats(
-        &cid,
-        Some(bollard::container::StatsOptions {
-            stream: false,
-            one_shot: true,
-        }),
-    );
-    let frame = tokio::time::timeout(std::time::Duration::from_secs(8), stream.next())
-        .await
-        .ok()
-        .flatten();
-    let Some(Ok(s)) = frame else {
+    let Some(s) = runway_core::docker::stats_snapshot(&docker, &cid).await else {
         return Ok(Json(json!({ "running": false })).into_response());
     };
-
-    let cpu_delta = s
-        .cpu_stats
-        .cpu_usage
-        .total_usage
-        .saturating_sub(s.precpu_stats.cpu_usage.total_usage);
-    let sys_delta = s
-        .cpu_stats
-        .system_cpu_usage
-        .unwrap_or(0)
-        .saturating_sub(s.precpu_stats.system_cpu_usage.unwrap_or(0));
-    let ncpu = s
-        .cpu_stats
-        .online_cpus
-        .or_else(|| {
-            s.cpu_stats
-                .cpu_usage
-                .percpu_usage
-                .as_ref()
-                .map(|p| p.len() as u64)
-        })
-        .unwrap_or(1)
-        .max(1);
-    let cpu_pct = if sys_delta > 0 {
-        (cpu_delta as f64 / sys_delta as f64) * ncpu as f64 * 100.0
-    } else {
-        0.0
-    };
-    // Page cache counts toward cgroup usage — v1 calls it `cache`,
-    // v2 `inactive_file`. Subtract so the number reads like RSS.
-    let cache = match s.memory_stats.stats {
-        Some(bollard::container::MemoryStatsStats::V1(v1)) => v1.cache,
-        Some(bollard::container::MemoryStatsStats::V2(v2)) => v2.inactive_file,
-        None => 0,
-    };
-    let mem_used = s.memory_stats.usage.unwrap_or(0).saturating_sub(cache);
-    let mut rx = 0u64;
-    let mut tx = 0u64;
-    if let Some(nets) = &s.networks {
-        for n in nets.values() {
-            rx += n.rx_bytes;
-            tx += n.tx_bytes;
-        }
-    }
     Ok(Json(json!({
         "running": true,
-        "cpu_pct": (cpu_pct * 100.0).round() / 100.0,
-        "mem_used": mem_used,
-        "mem_limit": s.memory_stats.limit.unwrap_or(0),
-        "net_rx": rx,
-        "net_tx": tx,
-        "pids": s.pids_stats.current.unwrap_or(0),
+        "cpu_pct": (s.cpu_pct * 100.0).round() / 100.0,
+        "mem_used": s.mem_used,
+        "mem_limit": s.mem_limit,
+        "net_rx": s.net_rx,
+        "net_tx": s.net_tx,
+        "pids": s.pids,
     }))
     .into_response())
+}
+
+/// `GET /api/v1/deployments/{id}/metrics` — last 24h of monitor samples
+/// (30s cadence while the container runs) for sparklines.
+pub async fn metrics(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Response> {
+    let (dep, _p) = accessible_deployment(&state, user.user.id, &id).await?;
+    let rows: Vec<(chrono::DateTime<chrono::Utc>, f64, i64, i64, i64, i64)> = sqlx::query_as(
+        "SELECT ts, cpu_pct, mem_used, net_rx, net_tx, pids FROM deployment_metric
+         WHERE deployment_id = $1 AND ts > now() - interval '24 hours'
+         ORDER BY ts ASC",
+    )
+    .bind(&dep.id)
+    .fetch_all(&state.db)
+    .await?;
+    let samples: Vec<Value> = rows
+        .iter()
+        .map(|(ts, cpu, mem, rx, tx, pids)| {
+            json!({
+                "ts": ts, "cpu_pct": cpu, "mem_used": mem,
+                "net_rx": rx, "net_tx": tx, "pids": pids,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "samples": samples })).into_response())
 }
 
 /// SSE stream of project-level deployment events.

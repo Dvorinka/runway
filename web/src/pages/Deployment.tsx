@@ -21,27 +21,60 @@ function fmtBytes(n: number): string {
   return `${n} B`;
 }
 
+function Sparkline({ values, max }: { values: number[]; max?: number }) {
+  if (values.length < 2) return null;
+  const peak = max ?? Math.max(...values, 1e-9);
+  const pts = values
+    .map((v, i) => `${(i / (values.length - 1)) * 100},${28 - (Math.min(v, peak) / peak) * 26}`)
+    .join(" ");
+  return (
+    <svg viewBox="0 0 100 30" preserveAspectRatio="none" className="mt-1 h-6 w-full">
+      <polyline
+        points={pts}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        className="text-emerald-500/70"
+        vectorEffect="non-scaling-stroke"
+      />
+    </svg>
+  );
+}
+
 function LiveStats({ id }: { id: string }) {
   const [s, setS] = useState<Awaited<ReturnType<typeof api.deploymentStats>> | null>(null);
+  const [hist, setHist] = useState<Awaited<ReturnType<typeof api.deploymentMetrics>>["samples"]>([]);
   useEffect(() => {
     const pull = () => api.deploymentStats(id).then(setS).catch(() => {});
+    const pullHist = () => api.deploymentMetrics(id).then((m) => setHist(m.samples)).catch(() => {});
     pull();
+    pullHist();
     const t = setInterval(pull, 5000);
-    return () => clearInterval(t);
+    const th = setInterval(pullHist, 30000);
+    return () => {
+      clearInterval(t);
+      clearInterval(th);
+    };
   }, [id]);
   if (!s?.running) return null;
   const memPct = s.mem_limit ? Math.min(100, ((s.mem_used ?? 0) / s.mem_limit) * 100) : 0;
+  const cards: [string, string, number[]][] = [
+    ["cpu", `${s.cpu_pct?.toFixed(1)}%`, hist.map((m) => m.cpu_pct)],
+    [
+      "memory",
+      `${fmtBytes(s.mem_used ?? 0)}${s.mem_limit ? ` / ${fmtBytes(s.mem_limit)}` : ""} (${memPct.toFixed(0)}%)`,
+      hist.map((m) => m.mem_used),
+    ],
+    ["network", `↓${fmtBytes(s.net_rx ?? 0)} ↑${fmtBytes(s.net_tx ?? 0)}`, []],
+    ["pids", String(s.pids ?? 0), hist.map((m) => m.pids)],
+  ];
   return (
     <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-      {[
-        ["cpu", `${s.cpu_pct?.toFixed(1)}%`],
-        ["memory", `${fmtBytes(s.mem_used ?? 0)}${s.mem_limit ? ` / ${fmtBytes(s.mem_limit)}` : ""} (${memPct.toFixed(0)}%)`],
-        ["network", `↓${fmtBytes(s.net_rx ?? 0)} ↑${fmtBytes(s.net_tx ?? 0)}`],
-        ["pids", String(s.pids ?? 0)],
-      ].map(([k, v]) => (
+      {cards.map(([k, v, series]) => (
         <div key={k} className="rounded-md border border-border px-3 py-2">
           <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{k}</div>
           <div className="font-mono text-sm tabular-nums">{v}</div>
+          <Sparkline values={series} max={k === "memory" ? s.mem_limit : undefined} />
         </div>
       ))}
     </div>

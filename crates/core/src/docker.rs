@@ -312,3 +312,85 @@ pub async fn alloc_remote_port(docker: &Docker) -> anyhow::Result<i32> {
             )
         })
 }
+
+/// One-shot resource snapshot for a running container.
+#[derive(Debug, Clone, Copy)]
+pub struct StatsSnapshot {
+    pub cpu_pct: f64,
+    pub mem_used: u64,
+    pub mem_limit: u64,
+    pub net_rx: u64,
+    pub net_tx: u64,
+    pub pids: u64,
+}
+
+/// `docker stats --no-stream` equivalent. None when the container is
+/// gone or the stats call fails/times out (8s).
+pub async fn stats_snapshot(docker: &Docker, container_id: &str) -> Option<StatsSnapshot> {
+    use bollard::container::{MemoryStatsStats, StatsOptions};
+    use futures::StreamExt;
+
+    let mut stream = docker.stats(
+        container_id,
+        Some(StatsOptions {
+            stream: false,
+            one_shot: true,
+        }),
+    );
+    let frame = tokio::time::timeout(std::time::Duration::from_secs(8), stream.next())
+        .await
+        .ok()
+        .flatten()?;
+    let s = frame.ok()?;
+
+    let cpu_delta = s
+        .cpu_stats
+        .cpu_usage
+        .total_usage
+        .saturating_sub(s.precpu_stats.cpu_usage.total_usage);
+    let sys_delta = s
+        .cpu_stats
+        .system_cpu_usage
+        .unwrap_or(0)
+        .saturating_sub(s.precpu_stats.system_cpu_usage.unwrap_or(0));
+    let ncpu = s
+        .cpu_stats
+        .online_cpus
+        .or_else(|| {
+            s.cpu_stats
+                .cpu_usage
+                .percpu_usage
+                .as_ref()
+                .map(|p| p.len() as u64)
+        })
+        .unwrap_or(1)
+        .max(1);
+    let cpu_pct = if sys_delta > 0 {
+        (cpu_delta as f64 / sys_delta as f64) * ncpu as f64 * 100.0
+    } else {
+        0.0
+    };
+    // Page cache counts toward cgroup usage — v1 calls it `cache`,
+    // v2 `inactive_file`. Subtract so the number reads like RSS.
+    let cache = match s.memory_stats.stats {
+        Some(MemoryStatsStats::V1(v1)) => v1.cache,
+        Some(MemoryStatsStats::V2(v2)) => v2.inactive_file,
+        None => 0,
+    };
+    let mut rx = 0u64;
+    let mut tx = 0u64;
+    if let Some(nets) = &s.networks {
+        for n in nets.values() {
+            rx += n.rx_bytes;
+            tx += n.tx_bytes;
+        }
+    }
+    Some(StatsSnapshot {
+        cpu_pct,
+        mem_used: s.memory_stats.usage.unwrap_or(0).saturating_sub(cache),
+        mem_limit: s.memory_stats.limit.unwrap_or(0),
+        net_rx: rx,
+        net_tx: tx,
+        pids: s.pids_stats.current.unwrap_or(0),
+    })
+}

@@ -20,11 +20,17 @@ use crate::Ctx;
 
 /// deployment_id → deadline for readiness probing.
 type ProbeState = HashMap<String, chrono::DateTime<Utc>>;
+/// deployment_id → last metrics sample (stats calls are not free).
+type SampleState = HashMap<String, tokio::time::Instant>;
+
+const SAMPLE_INTERVAL: Duration = Duration::from_secs(30);
 
 pub async fn run(ctx: Ctx) {
     let interval = Duration::from_secs(ctx.settings.monitor_interval_seconds.max(1));
     let mut ticker = tokio::time::interval(interval);
     let mut probe_state: ProbeState = HashMap::new();
+    let mut sample_state: SampleState = HashMap::new();
+    let mut last_prune = tokio::time::Instant::now();
     let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()
@@ -32,8 +38,16 @@ pub async fn run(ctx: Ctx) {
 
     loop {
         ticker.tick().await;
-        if let Err(e) = tick(&ctx, &http, &mut probe_state).await {
+        if let Err(e) = tick(&ctx, &http, &mut probe_state, &mut sample_state).await {
             tracing::error!(error = %e, "monitor tick failed");
+        }
+        // Metrics retention: 24h of 30s samples ≈ 2.9k rows/deployment.
+        if last_prune.elapsed() > Duration::from_secs(3600) {
+            last_prune = tokio::time::Instant::now();
+            let _ =
+                sqlx::query("DELETE FROM deployment_metric WHERE ts < now() - interval '24 hours'")
+                    .execute(&ctx.db)
+                    .await;
         }
     }
 }
@@ -42,6 +56,7 @@ async fn tick(
     ctx: &Ctx,
     http: &reqwest::Client,
     probe_state: &mut ProbeState,
+    sample_state: &mut SampleState,
 ) -> anyhow::Result<()> {
     // Active deployments being brought up.
     let deploying: Vec<Deployment> = sqlx::query_as(
@@ -290,6 +305,34 @@ async fn tick(
         .bind(missing_count)
         .execute(&ctx.db)
         .await?;
+
+        // Throttled stats sample → deployment_metric for sparklines.
+        if observed == "running" {
+            let due = sample_state
+                .get(&dep.id)
+                .map(|t| t.elapsed() >= SAMPLE_INTERVAL)
+                .unwrap_or(true);
+            if due {
+                if let Some(s) = dkr::stats_snapshot(docker, &cid).await {
+                    let _ = sqlx::query(
+                        "INSERT INTO deployment_metric
+                         (deployment_id, cpu_pct, mem_used, net_rx, net_tx, pids)
+                         VALUES ($1,$2,$3,$4,$5,$6)",
+                    )
+                    .bind(&dep.id)
+                    .bind(s.cpu_pct)
+                    .bind(s.mem_used as i64)
+                    .bind(s.net_rx as i64)
+                    .bind(s.net_tx as i64)
+                    .bind(s.pids as i64)
+                    .execute(&ctx.db)
+                    .await;
+                }
+                sample_state.insert(dep.id.clone(), tokio::time::Instant::now());
+            }
+        } else {
+            sample_state.remove(&dep.id);
+        }
     }
     Ok(())
 }
