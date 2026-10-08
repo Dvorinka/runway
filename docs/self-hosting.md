@@ -31,6 +31,20 @@ the allowlist).
 | `ENCRYPTION_KEY` | secret encryption at rest |
 | `ACME_EMAIL` | Let's Encrypt (direct-IP mode) |
 
+## Sign-in methods
+
+Email + password always works. Optional extras, all off by default and
+hidden from the login page until configured (`GET /api/auth/providers`
+reports which are on):
+
+- **SMTP** (`SMTP_HOST/PORT/USER/PASSWORD/FROM/TLS`) — enables
+  magic-link sign-in, email verification, and team-invite mail.
+- **GitHub/Google OAuth** (`GITHUB_OAUTH_CLIENT_ID/SECRET`,
+  `GOOGLE_CLIENT_ID/SECRET`) — standalone OAuth apps; register the
+  callback as `{scheme}://{APP_HOSTNAME}/api/auth/oauth/{provider}/callback`.
+- **OIDC** (`OIDC_*`) — enterprise SSO, discovery-URL driven.
+- **TOTP 2FA** — per-user, in Settings; no env needed.
+
 ## Networking
 
 Two ways to get traffic in:
