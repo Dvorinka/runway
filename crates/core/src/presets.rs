@@ -175,10 +175,60 @@ pub const PRESETS: &[Preset] = &[
         Some("vite"),
     ),
     p(
+        "angular", "Angular", "node-20",
+        "npm install && npm run build && mkdir -p .rw-out && (cp -r dist/*/browser/* .rw-out/ 2>/dev/null || cp -r dist/* .rw-out/)", "",
+        "", 80, Some(".rw-out"), true,
+        80, &["angular.json"], &["package.json"], &[],
+        Some("@angular/core"),
+    ),
+    p(
+        "solidstart", "SolidStart", "node-20",
+        "npm install && npm run build", "",
+        "node .output/server/index.mjs", 3000, None, false,
+        80, &["app.config.ts", "app.config.js", "package.json"], &[], &[],
+        Some("@solidjs/start"),
+    ),
+    p(
+        "qwik", "Qwik", "node-20",
+        "npm install && npm run build", "",
+        "", 80, Some("dist"), true,
+        70, &["package.json"], &[], &["angular.json"],
+        Some("@builder.io/qwik"),
+    ),
+    p(
+        "eleventy", "Eleventy", "node-20",
+        "npm install && npx @11ty/eleventy", "",
+        "", 80, Some("_site"), false,
+        80, &[".eleventy.js", "eleventy.config.js", "eleventy.config.cjs"], &[], &[],
+        None,
+    ),
+    p(
+        "gatsby", "Gatsby", "node-20",
+        "npm install && npm run build", "",
+        "", 80, Some("public"), false,
+        85, &["gatsby-config.js", "gatsby-config.ts"], &["package.json"], &[],
+        Some("gatsby"),
+    ),
+    p(
+        "docusaurus", "Docusaurus", "node-20",
+        "npm install && npm run build", "",
+        "", 80, Some("build"), false,
+        80, &["docusaurus.config.js", "docusaurus.config.ts"], &["package.json"], &[],
+        Some("@docusaurus"),
+    ),
+    p(
         "hugo", "Hugo", "go-1.25",
         "go install github.com/gohugoio/hugo@latest && hugo --minify", "",
         "", 80, Some("public"), false,
         95, &["hugo.toml", "hugo.yaml", "config.toml"], &[], &[],
+        None,
+    ),
+    // Bare HTML/CSS/JS — no build, served as-is. Last-resort match.
+    p(
+        "static", "Static", "node-20",
+        "", "",
+        "", 80, Some("."), false,
+        10, &["index.html", "*/index.html"], &[], &["package.json", "go.mod", "requirements.txt", "composer.json"],
         None,
     ),
     // -- Backend (parity with the devpush catalog) ---------------------------
@@ -371,6 +421,49 @@ mod tests {
     #[test]
     fn detects_go() {
         assert_eq!(detect(&["go.mod", "main.go"], None).unwrap().slug, "go");
+    }
+
+    #[test]
+    fn detects_static_site() {
+        assert_eq!(
+            detect(&["index.html", "style.css", "app.js"], None)
+                .unwrap()
+                .slug,
+            "static"
+        );
+    }
+
+    #[test]
+    fn package_json_beats_static() {
+        let files = vec!["index.html", "package.json"];
+        assert_eq!(detect(&files, Some("{}")).unwrap().slug, "nodejs");
+    }
+
+    #[test]
+    fn detects_angular() {
+        let files = vec!["angular.json", "package.json"];
+        let pj = Some(r#"{"dependencies":{"@angular/core":"18.0.0"}}"#);
+        assert_eq!(detect(&files, pj).unwrap().slug, "angular");
+    }
+
+    #[test]
+    fn detects_eleventy() {
+        let files = vec![".eleventy.js", "package.json", "index.md"];
+        assert_eq!(detect(&files, Some("{}")).unwrap().slug, "eleventy");
+    }
+
+    #[test]
+    fn detects_gatsby() {
+        let files = vec!["gatsby-config.js", "package.json"];
+        let pj = Some(r#"{"dependencies":{"gatsby":"5.0.0","react":"18"}}"#);
+        assert_eq!(detect(&files, pj).unwrap().slug, "gatsby");
+    }
+
+    #[test]
+    fn detects_docusaurus() {
+        let files = vec!["docusaurus.config.ts", "package.json"];
+        let pj = Some(r#"{"dependencies":{"@docusaurus/core":"3.0.0"}}"#);
+        assert_eq!(detect(&files, pj).unwrap().slug, "docusaurus");
     }
 
     #[test]
