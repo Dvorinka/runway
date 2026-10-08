@@ -15,6 +15,10 @@ const POLL_MS: u64 = 500;
 const MAX_ATTEMPTS: i32 = 3;
 
 pub async fn run(ctx: Ctx) {
+    // Every `running` row at startup belongs to a dead process — requeue.
+    if let Err(e) = reap_orphans(&ctx.db).await {
+        tracing::warn!(error = %e, "orphaned job requeue failed");
+    }
     let mut ticker = tokio::time::interval(Duration::from_millis(POLL_MS));
     loop {
         ticker.tick().await;
@@ -22,6 +26,22 @@ pub async fn run(ctx: Ctx) {
             tracing::error!(error = %e, "job loop tick failed");
         }
     }
+}
+
+/// `running` rows surviving a restart are orphaned — requeue them.
+/// Panics in-flight are handled per-job by the watcher in `tick`.
+async fn reap_orphans(db: &PgPool) -> anyhow::Result<()> {
+    let res = sqlx::query(
+        "UPDATE job SET status = 'pending', locked_at = NULL,
+         last_error = 'requeued after restart', updated_at = now()
+         WHERE status = 'running'",
+    )
+    .execute(db)
+    .await?;
+    if res.rows_affected() > 0 {
+        tracing::warn!(count = res.rows_affected(), "requeued orphaned jobs");
+    }
+    Ok(())
 }
 
 async fn tick(ctx: &Ctx) -> anyhow::Result<()> {
@@ -50,8 +70,17 @@ async fn tick(ctx: &Ctx) -> anyhow::Result<()> {
 
     for (id, kind, payload, attempts) in jobs {
         let ctx = ctx.clone();
+        // Two tasks: `work` runs the job, the outer task awaits its
+        // JoinHandle so a panic still lands the job as failed/retried.
+        let work_ctx = ctx.clone();
+        let work_kind = kind.clone();
+        let work = tokio::spawn(async move { dispatch(&work_ctx, &kind, &payload).await });
         tokio::spawn(async move {
-            match dispatch(&ctx, &kind, &payload).await {
+            let result = match work.await {
+                Ok(r) => r,
+                Err(e) => Err(anyhow::anyhow!("job task panicked: {e}")),
+            };
+            match result {
                 Ok(()) => {
                     let _ = sqlx::query(
                         "UPDATE job SET status = 'done', updated_at = now() WHERE id = $1",
@@ -61,7 +90,7 @@ async fn tick(ctx: &Ctx) -> anyhow::Result<()> {
                     .await;
                 }
                 Err(e) => {
-                    tracing::warn!(job_id = id, kind, error = %e, "job failed");
+                    tracing::warn!(job_id = id, kind = work_kind, error = %e, "job failed");
                     let retry = attempts + 1 < MAX_ATTEMPTS;
                     let _ = if retry {
                         sqlx::query(

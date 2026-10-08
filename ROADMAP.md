@@ -334,6 +334,10 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
       lists). Shared `rules_allow` now also serves github.rs; Settings
       gains a Deploy rules card (branches, authors, paths, merge-skip,
       auto-deploy, PR comments)
+- [x] **Job queue resilience** — startup requeue of `running` rows
+      orphaned by a restart; every job task is supervised by a watcher
+      so panics land as retried/failed instead of wedging `running`
+      forever
 
 ## Non-goals
 
