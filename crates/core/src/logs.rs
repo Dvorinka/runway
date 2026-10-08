@@ -59,6 +59,30 @@ impl LogStore {
         }
     }
 
+    /// Delete log files untouched for `days` — Loki-retention
+    /// equivalent for the file store.
+    pub async fn prune_older_than(&self, days: u64) -> usize {
+        let cutoff =
+            std::time::SystemTime::now() - std::time::Duration::from_secs(days * 24 * 3600);
+        let mut removed = 0;
+        let Ok(mut entries) = tokio::fs::read_dir(&self.dir).await else {
+            return 0;
+        };
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let stale = entry
+                .metadata()
+                .await
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .map(|m| m < cutoff)
+                .unwrap_or(false);
+            if stale && tokio::fs::remove_file(entry.path()).await.is_ok() {
+                removed += 1;
+            }
+        }
+        removed
+    }
+
     /// Read the last `n` lines of a deployment log.
     pub async fn tail(&self, deployment_id: &str, n: usize) -> Result<Vec<String>> {
         let path = self.path(deployment_id);

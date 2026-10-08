@@ -1,13 +1,17 @@
 pub mod admin;
 pub mod api;
 pub mod auth;
+pub mod avatars;
 pub mod cloudflare;
 pub mod deployments;
 pub mod git_providers;
 pub mod github;
 pub mod mcp;
 pub mod notifications;
+pub mod oauth;
 pub mod oidc;
 pub mod projects;
+pub mod rum;
+pub mod status;
 pub mod storage;
 pub mod teams;

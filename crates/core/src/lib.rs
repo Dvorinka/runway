@@ -6,6 +6,7 @@
 
 pub mod access;
 pub mod audit;
+pub mod avatars;
 pub mod cloudflare;
 pub mod config;
 pub mod cron;
@@ -20,7 +21,11 @@ pub mod github;
 pub mod logs;
 pub mod mail;
 pub mod models;
+pub mod node_tls;
+pub mod password;
+pub mod pathmatch;
 pub mod presets;
+pub mod rum;
 pub mod slugify;
 pub mod traefik;
 pub mod tunnel;

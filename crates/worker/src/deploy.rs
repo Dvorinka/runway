@@ -192,7 +192,7 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
     if source_archive.is_none() {
         match deployment.repo_provider.as_str() {
             "github" | "github_enterprise" => {
-                let Some(github) = ctx.github.as_ref() else {
+                let Some(github) = ctx.github.if_configured() else {
                     anyhow::bail!("GitHub App not configured");
                 };
                 let installation_id = project
@@ -261,6 +261,10 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
         }
     }
 
+    // Source acquisition only — reused by dockerfile builds, which stage
+    // the repo on the host instead of inside the serve container.
+    let source_cmds = commands.clone();
+
     // Static mode: `output_directory` materializes the build to a host
     // dir served by the `static-web` image instead of a runner process.
     let output_dir = config
@@ -274,6 +278,26 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
     if static_mode && remote_node.is_some() {
         anyhow::bail!("static deploys are not supported on remote nodes (artifact dir is local)");
     }
+    // Dockerfile mode: the repo builds into an image via `docker build`;
+    // the image's own CMD/ENTRYPOINT serves (or `entrypoint` overrides).
+    let dockerfile_path = config
+        .get("dockerfile_path")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().trim_start_matches("./").to_string())
+        .filter(|s| !s.is_empty());
+    let docker_build = dockerfile_path.is_some();
+    if docker_build && remote_node.is_some() {
+        anyhow::bail!("dockerfile builds are not supported on remote nodes (context is local)");
+    }
+    if docker_build && static_mode {
+        anyhow::bail!("dockerfile_path cannot be combined with output_directory");
+    }
+    if let Some(df) = &dockerfile_path {
+        if !safe_rel_path(df) {
+            anyhow::bail!("dockerfile_path must be a relative path inside the repo: {df}");
+        }
+    }
+
     let mut spa_fallback = config
         .get("spa_fallback")
         .and_then(|v| v.as_bool())
@@ -302,7 +326,7 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
         .trim_start_matches("./")
         .trim_matches('/')
         .to_string();
-    if !root_dir.is_empty() {
+    if !root_dir.is_empty() && !docker_build {
         commands.push(format!("echo 'Changing root directory to {root_dir}'"));
         commands.push(format!(
             "test -d {root_dir} || {{ printf '\\033[31mError: root directory %s not found\\033[0m\\n' {root_dir} 1>&2; exit 1; }}"
@@ -310,21 +334,22 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
         commands.push(format!("cd {root_dir}"));
     }
 
-    // Build / pre-deploy / start — runway.json overrides via jq in-container.
-    let cfg_str = |key: &str| config.get(key).and_then(|v| v.as_str()).unwrap_or("");
-    if !cfg_str("build_command").is_empty() {
-        commands.push("echo 'Installing dependencies...'".into());
-        commands.push(config_command("build_command", cfg_str("build_command")));
-    }
-    let pre_deploy = cfg_str("pre_deploy_command");
-    // `[ -n ... ]` tests the raw value; the subshell needs a no-op when empty.
-    let pre_deploy_cmd = if pre_deploy.is_empty() {
-        ":"
-    } else {
-        pre_deploy
-    };
-    commands.push(format!(
-        "if [ -f runway.json ] && command -v jq >/dev/null 2>&1; then \
+    if !docker_build {
+        // Build / pre-deploy / start — runway.json overrides via jq in-container.
+        let cfg_str = |key: &str| config.get(key).and_then(|v| v.as_str()).unwrap_or("");
+        if !cfg_str("build_command").is_empty() {
+            commands.push("echo 'Installing dependencies...'".into());
+            commands.push(config_command("build_command", cfg_str("build_command")));
+        }
+        let pre_deploy = cfg_str("pre_deploy_command");
+        // `[ -n ... ]` tests the raw value; the subshell needs a no-op when empty.
+        let pre_deploy_cmd = if pre_deploy.is_empty() {
+            ":"
+        } else {
+            pre_deploy
+        };
+        commands.push(format!(
+            "if [ -f runway.json ] && command -v jq >/dev/null 2>&1; then \
          OVERRIDE=$(jq -r '.pre_deploy_command // empty' runway.json); \
          if [ -n \"$OVERRIDE\" ]; then \
          echo 'Running pre-deploy command from runway.json...'; \
@@ -337,9 +362,9 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
          echo 'Running pre-deploy command...'; \
          ( {pre_deploy_cmd} ); \
          fi; fi"
-    ));
-    if static_mode {
-        commands.push(format!(
+        ));
+        if static_mode {
+            commands.push(format!(
             "OUTDIR=$(if [ -f runway.json ] && command -v jq >/dev/null 2>&1; then \
              jq -r '.output_directory // empty' runway.json; fi); \
              OUTDIR=${{OUTDIR:-{output_dir}}}; \
@@ -349,9 +374,57 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
              (cp runway.json /out/.runway.json 2>/dev/null || true) && \
              echo 'Static output published'"
         ));
-    } else {
-        commands.push("echo 'Starting application...'".into());
-        commands.push(config_command("start_command", cfg_str("start_command")));
+            // Analytics + speed-insights snippets: injected post-publish into
+            // every .html under /out. Passed via env so arbitrary HTML never
+            // touches shell interpolation.
+            let mut snippets: Vec<&str> = Vec::new();
+            if let Some(s) = config
+                .get("analytics_meta")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+            {
+                snippets.push(s);
+            }
+            if let Some(s) = config
+                .get("analytics_snippet")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.trim().is_empty())
+            {
+                snippets.push(s);
+            }
+            let speed_snippet;
+            let beacon_on = ["speed_insights", "web_analytics"].iter().any(|k| {
+                config
+                    .get(k)
+                    .and_then(|v| v.get("enabled"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+            });
+            if beacon_on {
+                speed_snippet = runway_core::rum::beacon_snippet();
+                snippets.push(speed_snippet);
+            }
+            if !snippets.is_empty() {
+                env.push(format!("RUNWAY_SNIPPETS={}", snippets.join("\n<!-- -->\n")));
+                commands.push(
+                "if command -v node >/dev/null 2>&1; then \
+                 echo 'Injecting head snippets...'; \
+                 node -e 'const fs=require(\"fs\"),p=require(\"path\"),ss=process.env.RUNWAY_SNIPPETS.split(\"\\n<!-- -->\\n\"); \
+                 function w(d){for(const f of fs.readdirSync(d)){const q=p.join(d,f); \
+                 if(fs.statSync(q).isDirectory()){w(q)}else if(f.endsWith(\".html\")){let h=fs.readFileSync(q,\"utf8\"); \
+                 for(const s of ss){if(!h.includes(s)){ \
+                 var t=s.trimStart().startsWith(\"<meta\")&&h.includes(\"</head>\")?\"</head>\":\"</body>\"; \
+                 h=h.includes(t)?h.replace(t,s+t):h+s;}} \
+                 fs.writeFileSync(q,h)}}} \
+                 w(\"/out\")'; \
+                 else echo 'Snippet injection skipped (node unavailable)'; fi"
+                    .to_string(),
+            );
+            }
+        } else {
+            commands.push("echo 'Starting application...'".into());
+            commands.push(config_command("start_command", cfg_str("start_command")));
+        }
     }
 
     // -- Networks ------------------------------------------------------
@@ -458,18 +531,25 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
             let slug = config
                 .get("runner")
                 .or_else(|| config.get("image"))
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| anyhow::anyhow!("runner not set in deployment config"))?;
-            runner_image = presets::runner_image_resolved(&ctx.settings.data_dir, slug);
+                .and_then(|v| v.as_str());
+            runner_image =
+                slug.and_then(|s| presets::runner_image_resolved(&ctx.settings.data_dir, s));
         }
     }
-    let Some(runner_image) = runner_image else {
+    if docker_build && runner_image.is_none() {
+        // Dockerfile deploys don't need a preset runner — only a fetch
+        // stage with git+tar to stage the repo on the host.
+        // jarvis: floating tag; pin once runner-overrides carry a fetch image.
+        runner_image = Some("alpine/git:latest".into());
+    }
+    let Some(mut runner_image) = runner_image else {
         anyhow::bail!("runner image not found for deployment");
     };
 
     // Build-output cache for node/bun runners — persists incremental
-    // compiler state (.next/cache, .turbo) across deployments.
-    if runner_image.contains("node") || runner_image.contains("bun") {
+    // compiler state (.next/cache, .turbo) across deployments. Skipped for
+    // dockerfile builds — those mounts would shadow image-baked paths.
+    if !docker_build && (runner_image.contains("node") || runner_image.contains("bun")) {
         let base = format!("runway-bcache-{}", &project.id[..12.min(project.id.len())]);
         let root = if root_dir.is_empty() {
             String::new()
@@ -495,14 +575,21 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
         }
     }
 
-    if config
-        .get("dockerfile_path")
-        .and_then(|v| v.as_str())
-        .is_some()
-    {
-        anyhow::bail!(
-            "dockerfile_path builds are not supported yet — use override_image or a preset"
-        );
+    if docker_build {
+        runner_image = dockerfile_build(
+            ctx,
+            docker,
+            deployment,
+            &log,
+            ImageBuildSpec {
+                dockerfile: dockerfile_path.as_deref().unwrap_or_default(),
+                root_dir: &root_dir,
+                fetch_image: &runner_image,
+                source_cmds: &source_cmds,
+                env: &env,
+            },
+        )
+        .await?;
     }
 
     log("Checking runner image availability...").await;
@@ -589,7 +676,13 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
         )
         .await
     };
-    binds.extend(storage_mounts.clone());
+    if docker_build {
+        // Serve container = the built image; source/cache binds would
+        // shadow baked content. Linked storage mounts still apply.
+        binds = storage_mounts.clone();
+    } else {
+        binds.extend(storage_mounts.clone());
+    }
     if !binds.is_empty() {
         host_config.binds = Some(binds);
     }
@@ -770,16 +863,37 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
             ..Default::default()
         }
     } else {
+        // Dockerfile builds: image's own CMD/ENTRYPOINT (or the
+        // entrypoint override) runs; git tokens stay in the fetch
+        // container, not the long-lived serve env.
+        let serve_env = if docker_build {
+            env.iter()
+                .filter(|e| {
+                    !e.starts_with("RUNWAY_GITHUB_TOKEN=") && !e.starts_with("RUNWAY_GIT_TOKEN=")
+                })
+                .cloned()
+                .collect()
+        } else {
+            env
+        };
         ContainerConfig {
             image: Some(runner_image),
-            env: Some(env),
-            working_dir: Some("/app".into()),
+            env: Some(serve_env),
+            working_dir: if docker_build {
+                None
+            } else {
+                Some("/app".into())
+            },
             labels: Some(labels),
             networking_config: Some(NetworkingConfig {
                 endpoints_config: serve_endpoints,
             }),
             host_config: Some(host_config),
-            cmd: Some(cmd),
+            cmd: if docker_build {
+                entrypoint.map(|ep| vec!["sh".to_string(), "-c".to_string(), ep.to_string()])
+            } else {
+                Some(cmd)
+            },
             ..Default::default()
         }
     };
@@ -1238,7 +1352,8 @@ async fn post_commit_status(
     state: &str,
     description: &str,
 ) {
-    let (Some(gh), Some(installation_id)) = (ctx.github.as_ref(), project.github_installation_id)
+    let (Some(gh), Some(installation_id)) =
+        (ctx.github.if_configured(), project.github_installation_id)
     else {
         return;
     };
@@ -1262,6 +1377,43 @@ async fn post_commit_status(
         .await
     {
         tracing::warn!(deployment_id = deployment.id, error = %e, "commit status post failed");
+    }
+
+    // PR preview deployments carry `pr_number` — update the upserted
+    // comment with the final state and live URL.
+    let Some(pr_number) = deployment.config.get("pr_number").and_then(|v| v.as_i64()) else {
+        return;
+    };
+    let preview_url = format!(
+        "{}://{}-branch-{}.{}",
+        ctx.settings.url_scheme,
+        project_slug,
+        runway_core::slugify::branch_slug(&deployment.branch),
+        ctx.settings.deploy_domain
+    );
+    let status_line = if state == "success" {
+        format!(
+            "**Runway preview** — [{preview_url}]({preview_url})\n\nDeployment `{:.7}` is ready.",
+            deployment.commit_sha
+        )
+    } else {
+        format!(
+            "**Runway preview** — [{preview_url}]({preview_url})\n\nDeployment `{:.7}` {state}.",
+            deployment.commit_sha
+        )
+    };
+    let marker = format!("<!-- runway-preview:{} -->", project.id);
+    if let Err(e) = gh
+        .upsert_issue_comment(
+            &token,
+            &deployment.repo_full_name,
+            pr_number,
+            &marker,
+            &status_line,
+        )
+        .await
+    {
+        tracing::warn!(deployment_id = deployment.id, error = %e, "preview comment update failed");
     }
 }
 
@@ -1423,6 +1575,57 @@ pub async fn cleanup_inactive(ctx: &Ctx, project_id: &str) -> anyhow::Result<()>
             }
         }
     }
+
+    // Retention — opt-in `config.deployment_retention` keeps the newest N
+    // completed deployments per environment; older rows no alias
+    // references are pruned with metrics, logs, and artifacts. Rollback
+    // targets (any alias's previous_deployment_id) are always spared.
+    let keep = project
+        .config
+        .get("deployment_retention")
+        .and_then(|v| v.as_i64())
+        .filter(|&n| n > 0)
+        .unwrap_or(i64::MAX);
+    if keep < i64::MAX {
+        let stale: Vec<(String,)> = sqlx::query_as(
+            "SELECT id FROM (
+                 SELECT id,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY environment_id ORDER BY created_at DESC
+                        ) rn
+                 FROM deployment
+                 WHERE project_id = $1 AND status = 'completed'
+                   AND id NOT IN (
+                       SELECT a.deployment_id FROM alias a
+                       JOIN deployment d ON a.deployment_id = d.id
+                       WHERE d.project_id = $1
+                       UNION
+                       SELECT a.previous_deployment_id FROM alias a
+                       JOIN deployment d ON a.previous_deployment_id = d.id
+                       WHERE d.project_id = $1
+                   )
+             ) t WHERE rn > $2",
+        )
+        .bind(project_id)
+        .bind(keep)
+        .fetch_all(&ctx.db)
+        .await?;
+        for (id,) in stale {
+            let Some(dep) = deploy::get(&ctx.db, &id).await? else {
+                continue;
+            };
+            drop_artifacts(ctx, &dep).await;
+            sqlx::query("DELETE FROM deployment_metric WHERE deployment_id = $1")
+                .bind(&dep.id)
+                .execute(&ctx.db)
+                .await?;
+            let _ = tokio::fs::remove_file(ctx.logs.path(&dep.id)).await;
+            sqlx::query("DELETE FROM deployment WHERE id = $1")
+                .bind(&dep.id)
+                .execute(&ctx.db)
+                .await?;
+        }
+    }
     Ok(())
 }
 
@@ -1442,12 +1645,223 @@ pub fn docker_host_root(settings: &runway_core::Settings) -> anyhow::Result<std:
     })
 }
 
-/// Remove host-side deployment artifacts: static output dir + upload tarball.
+struct ImageBuildSpec<'a> {
+    dockerfile: &'a str,
+    root_dir: &'a str,
+    fetch_image: &'a str,
+    source_cmds: &'a [String],
+    env: &'a [String],
+}
+
+/// `dockerfile_path` builds: a throwaway fetch container stages the repo
+/// on the host (`buildctx/<dep>` mounted at /app), then `docker build`
+/// runs with that directory as a real context — devpush built with no
+/// context, so `COPY` could never work there. Returns the built tag.
+async fn dockerfile_build<F, Fut>(
+    ctx: &Ctx,
+    docker: &bollard::Docker,
+    deployment: &Deployment,
+    log: &F,
+    spec: ImageBuildSpec<'_>,
+) -> anyhow::Result<String>
+where
+    F: Fn(&str) -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    let ImageBuildSpec {
+        dockerfile: dockerfile_path,
+        root_dir,
+        fetch_image,
+        source_cmds,
+        env,
+    } = spec;
+    let deployment_id = &deployment.id;
+    let ctx_local = std::path::Path::new(&ctx.settings.data_dir)
+        .join("buildctx")
+        .join(deployment_id);
+    let ctx_host = docker_host_root(&ctx.settings)?
+        .join("buildctx")
+        .join(deployment_id);
+    let _ = tokio::fs::remove_dir_all(&ctx_local).await;
+    tokio::fs::create_dir_all(&ctx_local).await?;
+
+    log("Staging source for image build...").await;
+    if docker.inspect_image(fetch_image).await.is_err() {
+        log(&format!("Pulling fetch image ({fetch_image})...")).await;
+        pull_image(docker, fetch_image).await?;
+    }
+    let host_root = docker_host_root(&ctx.settings)?;
+    let mut fetch_binds = vec![format!("{}:/app", ctx_host.display())];
+    if deployment
+        .config
+        .get("source_archive")
+        .and_then(|v| v.as_str())
+        .is_some()
+    {
+        fetch_binds.push(format!("{}:/src:ro", host_root.join("uploads").display()));
+    }
+    let fetch_name = format!(
+        "runner-{}-fetch",
+        &deployment_id[..7.min(deployment_id.len())]
+    );
+    let fetch_body = ContainerConfig {
+        image: Some(fetch_image.to_string()),
+        env: Some(env.to_vec()),
+        working_dir: Some("/app".into()),
+        labels: Some(HashMap::from([
+            ("runway.deployment_id".into(), deployment_id.clone()),
+            ("runway.project_id".into(), deployment.project_id.clone()),
+            ("runway.role".into(), "fetch".into()),
+        ])),
+        host_config: Some(HostConfig {
+            binds: Some(fetch_binds),
+            security_opt: Some(vec!["no-new-privileges:true".into()]),
+            ..Default::default()
+        }),
+        cmd: Some(vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            source_cmds.join(" && "),
+        ]),
+        ..Default::default()
+    };
+    let fetch_id = dkr::create_or_replace_container(docker, &fetch_name, fetch_body)
+        .await
+        .map_err(|e| anyhow::anyhow!("fetch container: {e}"))?;
+    docker
+        .start_container(&fetch_id, None::<StartContainerOptions<String>>)
+        .await?;
+    spawn_log_tailer(ctx, fetch_id.clone(), deployment_id.clone());
+    let exit = wait_exit(docker, &fetch_id, ctx.settings.deployment_timeout_seconds).await;
+    let _ = docker
+        .remove_container(
+            &fetch_id,
+            Some(RemoveContainerOptions {
+                force: true,
+                ..Default::default()
+            }),
+        )
+        .await;
+    match exit {
+        Ok(0) => {}
+        Ok(code) => anyhow::bail!("source fetch failed (exit code {code})"),
+        Err(e) => anyhow::bail!("source fetch failed: {e}"),
+    }
+
+    // `root_directory` selects the context root — a monorepo app builds
+    // with only its subtree visible, matching Railway/Coolify behavior.
+    let context_dir = if root_dir.is_empty() {
+        ctx_local.clone()
+    } else {
+        ctx_local.join(root_dir)
+    };
+    if !context_dir.join(dockerfile_path).is_file() {
+        anyhow::bail!("Dockerfile not found at {dockerfile_path}");
+    }
+
+    log(&format!("Building image ({dockerfile_path})...")).await;
+    let tag = format!(
+        "runway-dep-{}:latest",
+        &deployment_id[..12.min(deployment_id.len())]
+    );
+    let buildargs: HashMap<String, String> = deployment
+        .config
+        .get("build_args")
+        .and_then(|v| v.as_object())
+        .map(|m| {
+            m.iter()
+                .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                .collect()
+        })
+        .unwrap_or_default();
+    let tar = tar_context(&context_dir).await?;
+    let mut stream = docker.build_image(
+        bollard::image::BuildImageOptions::<String> {
+            dockerfile: dockerfile_path.to_string(),
+            t: tag.clone(),
+            rm: true,
+            forcerm: true,
+            buildargs,
+            labels: HashMap::from([
+                ("runway.deployment_id".into(), deployment_id.clone()),
+                ("runway.project_id".into(), deployment.project_id.clone()),
+            ]),
+            ..Default::default()
+        },
+        None,
+        Some(tar.into()),
+    );
+    // jarvis: build runs to completion — cancel() can't abort a daemon-side
+    // build stream. Upgrade if large builds need mid-flight cancel.
+    let collect = async {
+        while let Some(item) = stream.next().await {
+            let info = item.map_err(|e| anyhow::anyhow!("image build stream: {e}"))?;
+            if let Some(txt) = info.stream {
+                for line in txt.lines().filter(|l| !l.trim().is_empty()) {
+                    log(line).await;
+                }
+            }
+            if let Some(err) = info.error {
+                anyhow::bail!("image build failed: {err}");
+            }
+        }
+        Ok::<(), anyhow::Error>(())
+    };
+    tokio::time::timeout(
+        std::time::Duration::from_secs(ctx.settings.deployment_timeout_seconds.max(300)),
+        collect,
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("image build timed out"))??;
+
+    let _ = tokio::fs::remove_dir_all(&ctx_local).await;
+    log(&format!("Image built ({tag})")).await;
+    Ok(tag)
+}
+
+/// Tar a directory for `docker build` context. `.git` is excluded.
+// jarvis: .dockerignore not honored — ceiling until a real ignore parser.
+async fn tar_context(dir: &std::path::Path) -> anyhow::Result<Vec<u8>> {
+    let out = tokio::process::Command::new("tar")
+        .args(["--exclude=./.git", "-cf", "-", "-C"])
+        .arg(dir)
+        .arg(".")
+        .output()
+        .await?;
+    if !out.status.success() {
+        anyhow::bail!(
+            "tar context failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    Ok(out.stdout)
+}
+
+/// Repo-relative path check for dockerfile_path — no absolute, no `..`.
+fn safe_rel_path(p: &str) -> bool {
+    use std::path::Component;
+    !p.is_empty()
+        && std::path::Path::new(p)
+            .components()
+            .all(|c| matches!(c, Component::Normal(_)))
+}
+
+/// Remove host-side deployment artifacts: static output dir, upload
+/// tarball, dockerfile build context + built image.
 /// The upload tarball is retained until this point because `redeploy` of an
 /// upload deployment re-extracts it.
 async fn drop_artifacts(ctx: &Ctx, dep: &Deployment) {
     let data = std::path::Path::new(&ctx.settings.data_dir);
     let _ = tokio::fs::remove_dir_all(data.join("static").join(&dep.id)).await;
+    let _ = tokio::fs::remove_dir_all(data.join("buildctx").join(&dep.id)).await;
+    let _ = ctx
+        .docker
+        .remove_image(
+            &format!("runway-dep-{}:latest", &dep.id[..12.min(dep.id.len())]),
+            None,
+            None,
+        )
+        .await;
     if let Some(archive) = dep.config.get("source_archive").and_then(|v| v.as_str()) {
         let _ = tokio::fs::remove_file(data.join("uploads").join(archive)).await;
     }

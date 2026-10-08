@@ -8,12 +8,12 @@
 //! - `GET    /api/v1/git/{provider}/connections/{id}/branches/{*full}`
 //! - `POST   /api/gitea/webhook`   — X-Gitea-Signature (hex HMAC-SHA256)
 //! - `POST   /api/gitlab/webhook`  — X-Gitlab-Token + Push Hook event
-//!
-//! Bitbucket has connections + discovery only — devpush never links a
-//! bitbucket connection to a project, so there is no clone/deploy path.
+//! - `POST   /api/bitbucket/webhook` — X-Event-Key: repo:push; the
+//!   payload's sha is never trusted — the branch head is resolved via
+//!   the connection's API credentials before deploying.
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     Json,
@@ -464,9 +464,10 @@ async fn provider_push(
         .unwrap_or("")
         .trim_start_matches("refs/heads/")
         .to_string();
+    let changed = changed_paths(data);
 
     for project in projects {
-        if !rules_allow(&project, &branch, &commit) {
+        if !rules_allow(&project, &branch, &commit, &changed) {
             continue;
         }
         match deploy::create(
@@ -496,8 +497,156 @@ async fn provider_push(
     }
 }
 
+/// POST /api/bitbucket/webhook — `X-Event-Key: repo:push`. Bitbucket
+/// doesn't sign payloads: `BITBUCKET_WEBHOOK_SECRET` (carried as
+/// `?secret=` on the hook URL) is optional defense-in-depth, and the
+/// claimed sha is ignored — the real branch head is resolved through
+/// the project's connection before anything deploys.
+pub async fn bitbucket_webhook(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    body: axum::body::Bytes,
+) -> ApiResult<Response> {
+    if let Some(secret) = &state.settings.bitbucket_webhook_secret {
+        if q.get("secret") != Some(secret) {
+            return Err(ApiError::unauthorized("invalid token"));
+        }
+    }
+    let event = headers
+        .get("x-event-key")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if event != "repo:push" {
+        return Ok(StatusCode::OK.into_response());
+    }
+    let data: Value =
+        serde_json::from_slice(&body).map_err(|_| ApiError::bad_request("invalid payload"))?;
+    let full_name = data["repository"]["full_name"]
+        .as_str()
+        .map(String::from)
+        // Older payloads: workspace.slug + repository.name.
+        .or_else(|| {
+            let ws = data["repository"]["workspace"]["slug"].as_str()?;
+            let name = data["repository"]["name"].as_str()?;
+            if ws.is_empty() || name.is_empty() {
+                None
+            } else {
+                Some(format!("{ws}/{name}"))
+            }
+        })
+        .unwrap_or_default();
+    let branch = data["push"]["changes"]
+        .as_array()
+        .and_then(|c| c.first())
+        .and_then(|c| c["new"]["name"].as_str())
+        .unwrap_or("")
+        .to_string();
+    if full_name.is_empty() || branch.is_empty() {
+        return Ok(StatusCode::OK.into_response());
+    }
+    bitbucket_push(&state, &full_name, &branch).await;
+    Ok(StatusCode::OK.into_response())
+}
+
+/// Bitbucket push — match projects on repo_full_name, resolve the real
+/// branch head via the project's connection (never trust the webhook
+/// sha), apply deployment rules, create + enqueue.
+async fn bitbucket_push(state: &AppState, full_name: &str, branch: &str) {
+    let projects: Vec<Project> = match sqlx::query_as(
+        "SELECT * FROM project
+         WHERE repo_provider = 'bitbucket' AND repo_full_name = $1 AND status = 'active'",
+    )
+    .bind(full_name)
+    .fetch_all(&state.db)
+    .await
+    {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::error!(error = %e, "bitbucket webhook: project lookup failed");
+            return;
+        }
+    };
+    let Some((owner, repo)) = full_name.split_once('/') else {
+        return;
+    };
+    for project in projects {
+        let Some(conn_id) = project.bitbucket_connection_id else {
+            continue;
+        };
+        let Ok(Some(conn)) =
+            git_providers::connection(&state.db, &state.crypto, "bitbucket", conn_id).await
+        else {
+            continue;
+        };
+        let client = Client::new("bitbucket", conn);
+        let head = match client.latest_commit(owner, repo, branch).await {
+            Ok(Some(c)) => c,
+            _ => continue,
+        };
+        let commit = CommitInfo {
+            sha: head.sha,
+            author: head.author,
+            message: head.message,
+            timestamp: head.timestamp,
+        };
+        // Bitbucket push payloads carry no per-commit file lists.
+        if !rules_allow(&project, branch, &commit, &[]) {
+            continue;
+        }
+        match deploy::create(
+            &state.db,
+            &state.bus,
+            &state.crypto,
+            &project,
+            branch,
+            &commit,
+            "webhook",
+            None,
+            None,
+        )
+        .await
+        {
+            Ok(dep) => tracing::info!(
+                deployment_id = dep.id,
+                project_id = project.id,
+                "deployment created from bitbucket push"
+            ),
+            Err(e) => tracing::warn!(
+                project_id = project.id,
+                error = %e,
+                "bitbucket push: deployment create failed"
+            ),
+        }
+    }
+}
+
 /// Deployment-rules filter — same semantics as the github push handler.
-fn rules_allow(project: &Project, branch: &str, commit: &CommitInfo) -> bool {
+/// Flatten `commits[].added|modified|removed` into a unique changed-path
+/// list — the GitHub/Gitea/GitLab push-payload shape. Bitbucket's
+/// `repo:push` carries no file lists, so it always passes `paths` rules.
+pub(crate) fn changed_paths(data: &Value) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(commits) = data["commits"].as_array() {
+        for c in commits {
+            for key in ["added", "modified", "removed"] {
+                if let Some(files) = c[key].as_array() {
+                    out.extend(files.iter().filter_map(|f| f.as_str().map(String::from)));
+                }
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+pub(crate) fn rules_allow(
+    project: &Project,
+    branch: &str,
+    commit: &CommitInfo,
+    changed: &[String],
+) -> bool {
     let rules = project
         .config
         .get("deployment_rules")
@@ -531,6 +680,10 @@ fn rules_allow(project: &Project, branch: &str, commit: &CommitInfo) -> bool {
     if ignored.contains(&commit.author.as_str()) {
         return false;
     }
-    !(rules.get("skip_merge_commits").and_then(|v| v.as_bool()) == Some(true)
-        && commit.message.starts_with("Merge"))
+    if rules.get("skip_merge_commits").and_then(|v| v.as_bool()) == Some(true)
+        && commit.message.starts_with("Merge")
+    {
+        return false;
+    }
+    runway_core::pathmatch::deployable(rules.get("paths").and_then(|v| v.as_str()), changed)
 }

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-label="Runway">
+  <title>Runway</title>
+  <g transform="translate(0 -14) rotate(22.5 120 120)">
+    <g fill="none" stroke="#0F131A" stroke-width="18" stroke-linecap="round">
+      <path d="M56 204 L196 64"/>
+      <path d="M44 160 C 94 160 122 140 150 110"/>
+    </g>
+    <circle cx="150" cy="110" r="13" fill="#FF4D00"/>
+  </g>
+</svg>

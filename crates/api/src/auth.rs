@@ -37,6 +37,37 @@ pub fn mint_session(secret: &str, user_id: i64, max_age: u64) -> anyhow::Result<
     )?)
 }
 
+/// Pre-2FA token — issued after a valid password when `totp_enabled`;
+/// exchanged for a real session by the TOTP challenge. Distinct
+/// audience so it can never authenticate as a session.
+pub fn mint_pending(secret: &str, user_id: i64) -> anyhow::Result<String> {
+    let now = Utc::now().timestamp() as u64;
+    let claims = SessionClaims {
+        sub: user_id,
+        iss: "runway".into(),
+        aud: "runway:pre2fa".into(),
+        iat: now,
+        exp: now + 300,
+    };
+    Ok(jsonwebtoken::encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(secret.as_bytes()),
+    )?)
+}
+
+pub fn decode_pending(secret: &str, token: &str) -> Option<i64> {
+    let mut validation = Validation::default();
+    validation.set_audience(&["runway:pre2fa"]);
+    jsonwebtoken::decode::<SessionClaims>(
+        token,
+        &DecodingKey::from_secret(secret.as_bytes()),
+        &validation,
+    )
+    .ok()
+    .map(|d| d.claims.sub)
+}
+
 fn decode_session(secret: &str, token: &str) -> Option<SessionClaims> {
     let mut validation = Validation::default();
     validation.set_audience(&["runway:auth"]);
@@ -54,46 +85,6 @@ pub(crate) fn session_user_id(secret: &str, token: &str) -> Option<i64> {
     decode_session(secret, token)
         .filter(|c| c.exp > Utc::now().timestamp() as u64)
         .map(|c| c.sub)
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct LoginClaims {
-    /// Email being signed in.
-    pub sub: String,
-    pub iss: String,
-    pub aud: String,
-    pub iat: u64,
-    pub exp: u64,
-}
-
-/// Short-lived single-purpose token for magic-link login.
-/// Stateless — single-use is not enforced; expiry (15 min) bounds the window.
-pub fn mint_login_token(secret: &str, email: &str) -> anyhow::Result<String> {
-    let now = Utc::now().timestamp() as u64;
-    let claims = LoginClaims {
-        sub: email.to_string(),
-        iss: "runway".into(),
-        aud: "runway:login".into(),
-        iat: now,
-        exp: now + 15 * 60,
-    };
-    Ok(jsonwebtoken::encode(
-        &Header::default(),
-        &claims,
-        &EncodingKey::from_secret(secret.as_bytes()),
-    )?)
-}
-
-pub fn decode_login_token(secret: &str, token: &str) -> Option<String> {
-    let mut validation = Validation::default();
-    validation.set_audience(&["runway:login"]);
-    jsonwebtoken::decode::<LoginClaims>(
-        token,
-        &DecodingKey::from_secret(secret.as_bytes()),
-        &validation,
-    )
-    .ok()
-    .map(|d| d.claims.sub)
 }
 
 /// Authenticated user — cookie session or `Authorization: Bearer ak_...`.

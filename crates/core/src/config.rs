@@ -58,10 +58,8 @@ pub struct Settings {
     pub service_uid: u32,
     pub service_gid: u32,
 
-    // GitHub OAuth (login)
-    pub github_client_id: Option<String>,
-    pub github_client_secret: Option<String>,
-    // GitHub App (repos + webhooks)
+    // GitHub App (repos + webhooks) — env creds are an alternative to
+    // DB registration via the app-manifest flow.
     pub github_app_id: Option<String>,
     pub github_app_name: Option<String>,
     pub github_app_private_key: Option<String>,
@@ -73,6 +71,17 @@ pub struct Settings {
     /// X-Gitlab-Token on inbound push events.
     pub gitea_webhook_secret: Option<String>,
     pub gitlab_webhook_secret: Option<String>,
+    /// Optional Bitbucket webhook secret — Bitbucket doesn't sign
+    /// payloads; when set, the hook URL must carry `?secret=`.
+    pub bitbucket_webhook_secret: Option<String>,
+
+    // Dedicated OAuth sign-in (github/google) — separate from the
+    // GitHub App creds: these carry `read:user user:email` scopes and
+    // exist purely for "Continue with …" login.
+    pub github_oauth_client_id: Option<String>,
+    pub github_oauth_client_secret: Option<String>,
+    pub google_oauth_client_id: Option<String>,
+    pub google_oauth_client_secret: Option<String>,
 
     // OIDC / SSO (login + account link)
     pub oidc_client_id: Option<String>,
@@ -153,8 +162,6 @@ impl Settings {
             deployment_restart_max_retries: env_i64("DEPLOYMENT_RESTART_MAX_RETRIES", 5),
             service_uid: env_u64("SERVICE_UID", 1000) as u32,
             service_gid: env_u64("SERVICE_GID", 1000) as u32,
-            github_client_id: opt("GITHUB_CLIENT_ID"),
-            github_client_secret: opt("GITHUB_CLIENT_SECRET"),
             github_app_id: opt("GITHUB_APP_ID"),
             github_app_name: opt("GITHUB_APP_NAME"),
             github_app_private_key: opt("GITHUB_APP_PRIVATE_KEY"),
@@ -162,6 +169,11 @@ impl Settings {
             github_api_url: env_or("GITHUB_API_URL", "https://api.github.com"),
             gitea_webhook_secret: opt("GITEA_WEBHOOK_SECRET"),
             gitlab_webhook_secret: opt("GITLAB_WEBHOOK_SECRET"),
+            bitbucket_webhook_secret: opt("BITBUCKET_WEBHOOK_SECRET"),
+            github_oauth_client_id: opt("GITHUB_OAUTH_CLIENT_ID"),
+            github_oauth_client_secret: opt("GITHUB_OAUTH_CLIENT_SECRET"),
+            google_oauth_client_id: opt("GOOGLE_CLIENT_ID"),
+            google_oauth_client_secret: opt("GOOGLE_CLIENT_SECRET"),
             oidc_client_id: opt("OIDC_CLIENT_ID"),
             oidc_client_secret: opt("OIDC_CLIENT_SECRET"),
             oidc_discovery_url: opt("OIDC_DISCOVERY_URL"),
@@ -197,9 +209,17 @@ impl Settings {
             && self.github_app_webhook_secret.is_some()
     }
 
-    /// True when the GitHub OAuth login flow is configured.
-    pub fn github_oauth_configured(&self) -> bool {
-        self.github_client_id.is_some() && self.github_client_secret.is_some()
+    /// True when a dedicated OAuth sign-in provider is configured.
+    pub fn oauth_configured(&self, provider: &str) -> bool {
+        match provider {
+            "github" => {
+                self.github_oauth_client_id.is_some() && self.github_oauth_client_secret.is_some()
+            }
+            "google" => {
+                self.google_oauth_client_id.is_some() && self.google_oauth_client_secret.is_some()
+            }
+            _ => false,
+        }
     }
 
     /// True when OIDC SSO is fully configured.
@@ -286,8 +306,6 @@ pub(crate) fn test_settings() -> Settings {
         deployment_restart_max_retries: 5,
         service_uid: 1000,
         service_gid: 1000,
-        github_client_id: None,
-        github_client_secret: None,
         github_app_id: None,
         github_app_name: None,
         github_app_private_key: None,
@@ -295,6 +313,11 @@ pub(crate) fn test_settings() -> Settings {
         github_api_url: "https://api.github.com".into(),
         gitea_webhook_secret: None,
         gitlab_webhook_secret: None,
+        bitbucket_webhook_secret: None,
+        github_oauth_client_id: None,
+        github_oauth_client_secret: None,
+        google_oauth_client_id: None,
+        google_oauth_client_secret: None,
         oidc_client_id: None,
         oidc_client_secret: None,
         oidc_discovery_url: None,

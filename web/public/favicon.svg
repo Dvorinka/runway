@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <title>Runway</title>
+  <rect width="256" height="256" rx="56" fill="#0F131A"/>
+  <g transform="translate(17 13) scale(0.925)">
+    <g transform="translate(0 -14) rotate(22.5 120 120)">
+    <g fill="none" stroke="#FFFFFF" stroke-width="22" stroke-linecap="round">
+      <path d="M56 204 L196 64"/>
+      <path d="M44 160 C 94 160 122 140 150 110"/>
+    </g>
+    <circle cx="150" cy="110" r="15" fill="#FF4D00"/>
+  </g>
+  </g>
+</svg>

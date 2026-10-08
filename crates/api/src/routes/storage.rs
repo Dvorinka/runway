@@ -59,10 +59,29 @@ pub async fn list(
     .bind(&tid)
     .fetch_all(&state.db)
     .await?;
-    Ok(
-        Json(json!({ "storage": rows.iter().map(storage_json).collect::<Vec<_>>() }))
-            .into_response(),
+    // Linked projects per storage — lets the dashboard render link/unlink.
+    let ids: Vec<String> = rows.iter().map(|s| s.id.clone()).collect();
+    let links: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT sp.storage_id, sp.project_id, p.name FROM storage_project sp
+         JOIN project p ON p.id = sp.project_id
+         WHERE sp.storage_id = ANY($1) ORDER BY p.name",
     )
+    .bind(&ids)
+    .fetch_all(&state.db)
+    .await?;
+    let storage: Vec<Value> = rows
+        .iter()
+        .map(|s| {
+            let mut v = storage_json(s);
+            v["links"] = json!(links
+                .iter()
+                .filter(|(sid, _, _)| sid == &s.id)
+                .map(|(_, pid, pname)| json!({ "project_id": pid, "project_name": pname }))
+                .collect::<Vec<_>>());
+            v
+        })
+        .collect();
+    Ok(Json(json!({ "storage": storage })).into_response())
 }
 
 #[derive(Deserialize)]
