@@ -27,18 +27,25 @@ export default function Overview() {
         )
       : null;
   const running = deployments?.filter((d) => isRunning(d.status, d.conclusion)) ?? [];
+  const down =
+    deployments?.filter(
+      (d) =>
+        d.conclusion === "succeeded" &&
+        ["crashed", "dead", "missing", "paused"].includes(d.computed_status ?? ""),
+    ) ?? [];
 
   const stats: [string, string][] = [
     ["Projects", projects ? String(projects.length) : "—"],
     ["Deploys (7d)", week ? String(week.length) : "—"],
     ["Running", deployments ? String(running.length) : "—"],
     ["Success rate", successRate !== null ? `${successRate}%` : "—"],
+    ["Down", String(down.length)],
   ];
 
   return (
     <div className="page-enter mx-auto max-w-6xl p-4 sm:p-8">
       <h1 className="mb-6 text-xl font-semibold">Overview</h1>
-      <div className="mb-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div className="mb-8 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         {stats.map(([label, value]) => (
           <Card key={label} className="p-4">
             <div className="text-xs text-muted-foreground">{label}</div>
@@ -46,6 +53,16 @@ export default function Overview() {
           </Card>
         ))}
       </div>
+      {down.length > 0 && (
+        <section className="mb-8">
+          <h2 className="mb-3 text-sm font-medium text-destructive">Needs attention</h2>
+          <div className="grid gap-2">
+            {down.map((d) => (
+              <DeploymentRow key={d.id} d={d} showProject />
+            ))}
+          </div>
+        </section>
+      )}
       {running.length > 0 && (
         <section className="mb-8">
           <h2 className="mb-3 text-sm font-medium text-muted-foreground">Deploying now</h2>

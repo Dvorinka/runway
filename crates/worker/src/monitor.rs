@@ -41,13 +41,18 @@ pub async fn run(ctx: Ctx) {
         if let Err(e) = tick(&ctx, &http, &mut probe_state, &mut sample_state).await {
             tracing::error!(error = %e, "monitor tick failed");
         }
-        // Metrics retention: 24h of 30s samples ≈ 2.9k rows/deployment.
+        // Retention sweep: 24h of 30s metric samples ≈ 2.9k
+        // rows/deployment; deployment log files are dropped after 7d.
         if last_prune.elapsed() > Duration::from_secs(3600) {
             last_prune = tokio::time::Instant::now();
             let _ =
                 sqlx::query("DELETE FROM deployment_metric WHERE ts < now() - interval '24 hours'")
                     .execute(&ctx.db)
                     .await;
+            let removed = ctx.logs.prune_older_than(7).await;
+            if removed > 0 {
+                tracing::info!(removed, "pruned stale deployment logs");
+            }
         }
     }
 }
