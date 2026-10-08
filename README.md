@@ -128,6 +128,11 @@ runway open                  # current deployment URL
 Agents get the same surface: `ak_` API keys against `/api/v1`, or the MCP
 server at `POST /api/mcp` (`initialize` / `tools/list` / `tools/call`).
 
+## Docs
+
+[`docs/`](docs/README.md) — self-hosting, preset matrix, `runway.json`
+reference, and the agent surface (CLI, API keys, MCP).
+
 ## Development
 
 ```bash

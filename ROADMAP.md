@@ -315,15 +315,18 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
       bollard `connect_with_ssl` (rustls/ring), health checks exercise
       the same path; Settings node list gains an mTLS badge + provision
       flow with install instructions
-- [ ] **Bitbucket deploys tested against a real workspace**
+- [ ] **Bitbucket deploys tested against a real workspace** — needs a
+      live Bitbucket connection; implementation complete and the
+      forged-sha vector is closed by API-side head resolution
 - [x] **Release packaging** — `v*` tags trigger `release.yml`: linux/
       macOS CLI binaries → GitHub release assets, multi-arch image →
       `ghcr.io/dvorinka/runway`; `npm/runway` wrapper downloads the
       matching tarball on postinstall; `homebrew/runway.rb` formula
       template; production Dockerfile now builds `web/dist` in-image
       (previously the SPA was missing from the published container)
-- [ ] **Docs site** — preset matrix, config reference (`runway.json`,
-      firewall, health checks), self-host install, agent/MCP guide
+- [x] **Docs** — `docs/` reference set: self-hosting (incl. mTLS node
+      setup), preset matrix, `runway.json` + project `config`
+      reference, agent surface (CLI/API keys/MCP/webhooks)
 
 ## Non-goals
 
