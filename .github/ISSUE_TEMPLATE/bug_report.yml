@@ -1,0 +1,36 @@
+name: Bug report
+description: Something deployed, built, or behaved incorrectly
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, what you got.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. …
+        2. …
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / errors
+      description: Deployment logs, `runway serve` output, browser console — redact secrets.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Runway version / commit
+      placeholder: e.g. v0.4.2 or `git rev-parse HEAD`
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      placeholder: Install method (install.sh / compose / source), OS, Docker version, ingress mode (direct-IP vs Cloudflare Tunnel)

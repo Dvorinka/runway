@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Discussions
+    url: https://github.com/Dvorinka/runway/discussions
+    about: Questions, ideas, and show-and-tell — use issues for actionable bugs and features.
+  - name: Security vulnerability
+    url: https://github.com/Dvorinka/runway/security/advisories/new
+    about: Report privately — see SECURITY.md. Never file a public issue for a vulnerability.

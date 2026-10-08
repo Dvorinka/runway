@@ -1,32 +1,35 @@
 <p align="center">
-  <img src="web/public/runway-logo.svg" width="420" alt="Runway">
+  <img src="web/public/runway-mark.svg" alt="Runway" width="120">
 </p>
 
 <h1 align="center">Runway</h1>
 
 <p align="center">
-  Self-hosted deployment platform — the Vercel experience without the meter.
-  Git-push deploys, preview URLs, and real HTTPS on your own hardware.
+  Open-source, self-hosted deployment platform.<br>
+  The Vercel experience — git-push deploys, preview URLs, real HTTPS — on your own hardware.
 </p>
 
 <p align="center">
-  <a href="#quick-start">Quick Start</a> •
-  <a href="#features">Features</a> •
-  <a href="#cli">CLI</a> •
-  <a href="ARCHITECTURE.md">Architecture</a> •
-  <a href="ROADMAP.md">Roadmap</a>
+  <a href="#quick-start">Quick Start</a> ·
+  <a href="ARCHITECTURE.md">Documentation</a> ·
+  <a href="https://github.com/Dvorinka/runway/releases">Releases</a> ·
+  <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
 <p align="center">
   <a href="https://github.com/Dvorinka/runway/actions/workflows/ci.yml"><img src="https://github.com/Dvorinka/runway/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+  <a href="https://github.com/Dvorinka/runway/releases"><img src="https://img.shields.io/github/v/release/Dvorinka/runway" alt="Release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/Dvorinka/runway" alt="License"></a>
 </p>
+
+## What is Runway?
 
 Runway is an open-source control plane for deploying web apps to Docker.
 Connect a repo, push, and get a deployed URL — with immutable, per-branch,
 and per-environment aliases, instant rollback, and live build logs. One
 Rust binary runs the API, the deploy workers, and the end-user CLI;
-Postgres is the only datastore and doubles as the job queue.
+Postgres is the only datastore and doubles as the job queue. No Redis, no
+vendor lock-in, no meter.
 
 It works where other platforms don't: an instance-level Cloudflare Tunnel
 covers the dashboard and the wildcard deploy domain, so a box behind CGNAT
@@ -35,21 +38,38 @@ standard path.
 
 > **Status:** active development, informed by
 > [devpush](https://github.com/hunvreus/devpush) (schema, lifecycle, and
-> integrations ported as spec). Phases 0–5 shipped — see
-> [ROADMAP.md](ROADMAP.md).
+> integrations ported as spec). See [ROADMAP.md](ROADMAP.md).
 
 ## Features
 
-- **Git-push deploys** — GitHub App, Gitea, GitLab, Bitbucket, GitHub Enterprise; webhooks, manual, API, CLI, and cron triggers
-- **Preview deployments** — immutable `-id-<sha>`, `-branch-<name>`, and `-env-<slug>` URLs per deployment; per-PR commit status
-- **Frontend-first** — static deploy mode (build → `output_directory` → static serve), framework detection for Next.js, Astro, SvelteKit, Nuxt, Remix, Vite/SPA, Hugo; Node 20/22, npm/pnpm/yarn/bun detection, build-cache volumes
+**Deploy pipeline**
+
+- **Git-push deploys** — GitHub App, Gitea, GitLab, Bitbucket, GitHub Enterprise; webhooks, manual, API, CLI, cron, and deploy-hook (`dp_` token) triggers
+- **Preview deployments** — immutable `-id-<sha>`, `-branch-<name>`, and `-env-<slug>` URLs; preview environments for unmatched branches (opt-in); per-PR commit status and upserted preview comments; teardown on PR close
+- **Frontend-first** — static deploy mode, 24 framework presets (Next.js, Astro, SvelteKit, Nuxt, Remix, Vite, Hugo, Angular, Qwik, Eleventy, Gatsby, Docusaurus, SolidStart…), Node 20/22 + npm/pnpm/yarn/bun detection, build-cache volumes, real `Dockerfile` builds, monorepo `root_directory`
+- **Deploy rules** — branch patterns, path-scoped glob filters (`apps/web/**` skips doc-only pushes), commit-message skip flags, environment quotas
+- **Instant rollback** — alias re-point to any retained deployment; per-environment retention policy keeps rollback targets
+
+**Runtime & edge**
+
+- **Health checks** — HTTP probes → `unhealthy` observed status → crash notification and auto-requeue
+- **Deployment protection** — Traefik basicAuth on non-production routers; the `environment/prod` alias stays public
+- **Edge firewall** — IP allowlist and rate limiting as Traefik middlewares, ordered before protection and CDN headers
+- **Analytics** — first-party privacy-preserving web analytics (daily-rotating visitor HMAC, no IPs stored) + RUM speed insights; optional Rybbit/Umami/GSC injection
+- **Status pages** — opt-in public `/{slug}` status page per project plus a shields-style SVG badge for READMEs
+
+**Accounts & teams**
+
+- **Auth** — email + password (Argon2id), magic links, email verification, TOTP 2FA with recovery codes, OIDC/SSO, dedicated GitHub and Google OAuth, sign-up allowlist
+- **Teams & RBAC** — owner/admin/member roles, email invites, per-project environment variables, audit log, notifications
+- **Managed storage** — Postgres, MongoDB, Redis, SQLite, and volumes per team, linked into deployments on private networks
+
+**Ops & platform**
+
 - **Works behind CGNAT** — instance Cloudflare Tunnel covers the dashboard + `*.DEPLOY_DOMAIN`; per-team tunnels for custom domains; one-click DNS assign via the Cloudflare API
-- **Managed storage** — Postgres, MongoDB, Redis, SQLite, and volumes per team; linked into deployments with environment filtering and private networks
-- **Teams & access** — teams with owner/admin/member roles, email invites, audit log, notifications, email + password auth (Argon2id), optional OIDC/SSO, sign-up allowlist
+- **Scale-out** — remote Docker nodes with per-node mTLS provisioning (one-click CA + cert bundles) and a real return path
 - **CLI + API + MCP** — `runway` CLI over the same REST API, `ak_` API keys, OpenAPI at `/api/v1/openapi.json`, JSON-RPC MCP server for coding agents
-- **Ops** — rollback, redeploy, cancel, live build + runtime logs (SSE), outbound webhooks with HMAC signatures, cron jobs, redirect rules, project export/import
-- **Scale-out** — remote Docker nodes with a real return path (published host port → Traefik file provider), health probes, per-project node assignment
-- **No artificial limits** — your hardware, your quotas
+- **Observability** — live build + runtime logs (SSE), deployment metrics, outbound webhooks with HMAC signatures, admin job-queue inspection and retry, project export/import
 
 ## Ingress modes
 
@@ -120,7 +140,7 @@ runway link                  # link cwd to a project
 runway deploy --follow       # upload source, stream build logs
 runway logs --follow         # runtime logs
 runway env set KEY=value
-runway env pull               # write .env.local (decrypted, 0600)
+runway env pull              # write .env.local (decrypted, 0600)
 runway domains add app.example.com
 runway domains assign-cf app.example.com   # one-click CF DNS via team tunnel
 runway open                  # current deployment URL
@@ -129,10 +149,32 @@ runway open                  # current deployment URL
 Agents get the same surface: `ak_` API keys against `/api/v1`, or the MCP
 server at `POST /api/mcp` (`initialize` / `tools/list` / `tools/call`).
 
-## Docs
+## Architecture
 
-[`docs/`](docs/README.md) — self-hosting, preset matrix, `runway.json`
-reference, and the agent surface (CLI, API keys, MCP).
+```
+Browser ──▶ runway (Rust + axum) ──▶ PostgreSQL (data + job queue)
+   web       │                ──▶ Docker / remote mTLS nodes
+   cli       ├── SSE logs & events
+   agents    └── Traefik file provider ──▶ Cloudflare Tunnel or ACME
+```
+
+```
+crates/
+  core/    runway-core    — settings, db, docker, traefik, cloudflare, models, detection
+  api/     runway-api     — axum router: REST, webhooks, SSE, MCP, SPA host
+  worker/  runway-worker  — deploy pipeline, monitor, cron, reconcile
+  cli/     runway         — single binary: serve + user CLI
+migrations/               — sqlx migrations (Postgres is also the job queue)
+web/                      — React + Vite + Tailwind dashboard
+compose/                  — development and production stacks
+```
+
+Single process, no Redis: deployments are Postgres rows claimed with
+`SELECT ... FOR UPDATE SKIP LOCKED` — orphaned jobs requeue on startup and
+panics land as retries, not wedges. Runner containers get per-deployment
+edge networks; Traefik file-provider configs are written atomically; logs
+are file-tailed, not Loki. See [ARCHITECTURE.md](ARCHITECTURE.md) for the
+full model.
 
 ## Development
 
@@ -148,31 +190,23 @@ cd web && pnpm install && pnpm dev
 cargo fmt && cargo clippy --workspace -- -D warnings && cargo test
 ```
 
-## Architecture
-
-```
-crates/
-  core/    runway-core    — settings, db, docker, traefik, cloudflare, models, detection
-  api/     runway-api     — axum router: REST, webhooks, SSE, MCP, SPA host
-  worker/  runway-worker  — deploy pipeline, monitor, cron, reconcile
-  cli/     runway         — single binary: serve + user CLI
-migrations/               — sqlx migrations (Postgres is also the job queue)
-web/                      — React + Vite + Tailwind dashboard
-compose/                  — development and production stacks
-```
-
-Single process, no Redis: deployments are Postgres rows claimed with
-`SELECT ... FOR UPDATE SKIP LOCKED`. Runner containers get per-deployment
-edge networks; Traefik file-provider configs are written atomically; logs
-are file-tailed, not Loki. See [ARCHITECTURE.md](ARCHITECTURE.md) for the
-full model.
-
 ## Documentation
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — process model, deploy lifecycle, networking
 - [ROADMAP.md](ROADMAP.md) — shipped phases and what remains
+- [`docs/`](docs/README.md) — self-hosting, preset matrix, `runway.json` reference, agent surface
 - `GET /api/v1/openapi.json` — live API contract
 - `.env.example` — every configuration knob
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) — fork, branch from `development`,
+conventional commits, gates before push. Good first issues are labeled.
+
+## Security
+
+See [SECURITY.md](SECURITY.md) — private reporting via GitHub advisories
+plus the self-hosting hardening checklist.
 
 ## License
 
