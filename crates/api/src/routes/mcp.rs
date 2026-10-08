@@ -340,15 +340,10 @@ async fn call(state: &AppState, user_id: i64, name: &str, args: &Value) -> ApiRe
         "rollback_environment" => {
             let p = project_for(state, user_id, arg(args, "project_id")?).await?;
             let env = args["environment_id"].as_str().unwrap_or("prod");
-            let alias = runway_core::deploy::rollback(
-                &state.db,
-                &state.bus,
-                &state.settings,
-                &p,
-                env,
-            )
-            .await
-            .map_err(|e| ApiError::bad_request(e.to_string()))?;
+            let alias =
+                runway_core::deploy::rollback(&state.db, &state.bus, &state.settings, &p, env)
+                    .await
+                    .map_err(|e| ApiError::bad_request(e.to_string()))?;
             Ok(json!({ "environment_id": env, "deployment_id": alias.deployment_id }))
         }
         "list_env" => {
@@ -376,9 +371,7 @@ async fn call(state: &AppState, user_id: i64, name: &str, args: &Value) -> ApiRe
                 .map_err(|e| ApiError::bad_request(e.to_string()))?;
             for it in items {
                 let key = it["key"].as_str().unwrap_or("");
-                if key.is_empty()
-                    || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-                {
+                if key.is_empty() || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
                     return Err(ApiError::bad_request(format!("invalid env key '{key}'")));
                 }
                 let environment = it["environment"].as_str().map(str::to_string);
@@ -396,9 +389,7 @@ async fn call(state: &AppState, user_id: i64, name: &str, args: &Value) -> ApiRe
                 if it["delete"].as_bool() != Some(true) {
                     let value = it["value"]
                         .as_str()
-                        .ok_or_else(|| {
-                            ApiError::bad_request("value required unless delete=true")
-                        })?
+                        .ok_or_else(|| ApiError::bad_request("value required unless delete=true"))?
                         .to_string();
                     vars.push(runway_core::models::EnvVar {
                         key: key.to_string(),
