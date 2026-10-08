@@ -22,6 +22,7 @@ enum Command {
     /// Apply database migrations only.
     Migrate,
     /// Create the first user + team and mint an API key (local bootstrap).
+    /// With --password, also sets the login password (creates or resets).
     Bootstrap {
         /// Email for the admin user.
         #[arg(long)]
@@ -29,6 +30,9 @@ enum Command {
         /// Display name / username base.
         #[arg(long)]
         username: Option<String>,
+        /// Sign-in password (min 8 chars).
+        #[arg(long)]
+        password: Option<String>,
     },
     /// Deploy the current directory (upload tarball to the linked project).
     Deploy {
@@ -43,6 +47,9 @@ enum Command {
         /// Keep tailing until the deployment concludes.
         #[arg(long)]
         follow: bool,
+        /// Merged logs across the linked project's recent deployments.
+        #[arg(long)]
+        project: bool,
     },
     /// Authenticate this machine against an instance.
     Login {
@@ -71,6 +78,23 @@ enum Command {
     Domains {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
+    },
+    /// Live container resource stats for a deployment.
+    Stats {
+        /// Deployment ID (defaults to latest of the linked project).
+        deployment: Option<String>,
+    },
+    /// List recent deployments for the linked project.
+    Deployments {
+        /// Max rows to print.
+        #[arg(long, default_value_t = 15)]
+        limit: usize,
+    },
+    /// Roll back an environment to its previous deployment.
+    Rollback {
+        /// Environment slug (default: prod).
+        #[arg(default_value = "prod")]
+        environment: String,
     },
     /// Open the project's deployment URL in the browser.
     Open {
@@ -104,14 +128,22 @@ async fn main() -> anyhow::Result<()> {
             let crypto = runway_core::crypto::Crypto::new(&settings.encryption_key)?;
             let bus = runway_core::events::EventBus::new();
 
+            // One shared GitHub service for API + workers; env creds first,
+            // then the DB-registered app (manifest flow) when env is absent.
+            let github = runway_core::github::GithubService::from_settings(&settings);
+            if let Err(e) = github.load_from_db(&db, &crypto).await {
+                tracing::warn!(error = %e, "github_app row unreadable — continuing unconfigured");
+            }
+
             // Workers run embedded in the same process.
             {
                 let db = db.clone();
                 let settings = settings.clone();
                 let bus = bus.clone();
                 let crypto = crypto.clone();
+                let github = github.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = runway_worker::run(db, settings, bus, crypto).await {
+                    if let Err(e) = runway_worker::run(db, settings, bus, crypto, github).await {
                         tracing::error!(error = %e, "worker init failed");
                     }
                 });
@@ -122,8 +154,7 @@ async fn main() -> anyhow::Result<()> {
                 settings: settings.clone(),
                 bus: bus.clone(),
                 crypto: crypto.clone(),
-                github: runway_core::github::GithubService::from_settings(&settings),
-                github_oauth: runway_core::github::GithubService::oauth_only(&settings),
+                github,
                 logs: runway_core::logs::LogStore::new(&settings.data_dir, bus),
                 docker: runway_core::docker::connect(&settings).ok(),
             };
@@ -132,19 +163,30 @@ async fn main() -> anyhow::Result<()> {
             tracing::info!(addr = %settings.listen_addr, "runway serving");
             axum::serve(listener, app).await?;
         }
-        Command::Bootstrap { email, username } => {
+        Command::Bootstrap {
+            email,
+            username,
+            password,
+        } => {
             let settings = runway_core::Settings::from_env()?;
             let db = runway_core::db::connect(&settings).await?;
             runway_core::db::migrate(&db).await?;
             let crypto = runway_core::crypto::Crypto::new(&settings.encryption_key)?;
-            bootstrap(&db, &crypto, &email, username.as_deref()).await?;
+            bootstrap(&db, &crypto, &email, username.as_deref(), password).await?;
         }
         Command::Login { server, key } => commands::login(server, key).await?,
         Command::Link { project } => commands::link(project).await?,
         Command::Deploy { follow } => commands::deploy(follow).await?,
-        Command::Logs { deployment, follow } => commands::logs(deployment, follow).await?,
+        Command::Logs {
+            deployment,
+            follow,
+            project,
+        } => commands::logs(deployment, follow, project).await?,
         Command::Env { args, environment } => commands::env(args, environment).await?,
         Command::Domains { args } => commands::domains(args).await?,
+        Command::Stats { deployment } => commands::stats(deployment).await?,
+        Command::Deployments { limit } => commands::deployments(limit).await?,
+        Command::Rollback { environment } => commands::rollback(environment).await?,
         Command::Open { print } => commands::open(print).await?,
     }
 
@@ -157,6 +199,7 @@ async fn bootstrap(
     crypto: &runway_core::crypto::Crypto,
     email: &str,
     username: Option<&str>,
+    password: Option<String>,
 ) -> anyhow::Result<()> {
     use runway_core::models::{ApiKey, Team};
     use runway_core::slugify::{slugify, token_hex};
@@ -218,6 +261,17 @@ async fn bootstrap(
         .bind(&hash)
         .execute(db)
         .await?;
+
+    if let Some(pw) = password {
+        anyhow::ensure!(pw.len() >= 8, "password must be at least 8 characters");
+        let hash = runway_core::password::hash(&pw)?;
+        sqlx::query("UPDATE \"user\" SET password_hash = $1 WHERE id = $2")
+            .bind(&hash)
+            .bind(user_id)
+            .execute(db)
+            .await?;
+        println!("password: set");
+    }
 
     let _ = crypto;
     println!("user_id:  {user_id}");

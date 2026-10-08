@@ -8,7 +8,7 @@ use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use runway_core::models::{DeployToken, Domain, Environment, Project};
+use runway_core::models::{DeployToken, Deployment, Domain, Environment, Project};
 use runway_core::slugify::token_hex;
 
 use crate::auth::AuthUser;
@@ -19,7 +19,7 @@ use crate::state::AppState;
 // Helpers
 // ---------------------------------------------------------------------------
 
-async fn user_projects(state: &AppState, user_id: i64) -> ApiResult<Vec<Project>> {
+pub(crate) async fn user_projects(state: &AppState, user_id: i64) -> ApiResult<Vec<Project>> {
     Ok(sqlx::query_as::<_, Project>(
         "SELECT p.* FROM project p
          JOIN team_member tm ON tm.team_id = p.team_id
@@ -45,6 +45,33 @@ async fn accessible_project(state: &AppState, user_id: i64, id: &str) -> ApiResu
     project.ok_or_else(|| ApiError::not_found("project"))
 }
 
+/// devpush `get_access(role, "creator")` — owner/admin always pass; a
+/// plain member passes only for a project they created. Mutating
+/// project settings routes use this.
+pub(crate) async fn accessible_project_writer(
+    state: &AppState,
+    user_id: i64,
+    id: &str,
+) -> ApiResult<Project> {
+    let project = accessible_project(state, user_id, id).await?;
+    let role: Option<String> =
+        sqlx::query_scalar("SELECT role FROM team_member WHERE team_id = $1 AND user_id = $2")
+            .bind(&project.team_id)
+            .bind(user_id)
+            .fetch_optional(&state.db)
+            .await?;
+    let allowed = match role.as_deref() {
+        Some("owner" | "admin") => true,
+        _ => project.created_by_user_id == Some(user_id),
+    };
+    if !allowed {
+        return Err(ApiError::forbidden(
+            "project settings require a creator role",
+        ));
+    }
+    Ok(project)
+}
+
 async fn default_team_id(state: &AppState, user: &runway_core::models::User) -> ApiResult<String> {
     if let Some(id) = &user.default_team_id {
         return Ok(id.clone());
@@ -64,6 +91,14 @@ async fn default_team_id(state: &AppState, user: &runway_core::models::User) -> 
 
 pub async fn list(user: AuthUser, State(state): State<AppState>) -> ApiResult<Response> {
     let projects = user_projects(&state, user.user.id).await?;
+    let latest: Vec<Deployment> = sqlx::query_as(
+        "SELECT DISTINCT ON (project_id) * FROM deployment \
+         ORDER BY project_id, created_at DESC",
+    )
+    .fetch_all(&state.db)
+    .await?;
+    let latest_by_project: std::collections::HashMap<&str, &Deployment> =
+        latest.iter().map(|d| (d.project_id.as_str(), d)).collect();
     let items: Vec<Value> = projects
         .iter()
         .map(|p| {
@@ -74,9 +109,23 @@ pub async fn list(user: AuthUser, State(state): State<AppState>) -> ApiResult<Re
                 "url": p.url(&state.settings),
                 "repo_provider": p.repo_provider,
                 "repo_full_name": p.repo_full_name,
+                "repo_branch": p.repo_branch,
                 "repo_status": p.repo_status,
+                "preset": p.config.get("preset"),
                 "environments": p.environments,
                 "created_at": p.created_at,
+                "latest_deployment": latest_by_project.get(p.id.as_str()).map(|d| json!({
+                    "id": d.id,
+                    "status": d.status,
+                    "computed_status": d.computed_status(),
+                    "conclusion": d.conclusion,
+                    "commit_sha": d.commit_sha,
+                    "commit_meta": d.commit_meta,
+                    "branch": d.branch,
+                    "environment_id": d.environment_id,
+                    "created_at": d.created_at,
+                    "concluded_at": d.concluded_at,
+                })),
             })
         })
         .collect();
@@ -153,9 +202,10 @@ pub async fn create(
 
     match provider {
         "github" | "github_enterprise" => {
-            let Some(gh) = &state.github else {
-                return Err(ApiError::bad_request("GitHub App is not configured"));
-            };
+            let gh = state
+                .github
+                .if_configured()
+                .ok_or_else(|| ApiError::bad_request("GitHub App is not configured"))?;
             let installation_id = body.installation_id.ok_or_else(|| {
                 ApiError::bad_request("installation_id required for github projects")
             })?;
@@ -247,6 +297,14 @@ pub async fn create(
                 &mut config,
                 runway_core::presets::package_manager(&refs),
             );
+        } else if root_files.iter().any(|f| f == "Dockerfile") {
+            // No framework matched but the repo ships a Dockerfile —
+            // build it directly (docker build, image CMD serves).
+            config
+                .as_object_mut()
+                .unwrap()
+                .entry("dockerfile_path".to_string())
+                .or_insert_with(|| "Dockerfile".into());
         }
     }
 
@@ -315,6 +373,9 @@ pub struct PatchProject {
     pub config: Option<Value>,
     /// Assign to a remote Docker node (null = local daemon).
     pub remote_node_id: Option<Option<String>>,
+    /// Full replacement of the environments array (add/remove/edit —
+    /// devpush form semantics serialize the whole list anyway).
+    pub environments: Option<Vec<runway_core::models::Environment>>,
 }
 
 pub async fn patch(
@@ -323,16 +384,38 @@ pub async fn patch(
     Path(id): Path<String>,
     Json(body): Json<PatchProject>,
 ) -> ApiResult<Response> {
-    let mut project = accessible_project(&state, user.user.id, &id).await?;
+    let mut project = accessible_project_writer(&state, user.user.id, &id).await?;
     if let Some(name) = body.name {
         project.name = name;
     }
     if let Some(desc) = body.description {
         project.description = desc;
     }
+    let mut edge_dirty = false;
     if let Some(patch) = body.config {
         if let (Some(obj), Some(patch)) = (project.config.as_object_mut(), patch.as_object()) {
-            for (k, v) in patch {
+            edge_dirty = patch.contains_key("firewall");
+            let mut patch = patch.clone();
+            // `protection_password` is write-only — bcrypt'd into
+            // `protection.users` (Traefik basicAuth on non-prod
+            // routers); the raw value is never stored.
+            if let Some(pw) = patch.remove("protection_password") {
+                edge_dirty = true;
+                match pw.as_str().filter(|s| !s.is_empty()) {
+                    Some(raw) => {
+                        let hash =
+                            bcrypt::hash(raw, bcrypt::DEFAULT_COST).map_err(ApiError::internal)?;
+                        obj.insert(
+                            "protection".into(),
+                            serde_json::json!({ "users": [format!("runway:{hash}")] }),
+                        );
+                    }
+                    None => {
+                        obj.remove("protection");
+                    }
+                }
+            }
+            for (k, v) in &patch {
                 obj.insert(k.clone(), v.clone());
             }
         }
@@ -351,9 +434,17 @@ pub async fn patch(
         }
         project.remote_node_id = node;
     }
+    if let Some(envs) = body.environments {
+        for e in &envs {
+            if e.name.trim().is_empty() || e.slug.trim().is_empty() {
+                return Err(ApiError::bad_request("environments need name and slug"));
+            }
+        }
+        project.environments = serde_json::to_value(&envs).map_err(ApiError::internal)?;
+    }
     let updated: Project = sqlx::query_as(
         "UPDATE project SET name = $2, description = $3, config = $4,
-                remote_node_id = $5, updated_at = now()
+                remote_node_id = $5, environments = $6, updated_at = now()
          WHERE id = $1 RETURNING *",
     )
     .bind(&project.id)
@@ -361,9 +452,52 @@ pub async fn patch(
     .bind(&project.description)
     .bind(&project.config)
     .bind(&project.remote_node_id)
+    .bind(&project.environments)
     .fetch_one(&state.db)
     .await?;
+    // Firewall changes apply at the edge immediately — waiting for the
+    // next deploy would leave a window open.
+    if edge_dirty {
+        rewrite_traefik(&state, &updated).await?;
+    }
     Ok(Json(project_json(&state, &updated)).into_response())
+}
+
+#[derive(Deserialize)]
+pub struct DeleteProject {
+    /// Must match the project name — devpush types-the-name confirm.
+    pub confirm: String,
+}
+
+/// `DELETE /api/v1/projects/{id}` — marks deleted and enqueues the
+/// `delete_project` job (containers, aliases, domains, edge config).
+pub async fn delete(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<DeleteProject>,
+) -> ApiResult<Response> {
+    let project = accessible_project_writer(&state, user.user.id, &id).await?;
+    if body.confirm != project.name {
+        return Err(ApiError::bad_request("type the project name to confirm"));
+    }
+    sqlx::query("UPDATE project SET status = 'deleted', updated_at = now() WHERE id = $1")
+        .bind(&project.id)
+        .execute(&state.db)
+        .await?;
+    runway_core::deploy::enqueue(
+        &state.db,
+        "delete_project",
+        json!({ "project_id": project.id }),
+        0,
+    )
+    .await?;
+    let mut a = runway_core::audit::Audit::new("project.delete");
+    a.user_id = Some(user.user.id);
+    a.team_id = Some(project.team_id.clone());
+    a.project_id = Some(project.id.clone());
+    runway_core::audit::log(&state.db, a).await;
+    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 fn project_json(state: &AppState, p: &Project) -> Value {
@@ -384,6 +518,7 @@ fn project_json(state: &AppState, p: &Project) -> Value {
         "gitlab_connection_id": p.gitlab_connection_id,
         "bitbucket_connection_id": p.bitbucket_connection_id,
         "remote_node_id": p.remote_node_id,
+        "has_avatar": p.has_avatar,
         "config": p.config,
         "environments": p.environments,
         "status": p.status,
@@ -441,7 +576,7 @@ pub async fn put_env(
     Path(id): Path<String>,
     Json(body): Json<Vec<EnvVarInput>>,
 ) -> ApiResult<Response> {
-    let mut project = accessible_project(&state, user.user.id, &id).await?;
+    let mut project = accessible_project_writer(&state, user.user.id, &id).await?;
     for v in &body {
         if v.key.is_empty() || !v.key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
             return Err(ApiError::bad_request(format!(
@@ -497,7 +632,7 @@ pub async fn patch_env(
     Path(id): Path<String>,
     Json(body): Json<Vec<EnvPatchInput>>,
 ) -> ApiResult<Response> {
-    let mut project = accessible_project(&state, user.user.id, &id).await?;
+    let mut project = accessible_project_writer(&state, user.user.id, &id).await?;
     let mut vars = project.env_vars(&state.crypto)?;
     for p in &body {
         if p.key.is_empty() || !p.key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
@@ -555,7 +690,7 @@ pub async fn create_deploy_token(
     Path(id): Path<String>,
     Json(body): Json<CreateDeployToken>,
 ) -> ApiResult<Response> {
-    let project = accessible_project(&state, user.user.id, &id).await?;
+    let project = accessible_project_writer(&state, user.user.id, &id).await?;
     let (raw, hash) = DeployToken::generate();
     let token_id = token_hex(16);
     sqlx::query(
@@ -582,7 +717,7 @@ pub async fn delete_deploy_token(
     State(state): State<AppState>,
     Path((project_id, token_id)): Path<(String, String)>,
 ) -> ApiResult<Response> {
-    let _project = accessible_project(&state, user.user.id, &project_id).await?;
+    let _project = accessible_project_writer(&state, user.user.id, &project_id).await?;
     sqlx::query("UPDATE deploy_token SET status = 'revoked' WHERE id = $1 AND project_id = $2")
         .bind(&token_id)
         .bind(&project_id)
@@ -628,7 +763,7 @@ pub async fn add_domain(
     Path(id): Path<String>,
     Json(body): Json<CreateDomain>,
 ) -> ApiResult<Response> {
-    let project = accessible_project(&state, user.user.id, &id).await?;
+    let project = accessible_project_writer(&state, user.user.id, &id).await?;
     let hostname = body.hostname.trim().to_lowercase();
     if hostname.is_empty()
         || hostname.len() > 253
@@ -687,7 +822,7 @@ pub async fn assign_cloudflare_domain(
     State(state): State<AppState>,
     Path((project_id, domain_id)): Path<(String, i64)>,
 ) -> ApiResult<Response> {
-    let project = accessible_project(&state, user.user.id, &project_id).await?;
+    let project = accessible_project_writer(&state, user.user.id, &project_id).await?;
     let domain: Option<(String,)> =
         sqlx::query_as("SELECT hostname FROM domain WHERE id = $1 AND project_id = $2")
             .bind(domain_id)
@@ -782,7 +917,7 @@ pub async fn delete_domain(
     State(state): State<AppState>,
     Path((project_id, domain_id)): Path<(String, i64)>,
 ) -> ApiResult<Response> {
-    let project = accessible_project(&state, user.user.id, &project_id).await?;
+    let project = accessible_project_writer(&state, user.user.id, &project_id).await?;
     let domain: Option<(String, Option<String>, Option<String>)> = sqlx::query_as(
         "SELECT hostname, cloudflare_zone_id, cloudflare_record_id
          FROM domain WHERE id = $1 AND project_id = $2",
@@ -908,7 +1043,7 @@ pub async fn create_webhook(
     Path(id): Path<String>,
     Json(body): Json<CreateWebhook>,
 ) -> ApiResult<Response> {
-    let project = accessible_project(&state, user.user.id, &id).await?;
+    let project = accessible_project_writer(&state, user.user.id, &id).await?;
     let events = body.events.unwrap_or_default();
     validate_webhook_input(&body.name, &body.url, &events)?;
     let secret_enc = match &body.secret {
@@ -941,7 +1076,7 @@ pub async fn delete_webhook(
     State(state): State<AppState>,
     Path((id, webhook_id)): Path<(String, String)>,
 ) -> ApiResult<Response> {
-    let project = accessible_project(&state, user.user.id, &id).await?;
+    let project = accessible_project_writer(&state, user.user.id, &id).await?;
     let res = sqlx::query("DELETE FROM project_webhook WHERE id = $1 AND project_id = $2")
         .bind(&webhook_id)
         .bind(&project.id)
@@ -1016,7 +1151,7 @@ pub async fn create_cron(
     Path(id): Path<String>,
     Json(body): Json<CreateCronJob>,
 ) -> ApiResult<Response> {
-    let project = accessible_project(&state, user.user.id, &id).await?;
+    let project = accessible_project_writer(&state, user.user.id, &id).await?;
     let name = body.name.trim();
     let schedule = body.schedule.trim();
     if name.is_empty() || schedule.is_empty() {
@@ -1062,7 +1197,7 @@ pub async fn patch_cron(
     Path((id, job_id)): Path<(String, String)>,
     Json(body): Json<PatchCronJob>,
 ) -> ApiResult<Response> {
-    let project = accessible_project(&state, user.user.id, &id).await?;
+    let project = accessible_project_writer(&state, user.user.id, &id).await?;
     let Some(enabled) = body.enabled else {
         return Err(ApiError::bad_request("nothing to update"));
     };
@@ -1092,7 +1227,7 @@ pub async fn delete_cron(
     State(state): State<AppState>,
     Path((id, job_id)): Path<(String, String)>,
 ) -> ApiResult<Response> {
-    let project = accessible_project(&state, user.user.id, &id).await?;
+    let project = accessible_project_writer(&state, user.user.id, &id).await?;
     let res = sqlx::query("DELETE FROM cron_job WHERE id = $1 AND project_id = $2")
         .bind(&job_id)
         .bind(&project.id)
@@ -1164,7 +1299,7 @@ pub async fn create_redirect(
     Path(id): Path<String>,
     Json(body): Json<CreateRedirect>,
 ) -> ApiResult<Response> {
-    let project = accessible_project(&state, user.user.id, &id).await?;
+    let project = accessible_project_writer(&state, user.user.id, &id).await?;
     let source = body.source_path.trim();
     let target = body.target_url.trim();
     if !source.starts_with('/') {
@@ -1211,7 +1346,7 @@ pub async fn patch_redirect(
     Path((id, rid)): Path<(String, String)>,
     Json(body): Json<PatchRedirect>,
 ) -> ApiResult<Response> {
-    let project = accessible_project(&state, user.user.id, &id).await?;
+    let project = accessible_project_writer(&state, user.user.id, &id).await?;
     if let Some(sc) = body.status_code {
         if !matches!(sc, 301 | 302 | 307 | 308) {
             return Err(ApiError::bad_request("status_code must be 301/302/307/308"));
@@ -1248,7 +1383,7 @@ pub async fn delete_redirect(
     State(state): State<AppState>,
     Path((id, rid)): Path<(String, String)>,
 ) -> ApiResult<Response> {
-    let project = accessible_project(&state, user.user.id, &id).await?;
+    let project = accessible_project_writer(&state, user.user.id, &id).await?;
     let res = sqlx::query("DELETE FROM redirect_rule WHERE id = $1 AND project_id = $2")
         .bind(&rid)
         .bind(&project.id)
@@ -1320,7 +1455,7 @@ pub async fn import_project(
     Path(id): Path<String>,
     Json(body): Json<Value>,
 ) -> ApiResult<Response> {
-    let mut project = accessible_project(&state, user.user.id, &id).await?;
+    let mut project = accessible_project_writer(&state, user.user.id, &id).await?;
 
     // config merge
     if let Some(imported) = body

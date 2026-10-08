@@ -24,9 +24,30 @@ pub struct User {
     pub username: String,
     pub name: Option<String>,
     pub email_verified: bool,
+    pub has_avatar: bool,
     pub status: String,
     pub tokens_invalid_before: Option<DateTime<Utc>>,
     pub default_team_id: Option<String>,
+    pub password_hash: Option<String>,
+    pub totp_secret_enc: Option<String>,
+    pub totp_enabled: bool,
+    pub totp_recovery: Value,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// DB-registered GitHub App credentials (manifest flow). Single row.
+#[derive(Debug, Clone, FromRow)]
+pub struct GithubApp {
+    pub app_id: String,
+    pub slug: String,
+    pub name: Option<String>,
+    pub client_id: Option<String>,
+    pub client_secret_enc: Option<String>,
+    pub pem_enc: String,
+    pub webhook_secret_enc: String,
+    pub html_url: Option<String>,
+    pub created_by_user_id: Option<i64>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -130,6 +151,14 @@ impl Environment {
             extra: Default::default(),
         }
     }
+
+    /// Env-var scope: preview envs inherit their template's scoped vars.
+    pub fn env_scope_slug(&self) -> &str {
+        self.extra
+            .get("template_slug")
+            .and_then(|v| v.as_str())
+            .unwrap_or(&self.slug)
+    }
 }
 
 /// One env var entry inside the encrypted `env_vars` JSON array.
@@ -160,6 +189,7 @@ pub struct Project {
     pub gitlab_connection_id: Option<i64>,
     pub bitbucket_connection_id: Option<i64>,
     pub remote_node_id: Option<String>,
+    pub has_avatar: bool,
     pub config: Value,
     pub environments: Value,
     /// AES-GCM ciphertext holding a `Vec<EnvVar>` JSON array.
@@ -216,6 +246,43 @@ impl Project {
             }
         }
         None
+    }
+
+    /// Branch → env for deployment creation. Exact/pattern match wins;
+    /// unmatched branches synthesize a preview env cloned from the
+    /// template env (`config.preview_template`, default prod/first),
+    /// unless `config.preview_environments` is false. The synthetic env
+    /// is never persisted — branch aliases carry the preview URL, and
+    /// `environment_id` fits VARCHAR(8) via a branch hash.
+    pub fn environment_for_deploy(&self, branch: &str) -> Option<Environment> {
+        if let Some(env) = self.environment_for_branch(branch) {
+            return Some(env);
+        }
+        if self
+            .config
+            .get("preview_environments")
+            .and_then(Value::as_bool)
+            == Some(false)
+        {
+            return None;
+        }
+        let template_id = self
+            .config
+            .get("preview_template")
+            .and_then(Value::as_str)
+            .unwrap_or("prod");
+        let template = self
+            .environment_by_id(template_id)
+            .or_else(|| self.active_environments().into_iter().next())?;
+        let hash = &crate::crypto::sha256_hex(branch)[..6];
+        let mut env = template.clone();
+        env.extra
+            .insert("template_slug".into(), Value::from(template.slug.as_str()));
+        env.id = format!("pv{hash}");
+        env.slug = format!("pv{hash}");
+        env.name = format!("Preview: {branch}");
+        env.branch = branch.to_string();
+        Some(env)
     }
 
     /// Decrypted env var list.
@@ -419,7 +486,7 @@ impl Deployment {
                         "crashed".into()
                     }
                 }
-                Some(o @ ("paused" | "dead")) => o.into(),
+                Some(o @ ("paused" | "dead" | "unhealthy")) => o.into(),
                 _ => "running".into(),
             },
             _ => match observed {
@@ -779,6 +846,7 @@ mod tests {
             gitlab_connection_id: None,
             bitbucket_connection_id: None,
             remote_node_id: None,
+            has_avatar: false,
             config: json!({}),
             environments: envs,
             env_vars: String::new(),
@@ -809,6 +877,32 @@ mod tests {
         assert_eq!(p.environment_for_branch("dev-feat").unwrap().id, "staging");
         assert_eq!(p.environment_for_branch("x-pr").unwrap().id, "review");
         assert!(p.environment_for_branch("random").is_none());
+    }
+
+    #[test]
+    fn env_for_deploy_preview_fallback() {
+        let p = project_with_envs(json!([env("prod", "main"), env("staging", "dev*")]));
+        let env = p.environment_for_deploy("feat/x").unwrap();
+        assert!(env.id.starts_with("pv") && env.id.len() == 8);
+        assert_eq!(env.name, "Preview: feat/x");
+        assert_eq!(env.env_scope_slug(), "prod");
+        // Matched branches still win over the fallback.
+        assert_eq!(p.environment_for_deploy("main").unwrap().id, "prod");
+    }
+
+    #[test]
+    fn env_for_deploy_preview_disabled() {
+        let mut p = project_with_envs(json!([env("prod", "main")]));
+        p.config = json!({ "preview_environments": false });
+        assert!(p.environment_for_deploy("feat/x").is_none());
+    }
+
+    #[test]
+    fn env_for_deploy_preview_template() {
+        let mut p = project_with_envs(json!([env("prod", "main"), env("staging", "dev*")]));
+        p.config = json!({ "preview_template": "staging" });
+        let env = p.environment_for_deploy("feat/x").unwrap();
+        assert_eq!(env.env_scope_slug(), "staging");
     }
 
     #[test]

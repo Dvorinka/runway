@@ -13,7 +13,14 @@ use crate::crypto::Crypto;
 use crate::error::Result;
 use crate::models::{Deployment, Project, ProjectWebhook, TeamWebhook};
 
-pub const WEBHOOK_EVENTS: [&str; 5] = ["started", "succeeded", "failed", "canceled", "skipped"];
+pub const WEBHOOK_EVENTS: [&str; 6] = [
+    "started",
+    "succeeded",
+    "failed",
+    "canceled",
+    "skipped",
+    "crashed",
+];
 
 /// Port of _build_deployment_payload.
 fn build_payload(project: &Project, dep: &Deployment, event: &str, settings: &Settings) -> Value {

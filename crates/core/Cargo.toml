@@ -10,6 +10,7 @@ description = "Shared domain logic: config, database, Docker, Traefik, git provi
 [dependencies]
 aes-gcm.workspace = true
 anyhow.workspace = true
+argon2.workspace = true
 base64.workspace = true
 bollard.workspace = true
 chrono.workspace = true
@@ -20,8 +21,10 @@ hmac.workspace = true
 jsonwebtoken.workspace = true
 lettre.workspace = true
 rand.workspace = true
+rcgen = "0.13"
 regex.workspace = true
 reqwest.workspace = true
+rustls = { version = "0.23", features = ["ring"] }
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
@@ -32,3 +35,6 @@ tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
 uuid.workspace = true
+
+[dev-dependencies]
+x509-parser = "0.16"

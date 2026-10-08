@@ -159,13 +159,16 @@ pub async fn openapi() -> Response {
     // (path, [(method, summary)])
     const ROUTES: &[(&str, &[(&str, &str)])] = &[
         ("/health", &[("get", "Liveness probe")]),
-        ("/api/auth/github", &[("get", "Start GitHub OAuth login")]),
-        ("/api/auth/magic-link", &[("post", "Send magic-link email {email}")]),
+        ("/api/auth/login", &[("post", "Email + password sign-in {email, password}")]),
+        ("/api/auth/register", &[("post", "Create account {email, password, username?} — allowlist-gated")]),
         ("/api/auth/me", &[("get", "Current user")]),
         ("/api/auth/logout", &[("post", "Destroy session")]),
         ("/api/github/webhook", &[("post", "GitHub App webhook (push + pull_request)")]),
-        ("/api/github/installations", &[("get", "List GitHub App installations")]),
-        ("/api/github/installations/{id}/repos", &[("get", "List repos for an installation")]),
+        ("/api/v1/github/app/status", &[("get", "GitHub App registration status")]),
+        ("/api/v1/github/app/register", &[("get", "Start GitHub App manifest registration (admin)")]),
+        ("/api/v1/github/app/callback", &[("get", "GitHub App manifest callback (admin)")]),
+        ("/api/v1/github/installations", &[("get", "List GitHub App installations")]),
+        ("/api/v1/github/installations/{id}/repos", &[("get", "List repos for an installation")]),
         ("/api/v1/projects", &[
             ("get", "List accessible projects"),
             ("post", "Create project {name, repo_id, repo_full_name, installation_id, branch?, preset?, config?} — preset auto-detected when omitted"),

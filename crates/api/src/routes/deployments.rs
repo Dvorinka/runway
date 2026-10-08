@@ -64,9 +64,40 @@ fn deployment_json(state: &AppState, d: &Deployment, project: &Project) -> Value
         "error": d.error,
         "container_id": d.container_id,
         "container_status": d.container_status,
+        "observed_status": d.observed_status,
+        "observed_exit_code": d.observed_exit_code,
+        "observed_at": d.observed_at,
+        "observed_missing_count": d.observed_missing_count,
         "created_at": d.created_at,
         "concluded_at": d.concluded_at,
     })
+}
+
+/// `GET /api/v1/deployments` — latest deployments across all projects the
+/// user can see. Powers the global Deployments view + dashboard.
+pub async fn index(user: AuthUser, State(state): State<AppState>) -> ApiResult<Response> {
+    let projects = crate::routes::projects::user_projects(&state, user.user.id).await?;
+    let ids: Vec<&str> = projects.iter().map(|p| p.id.as_str()).collect();
+    let by_id: std::collections::HashMap<&str, &Project> =
+        projects.iter().map(|p| (p.id.as_str(), p)).collect();
+    let deployments: Vec<Deployment> = sqlx::query_as(
+        "SELECT * FROM deployment WHERE project_id = ANY($1) \
+         ORDER BY created_at DESC LIMIT 50",
+    )
+    .bind(&ids)
+    .fetch_all(&state.db)
+    .await?;
+    let items: Vec<Value> = deployments
+        .iter()
+        .filter_map(|d| {
+            by_id.get(d.project_id.as_str()).map(|p| {
+                let mut v = deployment_json(&state, d, p);
+                v["project_name"] = json!(p.name);
+                v
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "deployments": items })).into_response())
 }
 
 pub async fn list(
@@ -121,7 +152,34 @@ pub async fn create(
             }
         });
 
-    let dep = trigger_deployment(&state, &project, &branch, "user", Some(user.user.id)).await?;
+    let has_remote = match project.repo_provider.as_str() {
+        "github" | "github_enterprise" => project.github_installation_id.is_some(),
+        "gitea" => project.gitea_connection_id.is_some(),
+        "gitlab" => project.gitlab_connection_id.is_some(),
+        "bitbucket" => project.bitbucket_connection_id.is_some(),
+        _ => false,
+    };
+
+    let dep = if has_remote {
+        trigger_deployment(&state, &project, &branch, "user", Some(user.user.id)).await?
+    } else {
+        // No git remote — redeploy the latest uploaded archive on this branch.
+        let prev: Option<Deployment> = sqlx::query_as(
+            "SELECT * FROM deployment WHERE project_id = $1 AND branch = $2 \
+             AND config->>'source_archive' IS NOT NULL \
+             ORDER BY created_at DESC LIMIT 1",
+        )
+        .bind(&project.id)
+        .bind(&branch)
+        .fetch_optional(&state.db)
+        .await?;
+        let Some(prev) = prev else {
+            return Err(ApiError::bad_request(
+                "project has no git remote — deploy via `runway deploy` first",
+            ));
+        };
+        redeploy_dep(&state, user.user.id, &prev, &project).await?
+    };
     let mut a = runway_core::audit::Audit::new("deployment.create");
     a.user_id = Some(user.user.id);
     a.team_id = Some(project.team_id.clone());
@@ -149,7 +207,7 @@ pub async fn trigger_deployment(
     let info = deploy::resolve_commit(
         &state.db,
         &state.crypto,
-        state.github.as_ref(),
+        state.github.if_configured(),
         project,
         branch,
     )
@@ -227,13 +285,13 @@ pub async fn skip(
     Ok(Json(json!({ "ok": true })).into_response())
 }
 
-/// Redeploy: same branch + same commit, fresh deployment.
-pub async fn redeploy(
-    user: AuthUser,
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> ApiResult<Response> {
-    let (dep, project) = accessible_deployment(&state, user.user.id, &id).await?;
+/// Shared redeploy: same branch + commit + source archive as `dep`.
+pub(crate) async fn redeploy_dep(
+    state: &AppState,
+    user_id: i64,
+    dep: &Deployment,
+    project: &Project,
+) -> ApiResult<Deployment> {
     let info = CommitInfo {
         sha: dep.commit_sha.clone(),
         message: dep
@@ -254,18 +312,48 @@ pub async fn redeploy(
             .and_then(|v| v.as_str())
             .map(String::from),
     };
-    let new_dep = deploy::create(
+    let extra = dep
+        .config
+        .get("source_archive")
+        .cloned()
+        .map(|a| json!({ "source_archive": a }));
+    if let Some(archive) = dep.config.get("source_archive").and_then(|v| v.as_str()) {
+        let safe = archive
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-');
+        let exists = safe
+            && std::path::Path::new(&state.settings.data_dir)
+                .join("uploads")
+                .join(archive)
+                .exists();
+        if !exists {
+            return Err(ApiError::bad_request(
+                "uploaded source no longer retained — deploy again via `runway deploy`",
+            ));
+        }
+    }
+    Ok(deploy::create(
         &state.db,
         &state.bus,
         &state.crypto,
-        &project,
+        project,
         &dep.branch,
         &info,
         "user",
-        Some(user.user.id),
-        None,
+        Some(user_id),
+        extra,
     )
-    .await?;
+    .await?)
+}
+
+/// Redeploy: same branch + same commit, fresh deployment.
+pub async fn redeploy(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Response> {
+    let (dep, project) = accessible_deployment(&state, user.user.id, &id).await?;
+    let new_dep = redeploy_dep(&state, user.user.id, &dep, &project).await?;
     Ok((
         StatusCode::CREATED,
         Json(deployment_json(&state, &new_dep, &project)),
@@ -325,6 +413,52 @@ pub async fn logs(
         .into_response())
 }
 
+/// `GET /api/v1/projects/{id}/logs` — merged tail across the project's
+/// recent deployments (devpush `project_logs`, file-backed instead of
+/// Loki). Output lines: `<rfc3339>\t<dep7>\t<text>`, sorted by time.
+pub async fn project_logs(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path(project_id): Path<String>,
+    Query(q): Query<LogsQuery>,
+) -> ApiResult<Response> {
+    let project = accessible_project(&state, user.user.id, &project_id).await?;
+    let tail = q.tail.unwrap_or(200).clamp(1, 5000);
+    let dep_ids: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM deployment WHERE project_id = $1 \
+         ORDER BY created_at DESC LIMIT 8",
+    )
+    .bind(&project.id)
+    .fetch_all(&state.db)
+    .await?;
+    // (timestamp prefix, short id, text) — RFC3339 sorts lexically.
+    let mut merged: Vec<(String, String, String)> = Vec::new();
+    for id in dep_ids {
+        let short = id[..7.min(id.len())].to_string();
+        for line in state.logs.tail(&id, tail).await.unwrap_or_default() {
+            let mut parts = line.splitn(3, '\t');
+            let ts = parts.next().unwrap_or_default().to_string();
+            let _stream = parts.next();
+            let text = parts.next().unwrap_or_default().to_string();
+            merged.push((ts, short.clone(), text));
+        }
+    }
+    merged.sort();
+    let body = merged
+        .iter()
+        .rev()
+        .take(tail)
+        .rev()
+        .map(|(ts, dep, text)| format!("{ts}\t{dep}\t{text}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    Ok(axum::response::Response::builder()
+        .header("content-type", "text/plain; charset=utf-8")
+        .body(axum::body::Body::from(body))
+        .unwrap()
+        .into_response())
+}
+
 /// SSE stream: replays the log file, then follows live lines.
 pub async fn logs_stream(
     user: AuthUser,
@@ -348,6 +482,115 @@ pub async fn logs_stream(
     Ok(Sse::new(stream)
         .keep_alive(KeepAlive::default())
         .into_response())
+}
+
+/// One-shot container resource stats: cpu %, memory bytes, network io,
+/// pids. 404-shape `{running:false}` when the container isn't live.
+pub async fn stats(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Response> {
+    let (dep, _p) = accessible_deployment(&state, user.user.id, &id).await?;
+    let Some(cid) = dep.container_id.clone() else {
+        return Ok(Json(json!({ "running": false })).into_response());
+    };
+    let docker = if let Some(nid) = dep.remote_node_id.as_deref() {
+        match runway_core::docker::node_client(&state.db, nid).await {
+            Some(c) => c,
+            None => return Ok(Json(json!({ "running": false })).into_response()),
+        }
+    } else {
+        match state.docker.clone() {
+            Some(d) => d,
+            None => return Ok(Json(json!({ "running": false })).into_response()),
+        }
+    };
+    let Some(s) = runway_core::docker::stats_snapshot(&docker, &cid).await else {
+        return Ok(Json(json!({ "running": false })).into_response());
+    };
+    Ok(Json(json!({
+        "running": true,
+        "cpu_pct": (s.cpu_pct * 100.0).round() / 100.0,
+        "mem_used": s.mem_used,
+        "mem_limit": s.mem_limit,
+        "net_rx": s.net_rx,
+        "net_tx": s.net_tx,
+        "pids": s.pids,
+    }))
+    .into_response())
+}
+
+/// `POST /api/v1/deployments/{id}/reconcile` — probe the container now
+/// instead of waiting for the next monitor tick; returns the fresh
+/// deployment row. Port of project_deployment_reconcile.
+pub async fn reconcile(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Response> {
+    let (dep, project) = accessible_deployment(&state, user.user.id, &id).await?;
+    if let Some(cid) = dep.container_id.clone() {
+        let docker = if let Some(nid) = dep.remote_node_id.as_deref() {
+            runway_core::docker::node_client(&state.db, nid).await
+        } else {
+            state.docker.clone()
+        };
+        if let Some(docker) = docker {
+            if let Some((observed, exit_code)) =
+                runway_core::docker::inspect_observed(&docker, &cid).await
+            {
+                let missing = if observed == "not_found" {
+                    dep.observed_missing_count + 1
+                } else {
+                    0
+                };
+                sqlx::query(
+                    "UPDATE deployment SET observed_status = $1, observed_exit_code = $2,
+                     observed_at = now(), observed_last_seen_at = now(),
+                     observed_missing_count = $3 WHERE id = $4",
+                )
+                .bind(&observed)
+                .bind(exit_code)
+                .bind(missing)
+                .bind(&dep.id)
+                .execute(&state.db)
+                .await?;
+            }
+        }
+    }
+    let dep = deploy::get(&state.db, &id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("deployment"))?;
+    Ok(Json(deployment_json(&state, &dep, &project)).into_response())
+}
+
+/// `GET /api/v1/deployments/{id}/metrics` — last 24h of monitor samples
+/// (30s cadence while the container runs) for sparklines.
+pub async fn metrics(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Response> {
+    let (dep, _p) = accessible_deployment(&state, user.user.id, &id).await?;
+    let rows: Vec<(chrono::DateTime<chrono::Utc>, f64, i64, i64, i64, i64)> = sqlx::query_as(
+        "SELECT ts, cpu_pct, mem_used, net_rx, net_tx, pids FROM deployment_metric
+         WHERE deployment_id = $1 AND ts > now() - interval '24 hours'
+         ORDER BY ts ASC",
+    )
+    .bind(&dep.id)
+    .fetch_all(&state.db)
+    .await?;
+    let samples: Vec<Value> = rows
+        .iter()
+        .map(|(ts, cpu, mem, rx, tx, pids)| {
+            json!({
+                "ts": ts, "cpu_pct": cpu, "mem_used": mem,
+                "net_rx": rx, "net_tx": tx, "pids": pids,
+            })
+        })
+        .collect();
+    Ok(Json(json!({ "samples": samples })).into_response())
 }
 
 /// SSE stream of project-level deployment events.

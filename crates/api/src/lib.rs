@@ -9,7 +9,7 @@ pub mod routes;
 pub mod state;
 
 use axum::extract::DefaultBodyLimit;
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use serde_json::json;
 
@@ -19,18 +19,38 @@ pub fn router(state: AppState) -> Router {
     let web_dir = std::path::PathBuf::from(&state.settings.web_dir);
     Router::new()
         .route("/health", get(health))
-        // Auth
-        .route("/api/auth/github", get(routes::auth::github_login))
-        .route(
-            "/api/auth/github/callback",
-            get(routes::auth::github_callback),
-        )
+        // Auth — email + password
+        .route("/api/auth/login", post(routes::auth::login))
+        .route("/api/auth/register", post(routes::auth::register))
         .route("/api/auth/logout", post(routes::auth::logout))
-        .route("/api/auth/me", get(routes::auth::me))
-        .route("/api/auth/magic-link", post(routes::auth::magic_link))
+        .route("/api/auth/providers", get(routes::auth::providers))
+        .route("/api/auth/email/login", post(routes::auth::email_login))
+        .route("/api/auth/email/resend", post(routes::auth::email_resend))
+        .route("/api/auth/email/verify", get(routes::auth::email_verify))
         .route(
-            "/api/auth/magic-link/verify",
-            get(routes::auth::magic_link_verify),
+            "/api/auth/me",
+            get(routes::auth::me)
+                .patch(routes::auth::update_me)
+                .delete(routes::auth::delete_me),
+        )
+        .route("/api/auth/password", post(routes::auth::change_password))
+        .route("/api/auth/totp/enroll", post(routes::auth::totp_enroll))
+        .route("/api/auth/totp/verify", post(routes::auth::totp_verify))
+        .route(
+            "/api/auth/totp/challenge",
+            post(routes::auth::totp_challenge),
+        )
+        .route("/api/auth/totp/disable", post(routes::auth::totp_disable))
+        .route(
+            "/api/auth/avatar",
+            put(routes::avatars::put_user).delete(routes::avatars::delete_user),
+        )
+        .route("/api/avatars/{kind}/{id}", get(routes::avatars::get))
+        // Dedicated OAuth sign-in (github/google)
+        .route("/api/auth/oauth/{provider}", get(routes::oauth::authorize))
+        .route(
+            "/api/auth/oauth/{provider}/callback",
+            get(routes::oauth::callback),
         )
         // OIDC / SSO
         .route("/api/auth/oidc", get(routes::oidc::authorize))
@@ -45,6 +65,11 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/admin/allowlist/{id}",
             delete(routes::admin::delete_allowlist_rule),
         )
+        .route("/api/v1/admin/jobs", get(routes::admin::list_jobs))
+        .route(
+            "/api/v1/admin/jobs/{id}/retry",
+            post(routes::admin::retry_job),
+        )
         // Admin — remote Docker nodes
         .route(
             "/api/v1/admin/nodes",
@@ -58,8 +83,21 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/admin/nodes/{id}/health",
             post(routes::admin::check_node),
         )
-        // GitHub integration
+        .route(
+            "/api/v1/admin/nodes/{id}/tls",
+            post(routes::admin::provision_node_tls).delete(routes::admin::clear_node_tls),
+        )
+        // GitHub integration — webhook + app-manifest registration
         .route("/api/github/webhook", post(routes::github::webhook))
+        .route("/api/v1/github/app/status", get(routes::github::app_status))
+        .route(
+            "/api/v1/github/app/register",
+            get(routes::github::app_register),
+        )
+        .route(
+            "/api/v1/github/app/callback",
+            get(routes::github::app_callback),
+        )
         // Other git providers — connection CRUD + inbound webhooks
         .route(
             "/api/gitea/webhook",
@@ -68,6 +106,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/gitlab/webhook",
             post(routes::git_providers::gitlab_webhook),
+        )
+        .route(
+            "/api/bitbucket/webhook",
+            post(routes::git_providers::bitbucket_webhook),
         )
         .route(
             "/api/v1/git/{provider}/connect",
@@ -104,7 +146,13 @@ pub fn router(state: AppState) -> Router {
         )
         .route(
             "/api/v1/projects/{id}",
-            get(routes::projects::get).patch(routes::projects::patch),
+            get(routes::projects::get)
+                .patch(routes::projects::patch)
+                .delete(routes::projects::delete),
+        )
+        .route(
+            "/api/v1/projects/{id}/avatar",
+            put(routes::avatars::put_project).delete(routes::avatars::delete_project),
         )
         .route(
             "/api/v1/projects/{id}/env",
@@ -168,6 +216,24 @@ pub fn router(state: AppState) -> Router {
             axum::routing::patch(routes::projects::patch_redirect)
                 .delete(routes::projects::delete_redirect),
         )
+        // Public status pages + README badge — opt-in per project.
+        .route("/api/v1/status/{slug}", get(routes::status::status_page))
+        .route(
+            "/api/v1/status/{slug}/badge",
+            get(routes::status::status_badge),
+        )
+        // Speed insights — beacon (public, host-routed) + aggregates.
+        .route("/_runway-rum", post(routes::rum::beacon))
+        .route("/api/v1/rum", post(routes::rum::beacon))
+        .route(
+            "/api/v1/projects/{id}/logs",
+            get(routes::deployments::project_logs),
+        )
+        .route("/api/v1/projects/{id}/speed", get(routes::rum::speed))
+        .route(
+            "/api/v1/projects/{id}/analytics",
+            get(routes::rum::analytics),
+        )
         // Project export / import
         .route(
             "/api/v1/projects/{id}/export",
@@ -191,6 +257,10 @@ pub fn router(state: AppState) -> Router {
             get(routes::teams::get)
                 .patch(routes::teams::update)
                 .delete(routes::teams::delete),
+        )
+        .route(
+            "/api/v1/teams/{id}/avatar",
+            put(routes::avatars::put_team).delete(routes::avatars::delete_team),
         )
         .route(
             "/api/v1/teams/{id}/members/{user_id}",
@@ -271,6 +341,7 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/projects/{id}/deployments/upload",
             post(routes::deployments::upload).layer(DefaultBodyLimit::disable()),
         )
+        .route("/api/v1/deployments", get(routes::deployments::index))
         .route("/api/v1/deployments/{id}", get(routes::deployments::get))
         .route(
             "/api/v1/deployments/{id}/cancel",
@@ -291,6 +362,18 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/deployments/{id}/logs/stream",
             get(routes::deployments::logs_stream),
+        )
+        .route(
+            "/api/v1/deployments/{id}/stats",
+            get(routes::deployments::stats),
+        )
+        .route(
+            "/api/v1/deployments/{id}/metrics",
+            get(routes::deployments::metrics),
+        )
+        .route(
+            "/api/v1/deployments/{id}/reconcile",
+            post(routes::deployments::reconcile),
         )
         // API keys + deploy-token deploy
         .route(

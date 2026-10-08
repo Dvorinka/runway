@@ -44,6 +44,36 @@ pub fn is_not_found(err: &BollardError) -> bool {
     )
 }
 
+/// Inspect a container → `(observed_status, exit_code)`.
+/// `Some("not_found")` on 404; `None` when the daemon couldn't be
+/// reached (caller should keep the previous observation).
+pub async fn inspect_observed(
+    docker: &Docker,
+    container_id: &str,
+) -> Option<(String, Option<i64>)> {
+    use bollard::container::InspectContainerOptions;
+    match docker
+        .inspect_container(container_id, None::<InspectContainerOptions>)
+        .await
+    {
+        Ok(info) => {
+            let s = info.state.unwrap_or_default();
+            let status = if s.running.unwrap_or(false) {
+                "running"
+            } else if s.paused.unwrap_or(false) {
+                "paused"
+            } else if s.dead.unwrap_or(false) {
+                "dead"
+            } else {
+                "exited"
+            };
+            Some((status.to_string(), s.exit_code))
+        }
+        Err(e) if is_not_found(&e) => Some(("not_found".to_string(), None)),
+        Err(_) => None,
+    }
+}
+
 /// Extract a user-facing reason string from a Docker API error.
 pub fn create_error_reason(err: &BollardError) -> String {
     match err {
@@ -287,7 +317,51 @@ pub async fn node_client(db: &sqlx::PgPool, node_id: &str) -> Option<Docker> {
     if node.status != "online" || node.is_local() {
         return None;
     }
-    docker_client(&node.docker_url).ok()
+    node_docker_client(&node).ok()
+}
+
+/// Client for one node honoring its stored mTLS material: all three PEMs
+/// present → `connect_with_ssl`, otherwise plain `docker_client`.
+pub fn node_docker_client(node: &crate::models::RemoteNode) -> Result<Docker> {
+    let (Some(ca), Some(cert), Some(key)) = (&node.tls_ca, &node.tls_cert, &node.tls_key) else {
+        return docker_client(&node.docker_url);
+    };
+    // bollard's ssl feature is providerless: install ring once or
+    // `ClientConfig::builder()` panics on first connect.
+    static CRYPTO: std::sync::Once = std::sync::Once::new();
+    CRYPTO.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+    let dir = std::env::temp_dir().join(format!("runway-node-tls-{}", node.id));
+    std::fs::create_dir_all(&dir)?;
+    write_pem(&dir.join("ca.pem"), ca)?;
+    write_pem(&dir.join("cert.pem"), cert)?;
+    write_pem(&dir.join("key.pem"), key)?;
+    Docker::connect_with_ssl(
+        &node.docker_url,
+        &dir.join("key.pem"),
+        &dir.join("cert.pem"),
+        &dir.join("ca.pem"),
+        120,
+        bollard::API_DEFAULT_VERSION,
+    )
+    .map_err(Into::into)
+}
+
+/// Write PEM material with owner-only permissions (key files are
+/// regenerated from the DB on each call, so contents stay in sync).
+#[cfg(unix)]
+fn write_pem(path: &std::path::Path, pem: &str) -> Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?
+        .write_all(pem.as_bytes())?;
+    Ok(())
 }
 
 /// First host port in `REMOTE_PORT_START..=REMOTE_PORT_END` not
@@ -311,4 +385,86 @@ pub async fn alloc_remote_port(docker: &Docker) -> anyhow::Result<i32> {
                 "remote node: no free publish port in {REMOTE_PORT_START}-{REMOTE_PORT_END}"
             )
         })
+}
+
+/// One-shot resource snapshot for a running container.
+#[derive(Debug, Clone, Copy)]
+pub struct StatsSnapshot {
+    pub cpu_pct: f64,
+    pub mem_used: u64,
+    pub mem_limit: u64,
+    pub net_rx: u64,
+    pub net_tx: u64,
+    pub pids: u64,
+}
+
+/// `docker stats --no-stream` equivalent. None when the container is
+/// gone or the stats call fails/times out (8s).
+pub async fn stats_snapshot(docker: &Docker, container_id: &str) -> Option<StatsSnapshot> {
+    use bollard::container::{MemoryStatsStats, StatsOptions};
+    use futures::StreamExt;
+
+    let mut stream = docker.stats(
+        container_id,
+        Some(StatsOptions {
+            stream: false,
+            one_shot: true,
+        }),
+    );
+    let frame = tokio::time::timeout(std::time::Duration::from_secs(8), stream.next())
+        .await
+        .ok()
+        .flatten()?;
+    let s = frame.ok()?;
+
+    let cpu_delta = s
+        .cpu_stats
+        .cpu_usage
+        .total_usage
+        .saturating_sub(s.precpu_stats.cpu_usage.total_usage);
+    let sys_delta = s
+        .cpu_stats
+        .system_cpu_usage
+        .unwrap_or(0)
+        .saturating_sub(s.precpu_stats.system_cpu_usage.unwrap_or(0));
+    let ncpu = s
+        .cpu_stats
+        .online_cpus
+        .or_else(|| {
+            s.cpu_stats
+                .cpu_usage
+                .percpu_usage
+                .as_ref()
+                .map(|p| p.len() as u64)
+        })
+        .unwrap_or(1)
+        .max(1);
+    let cpu_pct = if sys_delta > 0 {
+        (cpu_delta as f64 / sys_delta as f64) * ncpu as f64 * 100.0
+    } else {
+        0.0
+    };
+    // Page cache counts toward cgroup usage — v1 calls it `cache`,
+    // v2 `inactive_file`. Subtract so the number reads like RSS.
+    let cache = match s.memory_stats.stats {
+        Some(MemoryStatsStats::V1(v1)) => v1.cache,
+        Some(MemoryStatsStats::V2(v2)) => v2.inactive_file,
+        None => 0,
+    };
+    let mut rx = 0u64;
+    let mut tx = 0u64;
+    if let Some(nets) = &s.networks {
+        for n in nets.values() {
+            rx += n.rx_bytes;
+            tx += n.tx_bytes;
+        }
+    }
+    Some(StatsSnapshot {
+        cpu_pct,
+        mem_used: s.memory_stats.usage.unwrap_or(0).saturating_sub(cache),
+        mem_limit: s.memory_stats.limit.unwrap_or(0),
+        net_rx: rx,
+        net_tx: tx,
+        pids: s.pids_stats.current.unwrap_or(0),
+    })
 }

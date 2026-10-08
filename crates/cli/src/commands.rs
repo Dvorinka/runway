@@ -103,9 +103,17 @@ pub async fn deploy(follow: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `runway logs [deployment-id] [--follow]`.
-pub async fn logs(deployment: Option<String>, follow: bool) -> anyhow::Result<()> {
+/// `runway logs [deployment-id] [--follow] [--project]`.
+pub async fn logs(deployment: Option<String>, follow: bool, project: bool) -> anyhow::Result<()> {
     let client = Client::from_config()?;
+    if project {
+        let link = client::load_link()?;
+        let text = client
+            .get_text(&format!("/api/v1/projects/{}/logs", link.project_id))
+            .await?;
+        print!("{text}");
+        return Ok(());
+    }
     let dep_id = match deployment {
         Some(d) => d,
         None => latest_deployment(&client).await?,
@@ -126,6 +134,90 @@ pub async fn logs(deployment: Option<String>, follow: bool) -> anyhow::Result<()
             break;
         }
     }
+    Ok(())
+}
+
+/// `runway deployments [--limit N]`.
+pub async fn deployments(limit: usize) -> anyhow::Result<()> {
+    let client = Client::from_config()?;
+    let link = client::load_link()?;
+    let res = client
+        .get(&format!(
+            "/api/v1/projects/{}/deployments?limit={limit}",
+            link.project_id
+        ))
+        .await?;
+    let deps = res["deployments"].as_array().cloned().unwrap_or_default();
+    if deps.is_empty() {
+        println!("No deployments yet.");
+        return Ok(());
+    }
+    for d in deps {
+        let sha = d["commit_sha"].as_str().unwrap_or("");
+        let short = &sha[..sha.len().min(7)];
+        let status = d["conclusion"]
+            .as_str()
+            .or_else(|| d["status"].as_str())
+            .unwrap_or("-");
+        let created = d["created_at"].as_str().unwrap_or("");
+        let msg = d["commit_meta"]["message"].as_str().unwrap_or("");
+        println!("{}  {:<10}  {:<19}  {}", short, status, created, msg);
+    }
+    Ok(())
+}
+
+/// `runway stats [deployment]` — live container resource snapshot.
+pub async fn stats(deployment: Option<String>) -> anyhow::Result<()> {
+    let client = Client::from_config()?;
+    let dep_id = match deployment {
+        Some(d) => d,
+        None => latest_deployment(&client).await?,
+    };
+    let s = client
+        .get(&format!("/api/v1/deployments/{dep_id}/stats"))
+        .await?;
+    if !s["running"].as_bool().unwrap_or(false) {
+        println!("{} — container not running", &dep_id[..dep_id.len().min(7)]);
+        return Ok(());
+    }
+    let fmt_b = |v: &serde_json::Value| {
+        let n = v.as_u64().unwrap_or(0) as f64;
+        if n >= (1u64 << 30) as f64 {
+            format!("{:.1} GB", n / (1u64 << 30) as f64)
+        } else if n >= (1u64 << 20) as f64 {
+            format!("{:.0} MB", n / (1u64 << 20) as f64)
+        } else {
+            format!("{:.0} KB", n / (1u64 << 10) as f64)
+        }
+    };
+    println!(
+        "{}  cpu {:>5.1}%  mem {} / {}  net ↓{} ↑{}  pids {}",
+        &dep_id[..dep_id.len().min(7)],
+        s["cpu_pct"].as_f64().unwrap_or(0.0),
+        fmt_b(&s["mem_used"]),
+        fmt_b(&s["mem_limit"]),
+        fmt_b(&s["net_rx"]),
+        fmt_b(&s["net_tx"]),
+        s["pids"].as_u64().unwrap_or(0),
+    );
+    Ok(())
+}
+
+/// `runway rollback [environment]`.
+pub async fn rollback(environment: String) -> anyhow::Result<()> {
+    let client = Client::from_config()?;
+    let link = client::load_link()?;
+    let res = client
+        .post(
+            &format!(
+                "/api/v1/projects/{}/environments/{environment}/rollback",
+                link.project_id
+            ),
+            &serde_json::json!({}),
+        )
+        .await?;
+    let dep = res["deployment_id"].as_str().unwrap_or("?");
+    println!("{environment} rolled back to deployment {dep}");
     Ok(())
 }
 
@@ -174,7 +266,59 @@ pub async fn env(args: Vec<String>, environment: Option<String>) -> anyhow::Resu
                 .await?;
             println!("Unset {key}");
         }
-        Some(other) => bail!("unknown env action '{other}' — list|set|unset"),
+        // `runway env pull [path] [--force]` — dotenv via the project
+        // export (the only read that decrypts; writer-gated like the
+        // UI's export button). Defaults to `.env.local`, `-` for stdout.
+        Some("pull") => {
+            let path = match args.get(1).map(String::as_str) {
+                Some("-") => "-",
+                Some(a) if !a.starts_with('-') => a,
+                _ => ".env.local",
+            };
+            let force = args.iter().any(|a| a == "--force" || a == "-f");
+            let res = client
+                .get(&format!("/api/v1/projects/{}/export", link.project_id))
+                .await?;
+            let mut out = String::new();
+            for v in res["environment_variables"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+            {
+                let var_env = v["environment"].as_str();
+                if environment.is_some() && var_env.is_some() && var_env != environment.as_deref() {
+                    continue;
+                }
+                let (key, value) = (
+                    v["key"].as_str().unwrap_or(""),
+                    v["value"].as_str().unwrap_or(""),
+                );
+                if value
+                    .chars()
+                    .any(|c| c.is_whitespace() || c == '"' || c == '#')
+                {
+                    out.push_str(&format!("{key}=\"{}\"\n", value.replace('"', "\\\"")));
+                } else {
+                    out.push_str(&format!("{key}={value}\n"));
+                }
+            }
+            if path == "-" {
+                print!("{out}");
+                return Ok(());
+            }
+            let file = std::path::Path::new(path);
+            if file.exists() && !force {
+                bail!("{path} exists — pass --force to overwrite");
+            }
+            tokio::fs::write(file, &out).await?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o600));
+            }
+            println!("Wrote {path}");
+        }
+        Some(other) => bail!("unknown env action '{other}' — list|set|unset|pull"),
     }
     Ok(())
 }
