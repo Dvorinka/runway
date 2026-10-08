@@ -191,6 +191,7 @@ pub fn router(state: AppState) -> Router {
                 .delete(routes::projects::delete_redirect),
         )
         // Speed insights — beacon (public, host-routed) + aggregates.
+        .route("/api/v1/status/{slug}", get(routes::status::status_page))
         .route("/_runway-rum", post(routes::rum::beacon))
         .route("/api/v1/rum", post(routes::rum::beacon))
         .route(

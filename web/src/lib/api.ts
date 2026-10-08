@@ -279,6 +279,8 @@ export const api = {
       events: { name: string; count: number }[];
     }>(`/api/v1/projects/${id}/analytics?days=${days}`),
 
+  statusPage: (slug: string) => req(`/api/v1/status/${slug}`),
+
   getEnv: (id: string) => req<{ env: EnvVar[] }>(`/api/v1/projects/${id}/env`),
   patchEnv: (id: string, vars: { key: string; value?: string; delete?: boolean }[]) =>
     req<{ ok: boolean }>(`/api/v1/projects/${id}/env`, {

@@ -11,5 +11,6 @@ pub mod notifications;
 pub mod oidc;
 pub mod projects;
 pub mod rum;
+pub mod status;
 pub mod storage;
 pub mod teams;

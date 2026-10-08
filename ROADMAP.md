@@ -300,8 +300,11 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
       `window.rw.event()`; visitors are a daily-rotating HMAC (no IPs,
       no cookies), referrers stored as hostname only. Aggregates
       endpoint + dashboard card (migration 0018)
-- [ ] **Public status pages** — per-project uptime view from
-      `deployment.observed_*` + metric samples; opt-in public route
+- [x] **Public status pages** — opt-in `config.status_page` (custom
+      slug or project id); public `GET /api/v1/status/{slug}` reports
+      per-environment `computed_status` + 30d uptime from metric-sample
+      coverage; standalone `/status/:slug` SPA route renders outside
+      the auth shell; disabled projects 404
 - [ ] **Remote-node mTLS** — columns exist; needs cert provisioning
       flow
 - [ ] **Bitbucket deploys tested against a real workspace**

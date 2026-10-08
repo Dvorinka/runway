@@ -12,6 +12,7 @@ import TeamPage from "@/pages/Team";
 import NotificationsPage from "@/pages/Notifications";
 import InvitePage from "@/pages/Invite";
 import NotFound from "@/pages/NotFound";
+import StatusPage from "@/pages/Status";
 import { useEffect, useState } from "react";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 
@@ -27,26 +28,36 @@ export default function App() {
       .finally(() => setLoading(false));
   }, []);
 
+  return (
+    <BrowserRouter>
+      <Routes>
+        {/* Public status pages render without auth. */}
+        <Route path="/status/:slug" element={<StatusPage />} />
+        <Route path="*" element={<Authed me={me} loading={loading} />} />
+      </Routes>
+    </BrowserRouter>
+  );
+}
+
+function Authed({ me, loading }: { me: Me | null; loading: boolean }) {
   if (loading) return null;
   if (!me) return <Login />;
 
   const page = (el: React.ReactNode) => <Layout me={me}>{el}</Layout>;
 
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={page(<Overview />)} />
-        <Route path="/projects" element={page(<Projects />)} />
-        <Route path="/projects/:id" element={page(<ProjectPage />)} />
-        <Route path="/deployments" element={page(<DeploymentsPage />)} />
-        <Route path="/deployments/:id" element={page(<DeploymentPage />)} />
-        <Route path="/teams" element={page(<TeamsPage />)} />
-        <Route path="/teams/:id" element={page(<TeamPage me={me} />)} />
-        <Route path="/invites/:id" element={page(<InvitePage />)} />
-        <Route path="/notifications" element={page(<NotificationsPage />)} />
-        <Route path="/settings" element={page(<SettingsPage me={me} />)} />
-        <Route path="*" element={page(<NotFound />)} />
-      </Routes>
-    </BrowserRouter>
+    <Routes>
+      <Route path="/" element={page(<Overview />)} />
+      <Route path="/projects" element={page(<Projects />)} />
+      <Route path="/projects/:id" element={page(<ProjectPage />)} />
+      <Route path="/deployments" element={page(<DeploymentsPage />)} />
+      <Route path="/deployments/:id" element={page(<DeploymentPage />)} />
+      <Route path="/teams" element={page(<TeamsPage />)} />
+      <Route path="/teams/:id" element={page(<TeamPage me={me} />)} />
+      <Route path="/invites/:id" element={page(<InvitePage />)} />
+      <Route path="/notifications" element={page(<NotificationsPage />)} />
+      <Route path="/settings" element={page(<SettingsPage me={me} />)} />
+      <Route path="*" element={page(<NotFound />)} />
+    </Routes>
   );
 }

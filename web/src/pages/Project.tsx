@@ -1095,6 +1095,7 @@ function Settings({ id, project }: { id: string; project: Project | null }) {
       <DockerBuild id={id} project={project} />
       <HealthCheck id={id} project={project} />
       <Retention id={id} project={project} />
+      <StatusPageCard id={id} project={project} />
       <Firewall id={id} project={project} />
       <Card className="p-4">
         <h3 className="mb-2 text-sm font-medium">Export / import</h3>
@@ -1465,6 +1466,79 @@ function Retention({ id, project }: { id: string; project: Project | null }) {
       </div>
       <Err msg={error} />
       {msg && <p className="mt-2 text-xs text-muted-foreground">{msg}</p>}
+    </Card>
+  );
+}
+
+function StatusPageCard({ id, project }: { id: string; project: Project | null }) {
+  const [enabled, setEnabled] = useState(false);
+  const [slug, setSlug] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const sp = (project?.config?.status_page ?? {}) as { enabled?: boolean; slug?: string };
+    setEnabled(!!sp.enabled);
+    setSlug(sp.slug ?? "");
+  }, [project?.config]);
+
+  async function save(next: boolean, s: string) {
+    setError("");
+    const clean = s.trim().toLowerCase().replace(/[^a-z0-9-]/g, "");
+    try {
+      await api.patchProject(id, {
+        config: { status_page: { enabled: next, slug: clean || undefined } },
+      });
+      setEnabled(next);
+      setSlug(clean);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "save failed");
+    }
+  }
+
+  const url = `${window.location.origin}/status/${slug || id}`;
+
+  return (
+    <Card className="p-4">
+      <div className="mb-1 flex items-center justify-between">
+        <h3 className="text-sm font-medium">Public status page</h3>
+        {enabled && <Badge variant="success">live</Badge>}
+      </div>
+      <p className="mb-3 text-xs text-muted-foreground">
+        Publishes each environment's live status and 30-day uptime on an
+        unauthenticated page — safe to share outside the team. Nothing beyond
+        name, status, and uptime is exposed.
+      </p>
+      <div className="flex items-center gap-2">
+        <Input
+          placeholder={`custom slug (default: ${id})`}
+          value={slug}
+          onChange={(e) => setSlug(e.target.value)}
+          className="w-56 font-mono"
+        />
+        {enabled ? (
+          <Button variant="outline" size="sm" onClick={() => save(false, slug)}>
+            Disable
+          </Button>
+        ) : (
+          <Button size="sm" onClick={() => save(true, slug)}>
+            Enable
+          </Button>
+        )}
+      </div>
+      {enabled && (
+        <p className="mt-3 text-xs">
+          Live at{" "}
+          <a href={url} target="_blank" rel="noreferrer" className="font-mono text-primary underline">
+            {url}
+          </a>
+          {slug !== "" && (
+            <Button variant="outline" size="sm" className="ml-2" onClick={() => save(true, slug)}>
+              Save slug
+            </Button>
+          )}
+        </p>
+      )}
+      <Err msg={error} />
     </Card>
   );
 }
