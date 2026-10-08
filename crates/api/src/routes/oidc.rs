@@ -238,7 +238,11 @@ pub async fn callback(
     .await?;
 
     let jar = jar.add(session_cookie(&state, user.id)?);
-    let jar = jar.remove(Cookie::from("oidc_state"));
+    let jar = jar.remove(
+        Cookie::build(("oidc_state", String::new()))
+            .path("/")
+            .build(),
+    );
     Ok((jar, Redirect::to("/")).into_response())
 }
 

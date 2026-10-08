@@ -19,19 +19,11 @@ pub fn router(state: AppState) -> Router {
     let web_dir = std::path::PathBuf::from(&state.settings.web_dir);
     Router::new()
         .route("/health", get(health))
-        // Auth
-        .route("/api/auth/github", get(routes::auth::github_login))
-        .route(
-            "/api/auth/github/callback",
-            get(routes::auth::github_callback),
-        )
+        // Auth — email + password
+        .route("/api/auth/login", post(routes::auth::login))
+        .route("/api/auth/register", post(routes::auth::register))
         .route("/api/auth/logout", post(routes::auth::logout))
         .route("/api/auth/me", get(routes::auth::me))
-        .route("/api/auth/magic-link", post(routes::auth::magic_link))
-        .route(
-            "/api/auth/magic-link/verify",
-            get(routes::auth::magic_link_verify),
-        )
         // OIDC / SSO
         .route("/api/auth/oidc", get(routes::oidc::authorize))
         .route("/api/auth/oidc/callback", get(routes::oidc::callback))
@@ -58,8 +50,17 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/admin/nodes/{id}/health",
             post(routes::admin::check_node),
         )
-        // GitHub integration
+        // GitHub integration — webhook + app-manifest registration
         .route("/api/github/webhook", post(routes::github::webhook))
+        .route("/api/v1/github/app/status", get(routes::github::app_status))
+        .route(
+            "/api/v1/github/app/register",
+            get(routes::github::app_register),
+        )
+        .route(
+            "/api/v1/github/app/callback",
+            get(routes::github::app_callback),
+        )
         // Other git providers — connection CRUD + inbound webhooks
         .route(
             "/api/gitea/webhook",

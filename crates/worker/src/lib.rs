@@ -33,7 +33,8 @@ pub struct Ctx {
     pub crypto: Crypto,
     pub bus: EventBus,
     pub logs: LogStore,
-    pub github: Option<GithubService>,
+    /// Shared with the API — DB app registration hot-patches both sides.
+    pub github: GithubService,
 }
 
 /// Run all worker loops until shutdown.
@@ -42,6 +43,7 @@ pub async fn run(
     settings: Settings,
     bus: EventBus,
     crypto: Crypto,
+    github: GithubService,
 ) -> anyhow::Result<()> {
     let docker = runway_core::docker::connect(&settings)?;
     let ctx = Ctx {
@@ -51,7 +53,7 @@ pub async fn run(
         crypto,
         bus: bus.clone(),
         logs: LogStore::new(&settings.data_dir, bus),
-        github: GithubService::from_settings(&settings),
+        github,
     };
 
     // Attach Traefik to edge networks from before a restart.

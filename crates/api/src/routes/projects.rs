@@ -153,9 +153,10 @@ pub async fn create(
 
     match provider {
         "github" | "github_enterprise" => {
-            let Some(gh) = &state.github else {
-                return Err(ApiError::bad_request("GitHub App is not configured"));
-            };
+            let gh = state
+                .github
+                .if_configured()
+                .ok_or_else(|| ApiError::bad_request("GitHub App is not configured"))?;
             let installation_id = body.installation_id.ok_or_else(|| {
                 ApiError::bad_request("installation_id required for github projects")
             })?;

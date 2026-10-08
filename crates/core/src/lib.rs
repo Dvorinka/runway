@@ -20,6 +20,7 @@ pub mod github;
 pub mod logs;
 pub mod mail;
 pub mod models;
+pub mod password;
 pub mod presets;
 pub mod slugify;
 pub mod traefik;

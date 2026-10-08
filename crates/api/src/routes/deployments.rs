@@ -149,7 +149,7 @@ pub async fn trigger_deployment(
     let info = deploy::resolve_commit(
         &state.db,
         &state.crypto,
-        state.github.as_ref(),
+        state.github.if_configured(),
         project,
         branch,
     )

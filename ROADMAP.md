@@ -24,8 +24,13 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 
 *Prove the core loop end-to-end before any breadth. GitHub only.*
 
-- [x] Auth: GitHub OAuth + `ak_` API keys + magic link (SMTP or dev-log)
-- [x] GitHub App: installation, repo list, webhook → deployment
+- [x] Auth: email + password (Argon2id, `/api/auth/login` +
+      `/api/auth/register`), `ak_` API keys, JWT session cookies;
+      optional OIDC/SSO
+- [x] GitHub App: installation, repo list, webhook → deployment;
+      in-dashboard registration via the app-manifest flow
+      (`/api/v1/github/app/*`, credentials AES-GCM in Postgres, hot-load
+      no restart, env `GITHUB_APP_*` as override)
 - [x] Project: environments + branch mapping, encrypted env vars, config
       (runner, commands, root_directory, port)
 - [x] Postgres job queue (SKIP LOCKED) + deploy worker
@@ -132,8 +137,8 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
       GitHub Enterprise via `GITHUB_API_URL` + `repo_base_url` clone URL
 - [x] OIDC/SSO + allowlist: `allowlist` table (email/domain/pattern
       rules, empty = open signup, `user.id==1` superadmin CRUD under
-      `/api/v1/admin/allowlist`), enforced on magic-link request +
-      verify, GitHub OAuth, OIDC signup (`ACCESS_DENIED_MESSAGE` +
+      `/api/v1/admin/allowlist`), enforced on password registration and
+      OIDC signup (`ACCESS_DENIED_MESSAGE` +
       `ACCESS_DENIED_WEBHOOK`); OIDC login + session-linking superset
       of devpush's link-only flow (`OIDC_*` settings, state cookie,
       encrypted access token, `GET /api/auth/oidc/info`)
@@ -177,9 +182,16 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 
 ## Phase 6 — polish
 
+- [x] One-line install: `install.sh` (served from GitHub raw — downloads a
+      repo tarball, generates `.env` secrets, `compose up --build`) +
+      `compose/production.yml` (80/443, ACME + websecure router,
+      env-required secrets, `runway bootstrap` first-user flow)
+- [x] Dashboard: teams UI (list/create, members + roles, invites,
+      webhooks, audit log, rename/delete), storage UI (create/reset/
+      delete, project link/unlink — `links` added to storage list
+      response), notifications feed + unread badge, invite-accept page
 - [ ] Remote-node mTLS (columns exist; needs cert provisioning flow)
 - [ ] Bitbucket deploys tested against a real workspace
-- [ ] Deeper dashboard work: teams UI, storage UI, notifications feed
 
 ## Non-goals
 

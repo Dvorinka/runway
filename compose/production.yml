@@ -1,0 +1,92 @@
+# Production stack: runway + postgres + traefik on 80/443.
+# Installed by install.sh; configuration lives in .env next to the repo root.
+#
+#   docker compose --env-file .env -f compose/production.yml up -d --build
+#   docker compose --env-file .env -f compose/production.yml \
+#     exec runway runway bootstrap --email you@example.com
+#
+# Set DISABLE_TLS=true when an upstream edge (Cloudflare Tunnel) terminates
+# TLS; set it to false with ACME_EMAIL for direct-IP + Let's Encrypt.
+
+services:
+  pgsql:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: runway
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: runway
+    volumes:
+      - runway-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U runway -d runway"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  traefik:
+    image: traefik:v3.3
+    restart: unless-stopped
+    command:
+      - --api.dashboard=false
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.file.directory=/traefik
+      - --providers.file.watch=true
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.le.acme.tlschallenge=true
+      - --certificatesresolvers.le.acme.email=${ACME_EMAIL:-admin@example.com}
+      - --certificatesresolvers.le.acme.storage=/traefik/acme.json
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - runway-data:/traefik
+    labels:
+      - traefik.enable=true
+
+  runway:
+    build: ..
+    restart: unless-stopped
+    depends_on:
+      pgsql:
+        condition: service_healthy
+    environment:
+      APP_HOSTNAME: ${APP_HOSTNAME:?set APP_HOSTNAME in .env}
+      DEPLOY_DOMAIN: ${DEPLOY_DOMAIN:?set DEPLOY_DOMAIN in .env}
+      DATABASE_URL: postgres://runway:${POSTGRES_PASSWORD}@pgsql:5432/runway
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set ENCRYPTION_KEY in .env}
+      DISABLE_TLS: ${DISABLE_TLS:-false}
+      RUNWAY_ENV: production
+      DATA_DIR: /home/runway/data
+      HOST_DATA_DIR: ${HOST_DATA_DIR:-}
+      RUNWAY_LISTEN: 0.0.0.0:8000
+      DOCKER_HOST: unix:///var/run/docker.sock
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      GITHUB_APP_ID: ${GITHUB_APP_ID:-}
+      GITHUB_APP_NAME: ${GITHUB_APP_NAME:-}
+      GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
+      GITHUB_APP_WEBHOOK_SECRET: ${GITHUB_APP_WEBHOOK_SECRET:-}
+      CF_API_TOKEN: ${CF_API_TOKEN:-}
+      CF_ACCOUNT_ID: ${CF_ACCOUNT_ID:-}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - runway-data:/home/runway/data
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.runway.rule=Host(`${APP_HOSTNAME}`)
+      - traefik.http.routers.runway.service=runway
+      - traefik.http.routers.runway.entrypoints=web
+      - traefik.http.routers.runway-secure.rule=Host(`${APP_HOSTNAME}`)
+      - traefik.http.routers.runway-secure.service=runway
+      - traefik.http.routers.runway-secure.entrypoints=websecure
+      - traefik.http.routers.runway-secure.tls.certresolver=le
+      - traefik.http.services.runway.loadbalancer.server.port=8000
+
+volumes:
+  runway-db:
+  runway-data:

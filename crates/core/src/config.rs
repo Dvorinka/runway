@@ -58,10 +58,8 @@ pub struct Settings {
     pub service_uid: u32,
     pub service_gid: u32,
 
-    // GitHub OAuth (login)
-    pub github_client_id: Option<String>,
-    pub github_client_secret: Option<String>,
-    // GitHub App (repos + webhooks)
+    // GitHub App (repos + webhooks) — env creds are an alternative to
+    // DB registration via the app-manifest flow.
     pub github_app_id: Option<String>,
     pub github_app_name: Option<String>,
     pub github_app_private_key: Option<String>,
@@ -153,8 +151,6 @@ impl Settings {
             deployment_restart_max_retries: env_i64("DEPLOYMENT_RESTART_MAX_RETRIES", 5),
             service_uid: env_u64("SERVICE_UID", 1000) as u32,
             service_gid: env_u64("SERVICE_GID", 1000) as u32,
-            github_client_id: opt("GITHUB_CLIENT_ID"),
-            github_client_secret: opt("GITHUB_CLIENT_SECRET"),
             github_app_id: opt("GITHUB_APP_ID"),
             github_app_name: opt("GITHUB_APP_NAME"),
             github_app_private_key: opt("GITHUB_APP_PRIVATE_KEY"),
@@ -195,11 +191,6 @@ impl Settings {
         self.github_app_id.is_some()
             && self.github_app_private_key.is_some()
             && self.github_app_webhook_secret.is_some()
-    }
-
-    /// True when the GitHub OAuth login flow is configured.
-    pub fn github_oauth_configured(&self) -> bool {
-        self.github_client_id.is_some() && self.github_client_secret.is_some()
     }
 
     /// True when OIDC SSO is fully configured.
@@ -286,8 +277,6 @@ pub(crate) fn test_settings() -> Settings {
         deployment_restart_max_retries: 5,
         service_uid: 1000,
         service_gid: 1000,
-        github_client_id: None,
-        github_client_secret: None,
         github_app_id: None,
         github_app_name: None,
         github_app_private_key: None,

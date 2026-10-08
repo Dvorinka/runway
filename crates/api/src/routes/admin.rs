@@ -17,7 +17,7 @@ use crate::state::AppState;
 
 /// devpush `is_superadmin`: the first registered account administers
 /// the instance.
-fn require_superadmin(user: &AuthUser) -> ApiResult<()> {
+pub(crate) fn require_superadmin(user: &AuthUser) -> ApiResult<()> {
     if user.user.id == 1 {
         Ok(())
     } else {

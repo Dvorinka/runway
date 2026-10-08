@@ -1,16 +1,18 @@
-//! GitHub integration routes: webhook receiver + repo browsing for
-//! project creation (uses the user's OAuth token).
+//! GitHub integration routes: webhook receiver, app-level repo browsing
+//! for project creation, and the app-manifest registration flow.
 
 use axum::body::Bytes;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Response};
+use axum::response::{IntoResponse, Redirect, Response};
 use axum::Json;
+use axum_extra::extract::cookie::{Cookie, CookieJar};
+use serde::Deserialize;
 use serde_json::{json, Value};
 
 use runway_core::deploy::{self, CommitInfo};
 use runway_core::github::GithubService;
-use runway_core::models::{Project, UserIdentity};
+use runway_core::models::Project;
 
 use crate::auth::AuthUser;
 use crate::error::{ApiError, ApiResult};
@@ -26,14 +28,14 @@ pub async fn webhook(
     headers: HeaderMap,
     body: Bytes,
 ) -> ApiResult<Response> {
-    let Some(secret) = &state.settings.github_app_webhook_secret else {
+    let Some(secret) = state.github.webhook_secret() else {
         return Err(ApiError::bad_request("webhook secret not configured"));
     };
     let signature = headers
         .get("X-Hub-Signature-256")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    if !GithubService::verify_webhook(secret, &body, signature) {
+    if !GithubService::verify_webhook(&secret, &body, signature) {
         return Err(ApiError::unauthorized("invalid signature"));
     }
     let event = headers
@@ -63,9 +65,11 @@ pub async fn webhook(
                     .await?;
                 }
                 "created" => {
-                    if let Some(gh) = &state.github {
-                        if let Ok((token, expires)) =
-                            gh.installation_access_token(installation_id).await
+                    if state.github.configured() {
+                        if let Ok((token, expires)) = state
+                            .github
+                            .installation_access_token(installation_id)
+                            .await
                         {
                             let enc = state.crypto.encrypt(&token)?;
                             sqlx::query(
@@ -326,50 +330,62 @@ async fn handle_pull_request(state: &AppState, data: &Value) {
 }
 
 // ---------------------------------------------------------------------------
-// Repo browsing (OAuth token → installations → repos)
+// Repo browsing — app-level. The instance lists its own installations
+// (app JWT) and their repos (installation token); no user OAuth needed.
 // ---------------------------------------------------------------------------
 
-/// Installations the logged-in user can see, plus the app install URL.
-pub async fn installations(user: AuthUser, State(state): State<AppState>) -> ApiResult<Response> {
-    let token = user_oauth_token(&state, user.user.id).await?;
-    let gh = state
-        .github_oauth
-        .as_ref()
-        .ok_or_else(|| ApiError::bad_request("GitHub OAuth not configured"))?;
-    let installs = gh
-        .user_installations(&token)
+/// Installations of the registered app, plus the install URL.
+pub async fn installations(_user: AuthUser, State(state): State<AppState>) -> ApiResult<Response> {
+    if !state.github.configured() {
+        return Ok(Json(json!({
+            "installations": [],
+            "install_url": null,
+            "configured": false,
+        }))
+        .into_response());
+    }
+    let installs = state
+        .github
+        .app_installations()
         .await
         .map_err(ApiError::internal)?;
-    let install_url = state
-        .settings
-        .github_app_name
-        .as_ref()
-        .map(|n| format!("https://github.com/apps/{n}/installations/new"));
+    let mapped: Vec<Value> = installs
+        .iter()
+        .map(|i| {
+            json!({
+                "id": i["id"],
+                "account": i["account"]["login"].as_str().unwrap_or(""),
+            })
+        })
+        .collect();
     Ok(Json(json!({
-        "installations": installs,
-        "install_url": install_url,
+        "installations": mapped,
+        "install_url": state.github.install_url(),
+        "configured": true,
     }))
     .into_response())
 }
 
 pub async fn installation_repos(
-    user: AuthUser,
+    _user: AuthUser,
     State(state): State<AppState>,
     Path(installation_id): Path<i64>,
 ) -> ApiResult<Response> {
-    let token = user_oauth_token(&state, user.user.id).await?;
-    let gh = state
-        .github_oauth
-        .as_ref()
-        .ok_or_else(|| ApiError::bad_request("GitHub OAuth not configured"))?;
-    let repos = gh
-        .installation_repositories_for_user(&token, installation_id)
+    if !state.github.configured() {
+        return Err(ApiError::bad_request("GitHub App is not configured"));
+    }
+    let token = state
+        .github
+        .installation_token(&state.db, &state.crypto, installation_id)
         .await
         .map_err(ApiError::internal)?;
-    // Only repos the user can push to are deployable.
-    let writable: Vec<Value> = repos
+    let repos = state
+        .github
+        .installation_repositories(&token)
+        .await
+        .map_err(ApiError::internal)?;
+    let mapped: Vec<Value> = repos
         .into_iter()
-        .filter(|r| r["permissions"]["push"].as_bool() == Some(true))
         .map(|r| {
             json!({
                 "id": r["id"],
@@ -379,21 +395,169 @@ pub async fn installation_repos(
             })
         })
         .collect();
-    Ok(Json(json!({ "repositories": writable })).into_response())
+    Ok(Json(json!({ "repositories": mapped })).into_response())
 }
 
-/// The user's decrypted GitHub OAuth token.
-async fn user_oauth_token(state: &AppState, user_id: i64) -> ApiResult<String> {
-    let identity: Option<UserIdentity> =
-        sqlx::query_as("SELECT * FROM user_identity WHERE user_id = $1 AND provider = 'github'")
-            .bind(user_id)
-            .fetch_optional(&state.db)
-            .await?;
-    let Some(identity) = identity else {
-        return Err(ApiError::bad_request("no GitHub identity linked"));
+// ---------------------------------------------------------------------------
+// App registration — GitHub's manifest flow. One click in Settings →
+// GitHub creates the app with our permissions/webhook → callback
+// exchanges the code → credentials stored encrypted in `github_app`,
+// hot-patched into the shared service (no restart).
+// ---------------------------------------------------------------------------
+
+/// `GET /api/v1/github/app/status` — configured?, slug, install URL.
+pub async fn app_status(_user: AuthUser, State(state): State<AppState>) -> ApiResult<Response> {
+    Ok(Json(json!({
+        "configured": state.github.configured(),
+        "source": if state.settings.github_app_configured() { "env" } else { "db" },
+        "slug": state.github.slug(),
+        "install_url": state.github.install_url(),
+        "web_base": state.github.web_base,
+    }))
+    .into_response())
+}
+
+/// `GET /api/v1/github/app/register` — admin only. Returns an
+/// auto-submitting HTML form that POSTs the manifest to GitHub; GitHub
+/// then redirects to `app_callback` with `?code=`.
+pub async fn app_register(
+    user: AuthUser,
+    State(state): State<AppState>,
+    jar: CookieJar,
+) -> ApiResult<Response> {
+    crate::routes::admin::require_superadmin(&user)?;
+    if state.settings.github_app_configured() {
+        return Err(ApiError::bad_request(
+            "GitHub App already configured via environment",
+        ));
+    }
+    let scheme = &state.settings.url_scheme;
+    let host = &state.settings.app_hostname;
+    let base = format!("{scheme}://{host}");
+    let manifest = json!({
+        "name": format!("runway-{}", host.replace('.', "-")),
+        "url": base,
+        "hook_attributes": {
+            "url": format!("{base}/api/github/webhook"),
+            "active": true,
+        },
+        "redirect_url": format!("{base}/api/v1/github/app/callback"),
+        "callback_urls": [base],
+        "setup_url": format!("{base}/settings"),
+        "public": false,
+        "default_permissions": {
+            "contents": "read",
+            "metadata": "read",
+            "pull_requests": "read",
+            "statuses": "write",
+        },
+        "default_events": ["push", "pull_request", "repository"],
+    });
+    let state_token = runway_core::slugify::token_hex(16);
+    let cookie = Cookie::build(("gh_app_state", state_token.clone()))
+        .path("/")
+        .http_only(true)
+        .same_site(axum_extra::extract::cookie::SameSite::Lax)
+        .max_age(time::Duration::minutes(10))
+        .build();
+    let manifest_json = serde_json::to_string(&manifest)
+        .map_err(ApiError::internal)?
+        .replace('\'', "&#39;");
+    let html = format!(
+        r#"<!doctype html><html><body>
+<p>Redirecting to GitHub…</p>
+<form id="f" method="post" action="{}/settings/apps/new">
+  <input type="hidden" name="manifest" value='{}'>
+  <input type="hidden" name="state" value="{}">
+</form>
+<script>document.getElementById("f").submit()</script>
+</body></html>"#,
+        state.github.web_base, manifest_json, state_token
+    );
+    Ok((jar.add(cookie), axum::response::Html(html)).into_response())
+}
+
+#[derive(Deserialize)]
+pub struct AppCallbackParams {
+    code: String,
+    state: String,
+}
+
+/// `GET /api/v1/github/app/callback` — exchange the manifest code,
+/// encrypt + store credentials, configure the shared service.
+pub async fn app_callback(
+    user: AuthUser,
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Query(params): Query<AppCallbackParams>,
+) -> ApiResult<Response> {
+    crate::routes::admin::require_superadmin(&user)?;
+    let expected = jar.get("gh_app_state").map(|c| c.value().to_string());
+    if expected.as_deref() != Some(params.state.as_str()) {
+        return Err(ApiError::unauthorized("invalid app registration state"));
+    }
+    let creds = state
+        .github
+        .exchange_manifest_code(&params.code)
+        .await
+        .map_err(|e| ApiError::bad_request(format!("manifest exchange failed: {e}")))?;
+    let app_id = match &creds.id {
+        Value::Number(n) => n.to_string(),
+        Value::String(s) => s.clone(),
+        _ => return Err(ApiError::bad_request("manifest returned no app id")),
     };
-    let Some(enc) = identity.access_token else {
-        return Err(ApiError::bad_request("no GitHub access token stored"));
+    let webhook_secret = creds
+        .webhook_secret
+        .clone()
+        .ok_or_else(|| ApiError::bad_request("manifest returned no webhook secret"))?;
+    let client_secret_enc = match &creds.client_secret {
+        Some(s) => Some(state.crypto.encrypt(s).map_err(ApiError::internal)?),
+        None => None,
     };
-    state.crypto.decrypt(&enc).map_err(ApiError::from)
+    sqlx::query(
+        "INSERT INTO github_app
+           (id, app_id, slug, name, client_id, client_secret_enc, pem_enc,
+            webhook_secret_enc, html_url, created_by_user_id)
+         VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9)
+         ON CONFLICT (id) DO UPDATE SET
+           app_id = $1, slug = $2, name = $3, client_id = $4,
+           client_secret_enc = $5, pem_enc = $6, webhook_secret_enc = $7,
+           html_url = $8, created_by_user_id = $9, updated_at = now()",
+    )
+    .bind(&app_id)
+    .bind(&creds.slug)
+    .bind(&creds.name)
+    .bind(&creds.client_id)
+    .bind(&client_secret_enc)
+    .bind(
+        state
+            .crypto
+            .encrypt(&creds.pem)
+            .map_err(ApiError::internal)?,
+    )
+    .bind(
+        state
+            .crypto
+            .encrypt(&webhook_secret)
+            .map_err(ApiError::internal)?,
+    )
+    .bind(&creds.html_url)
+    .bind(user.user.id)
+    .execute(&state.db)
+    .await?;
+    // Env config wins when present — only hot-patch when it isn't.
+    if !state.settings.github_app_configured() {
+        state.github.configure(runway_core::github::RegisteredApp {
+            app_id,
+            slug: creds.slug,
+            private_key: creds.pem,
+            webhook_secret,
+        });
+    }
+    let jar = jar.remove(
+        Cookie::build(("gh_app_state", String::new()))
+            .path("/")
+            .build(),
+    );
+    Ok((jar, Redirect::to("/settings")).into_response())
 }

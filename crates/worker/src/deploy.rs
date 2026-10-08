@@ -192,7 +192,7 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
     if source_archive.is_none() {
         match deployment.repo_provider.as_str() {
             "github" | "github_enterprise" => {
-                let Some(github) = ctx.github.as_ref() else {
+                let Some(github) = ctx.github.if_configured() else {
                     anyhow::bail!("GitHub App not configured");
                 };
                 let installation_id = project
@@ -1238,7 +1238,8 @@ async fn post_commit_status(
     state: &str,
     description: &str,
 ) {
-    let (Some(gh), Some(installation_id)) = (ctx.github.as_ref(), project.github_installation_id)
+    let (Some(gh), Some(installation_id)) =
+        (ctx.github.if_configured(), project.github_installation_id)
     else {
         return;
     };

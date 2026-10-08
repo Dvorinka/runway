@@ -72,7 +72,7 @@ async fn tick(ctx: &Ctx) -> anyhow::Result<()> {
         let result = runway_core::deploy::resolve_commit(
             &ctx.db,
             &ctx.crypto,
-            ctx.github.as_ref(),
+            ctx.github.if_configured(),
             &project,
             &branch,
         )

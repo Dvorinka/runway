@@ -27,6 +27,23 @@ pub struct User {
     pub status: String,
     pub tokens_invalid_before: Option<DateTime<Utc>>,
     pub default_team_id: Option<String>,
+    pub password_hash: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// DB-registered GitHub App credentials (manifest flow). Single row.
+#[derive(Debug, Clone, FromRow)]
+pub struct GithubApp {
+    pub app_id: String,
+    pub slug: String,
+    pub name: Option<String>,
+    pub client_id: Option<String>,
+    pub client_secret_enc: Option<String>,
+    pub pem_enc: String,
+    pub webhook_secret_enc: String,
+    pub html_url: Option<String>,
+    pub created_by_user_id: Option<i64>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

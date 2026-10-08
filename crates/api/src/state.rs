@@ -12,8 +12,9 @@ pub struct AppState {
     pub settings: Settings,
     pub bus: EventBus,
     pub crypto: Crypto,
-    pub github: Option<GithubService>,
-    pub github_oauth: Option<GithubService>,
+    /// Always present — `configured()` reports whether app credentials
+    /// exist (env or DB-registered); registration hot-patches in place.
+    pub github: GithubService,
     pub logs: LogStore,
     /// Optional — Cloudflare tunnel handlers degrade when absent.
     pub docker: Option<Docker>,

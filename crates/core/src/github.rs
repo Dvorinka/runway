@@ -1,8 +1,13 @@
 //! GitHub client: App JWT (RS256), installation tokens, repo lookups,
-//! OAuth login exchange, webhook signature verification.
+//! app-manifest registration, webhook signature verification.
 //! Port of devpush services/github.py.
+//!
+//! App credentials resolve from `GITHUB_APP_*` env vars or the
+//! DB-registered `github_app` row (manifest flow). The service is always
+//! constructible; `configured()` reports whether credentials are present,
+//! and registration hot-patches them at runtime.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
@@ -13,60 +18,144 @@ use sha2::Sha256;
 use crate::config::Settings;
 use crate::crypto::Crypto;
 use crate::error::{Error, Result};
-use crate::models::GithubInstallation;
+use crate::models::{GithubApp, GithubInstallation};
 
 type HmacSha256 = Hmac<Sha256>;
+
+#[derive(Clone)]
+struct AppCreds {
+    app_id: String,
+    private_key: String,
+    slug: Option<String>,
+    webhook_secret: Option<String>,
+}
+
+/// Credentials returned by GitHub's app-manifest conversion endpoint.
+#[derive(Debug, Deserialize)]
+pub struct ManifestCreds {
+    pub id: serde_json::Value,
+    pub slug: String,
+    pub name: Option<String>,
+    pub client_id: Option<String>,
+    pub client_secret: Option<String>,
+    pub pem: String,
+    pub webhook_secret: Option<String>,
+    pub html_url: Option<String>,
+}
 
 #[derive(Clone)]
 pub struct GithubService {
     http: reqwest::Client,
     pub api_base: String,
-    client_id: String,
-    client_secret: String,
-    app_id: String,
-    private_key: String,
+    pub web_base: String,
+    creds: Arc<RwLock<Option<AppCreds>>>,
     jwt_cache: Arc<Mutex<Option<(String, Instant)>>>,
 }
 
 impl GithubService {
-    /// App-level service (JWT + installation tokens + webhooks).
-    pub fn from_settings(settings: &Settings) -> Option<Self> {
-        if !settings.github_app_configured() {
-            return None;
-        }
-        Some(Self {
-            http: reqwest::Client::new(),
-            api_base: settings.github_api_url.trim_end_matches('/').into(),
-            client_id: settings.github_client_id.clone().unwrap_or_default(),
-            client_secret: settings.github_client_secret.clone().unwrap_or_default(),
+    /// App-level service. Always returns an instance — credentials are
+    /// seeded from env when `github_app_configured()`, otherwise populated
+    /// later via `load_from_db` or `configure`.
+    pub fn from_settings(settings: &Settings) -> Self {
+        let api_base = settings.github_api_url.trim_end_matches('/').to_string();
+        let web_base = if api_base == "https://api.github.com" {
+            "https://github.com".into()
+        } else {
+            api_base.trim_end_matches("/api/v3").to_string()
+        };
+        let creds = settings.github_app_configured().then(|| AppCreds {
             app_id: settings.github_app_id.clone().unwrap_or_default(),
             private_key: settings.github_app_private_key.clone().unwrap_or_default(),
-            jwt_cache: Arc::new(Mutex::new(None)),
-        })
-    }
-
-    /// OAuth-only service (login flow) — usable without App credentials.
-    pub fn oauth_only(settings: &Settings) -> Option<Self> {
-        if !settings.github_oauth_configured() {
-            return None;
-        }
-        Some(Self {
+            slug: settings.github_app_name.clone(),
+            webhook_secret: settings.github_app_webhook_secret.clone(),
+        });
+        Self {
             http: reqwest::Client::new(),
-            api_base: "https://api.github.com".into(),
-            client_id: settings.github_client_id.clone()?,
-            client_secret: settings.github_client_secret.clone()?,
-            app_id: String::new(),
-            private_key: String::new(),
+            api_base,
+            web_base,
+            creds: Arc::new(RwLock::new(creds)),
             jwt_cache: Arc::new(Mutex::new(None)),
-        })
+        }
     }
 
-    pub fn client_id(&self) -> &str {
-        &self.client_id
+    /// Populate credentials from the DB-registered `github_app` row.
+    /// Env-configured credentials always win — explicit ops config is
+    /// authoritative and not shadowed by a registered app.
+    pub async fn load_from_db(&self, db: &sqlx::PgPool, crypto: &Crypto) -> Result<()> {
+        if self.configured() {
+            return Ok(());
+        }
+        let row: Option<GithubApp> = sqlx::query_as(
+            "SELECT app_id, slug, name, client_id, client_secret_enc, pem_enc,
+                    webhook_secret_enc, html_url, created_by_user_id,
+                    created_at, updated_at
+             FROM github_app WHERE id = 1",
+        )
+        .fetch_optional(db)
+        .await?;
+        let Some(app) = row else { return Ok(()) };
+        self.configure(RegisteredApp {
+            app_id: app.app_id,
+            slug: app.slug,
+            private_key: crypto.decrypt(&app.pem_enc)?,
+            webhook_secret: crypto.decrypt(&app.webhook_secret_enc)?,
+        });
+        Ok(())
+    }
+
+    /// Hot-patch app credentials (post-registration). Shared clones see
+    /// the update immediately — no restart required.
+    pub fn configure(&self, app: RegisteredApp) {
+        *self.creds.write().unwrap() = Some(AppCreds {
+            app_id: app.app_id,
+            private_key: app.private_key,
+            slug: Some(app.slug),
+            webhook_secret: Some(app.webhook_secret),
+        });
+        *self.jwt_cache.lock().unwrap() = None;
+    }
+
+    pub fn configured(&self) -> bool {
+        self.creds.read().unwrap().is_some()
+    }
+
+    /// `Some(&self)` when configured — preserves the old Option ergonomics
+    /// at call sites that pass `Option<&GithubService>`.
+    pub fn if_configured(&self) -> Option<&Self> {
+        self.configured().then_some(self)
+    }
+
+    pub fn slug(&self) -> Option<String> {
+        self.creds
+            .read()
+            .unwrap()
+            .as_ref()
+            .and_then(|c| c.slug.clone())
+    }
+
+    /// `https://github.com/apps/<slug>/installations/new`.
+    pub fn install_url(&self) -> Option<String> {
+        self.slug()
+            .map(|s| format!("{}/apps/{s}/installations/new", self.web_base))
+    }
+
+    pub fn webhook_secret(&self) -> Option<String> {
+        self.creds
+            .read()
+            .unwrap()
+            .as_ref()
+            .and_then(|c| c.webhook_secret.clone())
     }
 
     /// App JWT, cached for ~10 minutes (port of jwt_token property).
     pub fn jwt(&self) -> Result<String> {
+        let (app_id, private_key) = {
+            let creds = self.creds.read().unwrap();
+            let Some(c) = creds.as_ref() else {
+                return Err(Error::Config("GitHub App is not configured".into()));
+            };
+            (c.app_id.clone(), c.private_key.clone())
+        };
         let mut cache = self.jwt_cache.lock().unwrap();
         if let Some((token, created)) = cache.as_ref() {
             if created.elapsed() < Duration::from_secs(9 * 60) {
@@ -77,10 +166,10 @@ impl GithubService {
         let claims = serde_json::json!({
             "iat": now as i64 - 60, // clock-skew buffer
             "exp": now + 10 * 60,
-            "iss": self.app_id,
+            "iss": app_id,
         });
-        let key = jsonwebtoken::EncodingKey::from_rsa_pem(self.private_key.as_bytes())
-            .map_err(|e| Error::Config(format!("invalid GITHUB_APP_PRIVATE_KEY: {e}")))?;
+        let key = jsonwebtoken::EncodingKey::from_rsa_pem(private_key.as_bytes())
+            .map_err(|e| Error::Config(format!("invalid app private key: {e}")))?;
         let token = jsonwebtoken::encode(
             &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256),
             &claims,
@@ -164,6 +253,68 @@ impl GithubService {
         .execute(db)
         .await?;
         Ok(token)
+    }
+
+    /// Installations of this app (`GET /app/installations`, app JWT).
+    /// Replaces per-user OAuth listing — the instance sees every install.
+    pub async fn app_installations(&self) -> Result<Vec<serde_json::Value>> {
+        let mut installs = vec![];
+        let mut page = 1u32;
+        loop {
+            let data: serde_json::Value = self
+                .http
+                .get(format!("{}/app/installations", self.api_base))
+                .bearer_auth(self.jwt()?)
+                .query(&[("per_page", "100"), ("page", &page.to_string())])
+                .header("Accept", "application/vnd.github+json")
+                .header("User-Agent", "runway")
+                .send()
+                .await?
+                .error_for_status()?
+                .json()
+                .await?;
+            let batch = data.as_array().cloned().unwrap_or_default();
+            let n = batch.len();
+            installs.extend(batch);
+            if n < 100 {
+                break;
+            }
+            page += 1;
+        }
+        Ok(installs)
+    }
+
+    /// Repos under an installation (`GET /installation/repositories`,
+    /// installation token). Paginated.
+    pub async fn installation_repositories(
+        &self,
+        installation_token: &str,
+    ) -> Result<Vec<serde_json::Value>> {
+        let mut repos = vec![];
+        let mut page = 1u32;
+        loop {
+            let data: serde_json::Value = self
+                .http
+                .get(format!("{}/installation/repositories", self.api_base))
+                .bearer_auth(installation_token)
+                .query(&[("per_page", "100"), ("page", &page.to_string())])
+                .header("Accept", "application/vnd.github+json")
+                .header("User-Agent", "runway")
+                .send()
+                .await?
+                .error_for_status()?
+                .json()
+                .await?;
+            let batch = data["repositories"].as_array().cloned().unwrap_or_default();
+            let total = data["total_count"].as_i64().unwrap_or(0);
+            let n = batch.len();
+            repos.extend(batch);
+            if n == 0 || (page as i64) * 100 >= total {
+                break;
+            }
+            page += 1;
+        }
+        Ok(repos)
     }
 
     /// Repo metadata by numeric id (installation token).
@@ -303,127 +454,24 @@ impl GithubService {
         Ok(())
     }
 
-    /// Repos visible to the user token under an installation.
-    pub async fn installation_repositories_for_user(
-        &self,
-        user_token: &str,
-        installation_id: i64,
-    ) -> Result<Vec<serde_json::Value>> {
-        let mut repos = vec![];
-        let mut page = 1u32;
-        loop {
-            let data: serde_json::Value = self
-                .http
-                .get(format!(
-                    "{}/user/installations/{}/repositories",
-                    self.api_base, installation_id
-                ))
-                .bearer_auth(user_token)
-                .query(&[("per_page", "100"), ("page", &page.to_string())])
-                .header("Accept", "application/vnd.github+json")
-                .header("User-Agent", "runway")
-                .send()
-                .await?
-                .error_for_status()?
-                .json()
-                .await?;
-            let batch = data["repositories"].as_array().cloned().unwrap_or_default();
-            let total = data["total_count"].as_i64().unwrap_or(0);
-            let n = batch.len();
-            repos.extend(batch);
-            if n == 0 || (page as i64) * 100 >= total {
-                break;
-            }
-            page += 1;
-        }
-        Ok(repos)
-    }
+    // -- App manifest registration -------------------------------------------
 
-    /// Installations the OAuth user can administer.
-    pub async fn user_installations(&self, user_token: &str) -> Result<Vec<serde_json::Value>> {
-        let data: serde_json::Value = self
+    /// POST /app-manifests/{code}/conversions — exchange the code GitHub
+    /// sends after the user confirms app creation. Unauthenticated.
+    pub async fn exchange_manifest_code(&self, code: &str) -> Result<ManifestCreds> {
+        Ok(self
             .http
-            .get(format!("{}/user/installations", self.api_base))
-            .bearer_auth(user_token)
-            .query(&[("per_page", "100")])
+            .post(format!(
+                "{}/app-manifests/{}/conversions",
+                self.api_base, code
+            ))
             .header("Accept", "application/vnd.github+json")
             .header("User-Agent", "runway")
             .send()
             .await?
             .error_for_status()?
             .json()
-            .await?;
-        Ok(data["installations"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default())
-    }
-
-    // -- OAuth login ---------------------------------------------------------
-
-    pub async fn exchange_code(&self, code: &str) -> Result<String> {
-        #[derive(Deserialize)]
-        struct Token {
-            access_token: Option<String>,
-        }
-        let resp: Token = self
-            .http
-            .post("https://github.com/login/oauth/access_token")
-            .header("Accept", "application/json")
-            .form(&[
-                ("client_id", self.client_id.as_str()),
-                ("client_secret", self.client_secret.as_str()),
-                ("code", code),
-            ])
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
-        resp.access_token
-            .ok_or_else(|| Error::Config("github oauth exchange returned no token".into()))
-    }
-
-    /// (id, login, name) for the OAuth user.
-    pub async fn user_info(&self, user_token: &str) -> Result<(i64, String, Option<String>)> {
-        let v: serde_json::Value = self
-            .http
-            .get(format!("{}/user", self.api_base))
-            .bearer_auth(user_token)
-            .header("Accept", "application/vnd.github+json")
-            .header("User-Agent", "runway")
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
-        Ok((
-            v["id"].as_i64().unwrap_or_default(),
-            v["login"].as_str().unwrap_or_default().to_string(),
-            v["name"].as_str().map(String::from),
-        ))
-    }
-
-    pub async fn user_primary_email(&self, user_token: &str) -> Result<Option<String>> {
-        let v: serde_json::Value = self
-            .http
-            .get(format!("{}/user/emails", self.api_base))
-            .bearer_auth(user_token)
-            .header("Accept", "application/vnd.github+json")
-            .header("User-Agent", "runway")
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
-        Ok(v.as_array().and_then(|emails| {
-            emails
-                .iter()
-                .find(|e| {
-                    e["primary"].as_bool() == Some(true) && e["verified"].as_bool() == Some(true)
-                })
-                .and_then(|e| e["email"].as_str().map(String::from))
-        }))
+            .await?)
     }
 
     // -- Webhooks ------------------------------------------------------------
@@ -442,6 +490,14 @@ impl GithubService {
         mac.update(payload);
         mac.verify_slice(&expected).is_ok()
     }
+}
+
+/// Decrypted app credentials ready for `configure`.
+pub struct RegisteredApp {
+    pub app_id: String,
+    pub slug: String,
+    pub private_key: String,
+    pub webhook_secret: String,
 }
 
 #[cfg(test)]
@@ -480,5 +536,14 @@ mod tests {
             payload,
             "not-a-signature"
         ));
+    }
+
+    #[test]
+    fn unconfigured_service_reports_unconfigured() {
+        let settings = crate::config::test_settings();
+        let gh = GithubService::from_settings(&settings);
+        assert!(!gh.configured());
+        assert!(gh.if_configured().is_none());
+        assert!(gh.jwt().is_err());
     }
 }
