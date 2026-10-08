@@ -950,6 +950,7 @@ function Settings({ id, project }: { id: string; project: Project | null }) {
           ))}
         </select>
       </Card>
+      <Environments id={id} project={project} />
       <DockerBuild id={id} project={project} />
       <Firewall id={id} project={project} />
       <Card className="p-4">
@@ -967,6 +968,98 @@ function Settings({ id, project }: { id: string; project: Project | null }) {
       <Err msg={error} />
       {msg && <p className="text-xs text-muted-foreground">{msg}</p>}
     </div>
+  );
+}
+
+type Env = { id: string; name: string; slug: string; branch?: string; status?: string };
+
+function Environments({ id, project }: { id: string; project: Project | null }) {
+  const [envs, setEnvs] = useState<Env[]>([]);
+  const [name, setName] = useState("");
+  const [branch, setBranch] = useState("");
+  const [msg, setMsg] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setEnvs((project?.environments as Env[] | undefined) ?? []);
+  }, [project]);
+
+  async function save(next: Env[]) {
+    setError("");
+    setMsg("");
+    try {
+      await api.patchProject(id, { environments: next });
+      setEnvs(next);
+      setMsg("Saved — applies to the next deploy.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "failed");
+    }
+  }
+
+  async function add(e: React.FormEvent) {
+    e.preventDefault();
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    if (!slug) return;
+    await save([...envs, { id: `env-${slug}`, name, slug, branch: branch || "*", status: "active" }]);
+    setName("");
+    setBranch("");
+  }
+
+  return (
+    <Card className="p-4">
+      <h3 className="mb-2 text-sm font-medium">Environments</h3>
+      <p className="mb-3 text-xs text-muted-foreground">
+        Deploy targets matched by branch pattern (<code>*</code> = any). Each gets its own
+        environment domain.
+      </p>
+      <div className="mb-3 grid gap-2">
+        {envs.map((env) => (
+          <div
+            key={env.id}
+            className="flex items-center justify-between rounded-md border border-border px-3 py-2"
+          >
+            <div className="text-sm">
+              {env.name}
+              <span className="ml-2 font-mono text-xs text-muted-foreground">
+                {env.slug} · {env.branch || "*"}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Badge variant={env.status === "active" ? "success" : "secondary"}>
+                {env.status ?? "active"}
+              </Badge>
+              {env.slug !== "prod" && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => save(envs.filter((x) => x.id !== env.id))}
+                >
+                  Remove
+                </Button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+      <form onSubmit={add} className="grid grid-cols-[1fr_1fr_auto] gap-2">
+        <Input
+          placeholder="staging"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          required
+        />
+        <Input
+          placeholder="branch pattern (e.g. develop or *)"
+          value={branch}
+          onChange={(e) => setBranch(e.target.value)}
+        />
+        <Button type="submit" size="sm">
+          Add
+        </Button>
+      </form>
+      <Err msg={error} />
+      {msg && <p className="mt-2 text-xs text-muted-foreground">{msg}</p>}
+    </Card>
   );
 }
 

@@ -346,6 +346,9 @@ pub struct PatchProject {
     pub config: Option<Value>,
     /// Assign to a remote Docker node (null = local daemon).
     pub remote_node_id: Option<Option<String>>,
+    /// Full replacement of the environments array (add/remove/edit —
+    /// devpush form semantics serialize the whole list anyway).
+    pub environments: Option<Vec<runway_core::models::Environment>>,
 }
 
 pub async fn patch(
@@ -384,9 +387,17 @@ pub async fn patch(
         }
         project.remote_node_id = node;
     }
+    if let Some(envs) = body.environments {
+        for e in &envs {
+            if e.name.trim().is_empty() || e.slug.trim().is_empty() {
+                return Err(ApiError::bad_request("environments need name and slug"));
+            }
+        }
+        project.environments = serde_json::to_value(&envs).map_err(ApiError::internal)?;
+    }
     let updated: Project = sqlx::query_as(
         "UPDATE project SET name = $2, description = $3, config = $4,
-                remote_node_id = $5, updated_at = now()
+                remote_node_id = $5, environments = $6, updated_at = now()
          WHERE id = $1 RETURNING *",
     )
     .bind(&project.id)
@@ -394,6 +405,7 @@ pub async fn patch(
     .bind(&project.description)
     .bind(&project.config)
     .bind(&project.remote_node_id)
+    .bind(&project.environments)
     .fetch_one(&state.db)
     .await?;
     // Firewall changes apply at the edge immediately — waiting for the

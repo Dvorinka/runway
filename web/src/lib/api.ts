@@ -10,6 +10,7 @@ export interface Project {
   repo_branch: string;
   remote_node_id: string | null;
   config: Record<string, unknown>;
+  environments?: { id: string; name: string; slug: string; branch?: string; status?: string }[];
   status: string;
   preset?: string | null;
   latest_deployment?: Deployment | null;
