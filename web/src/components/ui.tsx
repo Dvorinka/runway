@@ -1,7 +1,8 @@
 // Minimal shadcn-style primitives — extended on demand.
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
-import { forwardRef } from "react";
+import { api } from "@/lib/api";
+import { forwardRef, useRef, useState } from "react";
 
 const buttonVariants = cva(
   "inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none",
@@ -156,5 +157,103 @@ export function StatusDot({
       )}
       <span className={cn("relative inline-flex h-2 w-2 rounded-full", color)} />
     </span>
+  );
+}
+
+/** Entity avatar — `/api/avatars/{kind}/{id}` when set, initial else. */
+export function Avatar({
+  kind,
+  id,
+  name,
+  hasAvatar,
+  className,
+}: {
+  kind: "user" | "team" | "project";
+  id: string | number;
+  name: string;
+  hasAvatar?: boolean;
+  className?: string;
+}) {
+  const cls = cn(
+    "flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full bg-muted text-xs font-medium uppercase",
+    className,
+  );
+  if (hasAvatar) {
+    return (
+      <img src={`/api/avatars/${kind}/${id}`} alt={name} className={cn(cls, "object-cover")} />
+    );
+  }
+  return <div className={cls}>{name.charAt(0)}</div>;
+}
+
+/** Avatar preview + upload/remove controls. `onChanged` fires after a
+ *  successful mutation so the caller can refetch. */
+export function AvatarRow({
+  kind,
+  id,
+  name,
+  hasAvatar,
+  onChanged,
+}: {
+  kind: "user" | "team" | "project";
+  id: string | number;
+  name: string;
+  hasAvatar?: boolean;
+  onChanged?: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const input = useRef<HTMLInputElement>(null);
+
+  async function upload(f: File) {
+    setBusy(true);
+    setErr("");
+    try {
+      if (kind === "user") await api.setAvatar(f);
+      else await api.setEntityAvatar(kind, id.toString(), f);
+      onChanged?.();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "upload failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove() {
+    setBusy(true);
+    setErr("");
+    try {
+      if (kind === "user") await api.deleteAvatar();
+      else await api.deleteEntityAvatar(kind, id.toString());
+      onChanged?.();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mb-4 flex items-center gap-3">
+      <Avatar kind={kind} id={id} name={name} hasAvatar={hasAvatar} className="h-10 w-10 text-sm" />
+      <input
+        ref={input}
+        type="file"
+        accept="image/png,image/jpeg,image/webp,image/gif"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) upload(f);
+          e.target.value = "";
+        }}
+      />
+      <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => input.current?.click()}>
+        {hasAvatar ? "Change" : "Upload"} avatar
+      </Button>
+      {hasAvatar && (
+        <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={remove}>
+          Remove
+        </Button>
+      )}
+      {err && <span className="text-xs text-destructive">{err}</span>}
+    </div>
   );
 }

@@ -1,5 +1,5 @@
 import { api, type Team } from "@/lib/api";
-import { Badge, Button, Card, Input } from "@/components/ui";
+import { Avatar, Badge, Button, Card, Input } from "@/components/ui";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
@@ -46,9 +46,12 @@ export default function TeamsPage() {
         {teams.map((t) => (
           <Link key={t.id} to={`/teams/${t.id}`}>
             <Card className="flex items-center justify-between p-4 transition-colors hover:border-muted-foreground/25 hover:bg-accent/50">
-              <div>
-                <div className="text-sm font-medium">{t.name}</div>
-                <div className="text-xs text-muted-foreground">{t.slug}</div>
+              <div className="flex items-center gap-3">
+                <Avatar kind="team" id={t.id} name={t.name} hasAvatar={t.has_avatar} />
+                <div>
+                  <div className="text-sm font-medium">{t.name}</div>
+                  <div className="text-xs text-muted-foreground">{t.slug}</div>
+                </div>
               </div>
               <Badge variant={t.role === "owner" ? "default" : "secondary"}>{t.role}</Badge>
             </Card>

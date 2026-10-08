@@ -9,7 +9,7 @@ pub mod routes;
 pub mod state;
 
 use axum::extract::DefaultBodyLimit;
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use serde_json::json;
 
@@ -30,6 +30,11 @@ pub fn router(state: AppState) -> Router {
                 .delete(routes::auth::delete_me),
         )
         .route("/api/auth/password", post(routes::auth::change_password))
+        .route(
+            "/api/auth/avatar",
+            put(routes::avatars::put_user).delete(routes::avatars::delete_user),
+        )
+        .route("/api/avatars/{kind}/{id}", get(routes::avatars::get))
         // OIDC / SSO
         .route("/api/auth/oidc", get(routes::oidc::authorize))
         .route("/api/auth/oidc/callback", get(routes::oidc::callback))
@@ -112,6 +117,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/projects/{id}",
             get(routes::projects::get).patch(routes::projects::patch),
+        )
+        .route(
+            "/api/v1/projects/{id}/avatar",
+            put(routes::avatars::put_project).delete(routes::avatars::delete_project),
         )
         .route(
             "/api/v1/projects/{id}/env",
@@ -206,6 +215,10 @@ pub fn router(state: AppState) -> Router {
             get(routes::teams::get)
                 .patch(routes::teams::update)
                 .delete(routes::teams::delete),
+        )
+        .route(
+            "/api/v1/teams/{id}/avatar",
+            put(routes::avatars::put_team).delete(routes::avatars::delete_team),
         )
         .route(
             "/api/v1/teams/{id}/members/{user_id}",

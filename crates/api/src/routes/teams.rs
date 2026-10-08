@@ -31,8 +31,8 @@ async fn accessible_team(state: &AppState, user_id: i64, id: &str) -> ApiResult<
 }
 
 pub async fn list(user: AuthUser, State(state): State<AppState>) -> ApiResult<Response> {
-    let teams: Vec<(String, String, Option<String>, String)> = sqlx::query_as(
-        "SELECT t.id, t.name, t.slug, tm.role FROM team t
+    let teams: Vec<(String, String, Option<String>, String, bool)> = sqlx::query_as(
+        "SELECT t.id, t.name, t.slug, tm.role, t.has_avatar FROM team t
          JOIN team_member tm ON tm.team_id = t.id
          WHERE tm.user_id = $1 AND t.status != 'deleted' ORDER BY t.name",
     )
@@ -40,8 +40,8 @@ pub async fn list(user: AuthUser, State(state): State<AppState>) -> ApiResult<Re
     .fetch_all(&state.db)
     .await?;
     Ok(Json(json!({
-        "teams": teams.iter().map(|(id, name, slug, role)| json!({
-            "id": id, "name": name, "slug": slug, "role": role,
+        "teams": teams.iter().map(|(id, name, slug, role, has_avatar)| json!({
+            "id": id, "name": name, "slug": slug, "role": role, "has_avatar": has_avatar,
         })).collect::<Vec<_>>()
     }))
     .into_response())
@@ -53,8 +53,8 @@ pub async fn get(
     Path(id): Path<String>,
 ) -> ApiResult<Response> {
     let team_id = accessible_team(&state, user.user.id, &id).await?;
-    let team: Option<(String, String, Option<String>)> =
-        sqlx::query_as("SELECT id, name, slug FROM team WHERE id = $1")
+    let team: Option<(String, String, Option<String>, bool)> =
+        sqlx::query_as("SELECT id, name, slug, has_avatar FROM team WHERE id = $1")
             .bind(&team_id)
             .fetch_optional(&state.db)
             .await?;
@@ -65,12 +65,12 @@ pub async fn get(
     .bind(&team_id)
     .fetch_all(&state.db)
     .await?;
-    let Some((id, name, slug)) = team else {
+    let Some((id, name, slug, has_avatar)) = team else {
         return Err(ApiError::not_found("team"));
     };
     Ok(Json(json!({
         "team": {
-            "id": id, "name": name, "slug": slug,
+            "id": id, "name": name, "slug": slug, "has_avatar": has_avatar,
             "members": members.iter().map(|(uid, uname, role)| json!({
                 "user_id": uid, "username": uname, "role": role,
             })).collect::<Vec<_>>(),

@@ -8,7 +8,7 @@ import {
   type TeamInvite,
   type TeamWebhook,
 } from "@/lib/api";
-import { Badge, Button, Card, Input } from "@/components/ui";
+import { Avatar, AvatarRow, Badge, Button, Card, Input } from "@/components/ui";
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
@@ -574,9 +574,12 @@ export default function TeamPage({ me }: { me: Me }) {
   return (
     <div className="page-enter mx-auto max-w-5xl p-4 sm:p-8">
       <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold">{team.name}</h1>
-          <p className="text-xs text-muted-foreground">{team.slug}</p>
+        <div className="flex items-center gap-3">
+          <Avatar kind="team" id={team.id} name={team.name} hasAvatar={team.has_avatar} className="h-9 w-9 text-sm" />
+          <div>
+            <h1 className="text-xl font-semibold">{team.name}</h1>
+            <p className="text-xs text-muted-foreground">{team.slug}</p>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           {admin && (
@@ -605,6 +608,18 @@ export default function TeamPage({ me }: { me: Me }) {
       </div>
       <Err msg={error} />
       <div className="grid gap-4">
+        {admin && (
+          <Card className="p-5">
+            <h2 className="mb-3 text-sm font-medium">Avatar</h2>
+            <AvatarRow
+              kind="team"
+              id={team.id}
+              name={team.name}
+              hasAvatar={team.has_avatar}
+              onChanged={load}
+            />
+          </Card>
+        )}
         <Members team={team} myRole={myRole} me={me} reload={load} />
         <Invites teamId={team.id} admin={admin} />
         <StorageSection teamId={team.id} admin={admin} />

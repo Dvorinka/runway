@@ -24,6 +24,7 @@ pub struct User {
     pub username: String,
     pub name: Option<String>,
     pub email_verified: bool,
+    pub has_avatar: bool,
     pub status: String,
     pub tokens_invalid_before: Option<DateTime<Utc>>,
     pub default_team_id: Option<String>,
@@ -177,6 +178,7 @@ pub struct Project {
     pub gitlab_connection_id: Option<i64>,
     pub bitbucket_connection_id: Option<i64>,
     pub remote_node_id: Option<String>,
+    pub has_avatar: bool,
     pub config: Value,
     pub environments: Value,
     /// AES-GCM ciphertext holding a `Vec<EnvVar>` JSON array.
@@ -796,6 +798,7 @@ mod tests {
             gitlab_connection_id: None,
             bitbucket_connection_id: None,
             remote_node_id: None,
+            has_avatar: false,
             config: json!({}),
             environments: envs,
             env_vars: String::new(),

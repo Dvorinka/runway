@@ -1,6 +1,7 @@
 pub mod admin;
 pub mod api;
 pub mod auth;
+pub mod avatars;
 pub mod cloudflare;
 pub mod deployments;
 pub mod git_providers;

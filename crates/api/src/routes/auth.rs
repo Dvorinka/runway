@@ -197,6 +197,7 @@ pub async fn me(user: AuthUser) -> ApiResult<Response> {
         "email": user.user.email,
         "username": user.user.username,
         "name": user.user.name,
+        "has_avatar": user.user.has_avatar,
         "default_team_id": user.user.default_team_id,
     }))
     .into_response())

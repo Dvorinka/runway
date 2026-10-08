@@ -10,7 +10,7 @@ import {
   type RemoteNode,
   type Webhook,
 } from "@/lib/api";
-import { Badge, Button, Card, Input, Skeleton, StatusDot, displayStatus } from "@/components/ui";
+import { AvatarRow, Badge, Button, Card, Input, Skeleton, StatusDot, displayStatus } from "@/components/ui";
 import { filesToTarGz } from "@/lib/tarball";
 import { duration, firstLine, timeAgo } from "@/lib/utils";
 import { useEffect, useRef, useState } from "react";
@@ -929,8 +929,25 @@ function Settings({ id, project }: { id: string; project: Project | null }) {
     e.target.value = "";
   }
 
+  const [avatarKey, setAvatarKey] = useState(0);
   return (
     <div className="grid gap-4">
+      {project && (
+        <Card className="p-4">
+          <h3 className="mb-2 text-sm font-medium">Avatar</h3>
+          <AvatarRow
+            key={avatarKey}
+            kind="project"
+            id={project.id}
+            name={project.name}
+            hasAvatar={project.has_avatar}
+            onChanged={() => {
+              project.has_avatar = !project.has_avatar;
+              setAvatarKey((k) => k + 1);
+            }}
+          />
+        </Card>
+      )}
       <Card className="p-4">
         <h3 className="mb-2 text-sm font-medium">Remote Docker node</h3>
         <p className="mb-3 text-xs text-muted-foreground">

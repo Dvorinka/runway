@@ -1,5 +1,5 @@
 import { api, type Me } from "@/lib/api";
-import { Button } from "@/components/ui";
+import { Avatar, Button } from "@/components/ui";
 import { CommandPalette } from "@/components/CommandPalette";
 import { cn } from "@/lib/utils";
 import { useEffect, useState } from "react";
@@ -72,12 +72,12 @@ export default function Layout({ me, children }: { me: Me; children: React.React
             </nav>
           </div>
           <div className="flex items-center gap-3">
-            <div
-              className="flex h-7 w-7 items-center justify-center rounded-full bg-muted text-xs font-medium uppercase"
-              title={me.email}
-            >
-              {(me.name ?? me.username ?? me.email).charAt(0)}
-            </div>
+            <Avatar
+              kind="user"
+              id={me.id}
+              name={me.name ?? me.username ?? me.email}
+              hasAvatar={me.has_avatar}
+            />
             <Button
               variant="ghost"
               size="sm"

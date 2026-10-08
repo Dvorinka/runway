@@ -5,7 +5,7 @@ import {
   type Project,
   type Repo,
 } from "@/lib/api";
-import { Button, Card, Input, Skeleton, StatusDot } from "@/components/ui";
+import { Avatar, Button, Card, Input, Skeleton, StatusDot } from "@/components/ui";
 import { duration, firstLine, timeAgo } from "@/lib/utils";
 import { LayoutGrid, List, Search } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -277,6 +277,7 @@ export function ProjectCard({ p }: { p: Project }) {
       <Card className="flex h-full flex-col gap-3 p-4 transition-colors hover:border-muted-foreground/25 hover:bg-accent/50">
         <div className="flex items-center justify-between">
           <div className="flex min-w-0 items-center gap-2">
+            <Avatar kind="project" id={p.id} name={p.name} hasAvatar={p.has_avatar} />
             <span className="truncate font-medium">{p.name}</span>
             {p.preset && (
               <span className="shrink-0 rounded border border-border px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
@@ -421,6 +422,7 @@ export default function Projects() {
                     ) : (
                       <StatusDot status="idle" />
                     )}
+                    <Avatar kind="project" id={p.id} name={p.name} hasAvatar={p.has_avatar} />
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="truncate font-medium">{p.name}</span>

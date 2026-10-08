@@ -6,6 +6,7 @@
 
 pub mod access;
 pub mod audit;
+pub mod avatars;
 pub mod cloudflare;
 pub mod config;
 pub mod cron;

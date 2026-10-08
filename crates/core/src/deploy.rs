@@ -760,6 +760,7 @@ mod tests {
             gitlab_connection_id: None,
             bitbucket_connection_id: None,
             remote_node_id: None,
+            has_avatar: false,
             config: json!({}),
             environments: json!([
                 { "id": "prod", "name": "Production", "slug": "production",

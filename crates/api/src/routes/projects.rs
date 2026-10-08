@@ -48,7 +48,11 @@ async fn accessible_project(state: &AppState, user_id: i64, id: &str) -> ApiResu
 /// devpush `get_access(role, "creator")` — owner/admin always pass; a
 /// plain member passes only for a project they created. Mutating
 /// project settings routes use this.
-async fn accessible_project_writer(state: &AppState, user_id: i64, id: &str) -> ApiResult<Project> {
+pub(crate) async fn accessible_project_writer(
+    state: &AppState,
+    user_id: i64,
+    id: &str,
+) -> ApiResult<Project> {
     let project = accessible_project(state, user_id, id).await?;
     let role: Option<String> =
         sqlx::query_scalar("SELECT role FROM team_member WHERE team_id = $1 AND user_id = $2")
@@ -457,6 +461,7 @@ fn project_json(state: &AppState, p: &Project) -> Value {
         "gitlab_connection_id": p.gitlab_connection_id,
         "bitbucket_connection_id": p.bitbucket_connection_id,
         "remote_node_id": p.remote_node_id,
+        "has_avatar": p.has_avatar,
         "config": p.config,
         "environments": p.environments,
         "status": p.status,

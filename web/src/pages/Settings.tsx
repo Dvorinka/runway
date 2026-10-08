@@ -5,7 +5,7 @@ import {
   type Me,
   type RemoteNode,
 } from "@/lib/api";
-import { Badge, Button, Card, Input } from "@/components/ui";
+import { AvatarRow, Badge, Button, Card, Input } from "@/components/ui";
 import { useEffect, useState } from "react";
 
 const selectCls =
@@ -367,6 +367,13 @@ function Account({ me }: { me: Me }) {
       <Card className="p-5">
         <h2 className="mb-1 text-sm font-medium">Account</h2>
         <p className="mb-4 text-xs text-muted-foreground">Profile and sign-in details.</p>
+        <AvatarRow
+          kind="user"
+          id={me.id}
+          name={me.name ?? me.username}
+          hasAvatar={me.has_avatar}
+          onChanged={() => location.reload()}
+        />
         <form onSubmit={saveProfile} className="grid gap-3 sm:grid-cols-3">
           <Input
             placeholder="Display name"

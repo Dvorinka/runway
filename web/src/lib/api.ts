@@ -9,6 +9,7 @@ export interface Project {
   repo_full_name: string;
   repo_branch: string;
   remote_node_id: string | null;
+  has_avatar?: boolean;
   config: Record<string, unknown>;
   environments?: { id: string; name: string; slug: string; branch?: string; status?: string }[];
   status: string;
@@ -42,6 +43,7 @@ export interface Me {
   email: string;
   username: string;
   name: string | null;
+  has_avatar: boolean;
 }
 
 export interface EnvVar {
@@ -118,6 +120,7 @@ export interface Team {
   name: string;
   slug: string | null;
   role: string;
+  has_avatar?: boolean;
 }
 
 export interface TeamMember {
@@ -130,6 +133,7 @@ export interface TeamDetail {
   id: string;
   name: string;
   slug: string | null;
+  has_avatar?: boolean;
   members: TeamMember[];
 }
 
@@ -328,6 +332,30 @@ export const api = {
     }),
   cancel: (id: string) =>
     req<Deployment>(`/api/v1/deployments/${id}/cancel`, { method: "POST" }),
+  setAvatar: (file: Blob) =>
+    fetch(`/api/auth/avatar`, {
+      method: "PUT",
+      credentials: "include",
+      headers: { "content-type": file.type },
+      body: file,
+    }).then(async (r) => {
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? "upload failed");
+    }),
+  deleteAvatar: () =>
+    req<void>(`/api/auth/avatar`, { method: "DELETE" }),
+  setEntityAvatar: (kind: "team" | "project", id: string, file: Blob) =>
+    fetch(`/api/v1/${kind === "team" ? "teams" : "projects"}/${id}/avatar`, {
+      method: "PUT",
+      credentials: "include",
+      headers: { "content-type": file.type },
+      body: file,
+    }).then(async (r) => {
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? "upload failed");
+    }),
+  deleteEntityAvatar: (kind: "team" | "project", id: string) =>
+    req<void>(`/api/v1/${kind === "team" ? "teams" : "projects"}/${id}/avatar`, {
+      method: "DELETE",
+    }),
 
   cron: (projectId: string) =>
     req<{ cron_jobs: CronJob[] }>(`/api/v1/projects/${projectId}/cron`),
