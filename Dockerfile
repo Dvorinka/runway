@@ -28,7 +28,9 @@ RUN mkdir -p crates/cli/src crates/api/src crates/core/src crates/worker/src \
 
 COPY crates crates
 COPY migrations migrations
-RUN touch crates/cli/src/main.rs \
+# COPY preserves checkout mtimes (older than the stub build) — clean the
+# workspace members so they rebuild; third-party deps stay cached.
+RUN cargo clean -p runway -p runway-api -p runway-core -p runway-worker \
     && cargo build --release -p runway \
     && strip target/release/runway
 
