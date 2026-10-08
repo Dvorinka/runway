@@ -82,6 +82,10 @@ pub fn router(state: AppState) -> Router {
             post(routes::git_providers::gitlab_webhook),
         )
         .route(
+            "/api/bitbucket/webhook",
+            post(routes::git_providers::bitbucket_webhook),
+        )
+        .route(
             "/api/v1/git/{provider}/connect",
             post(routes::git_providers::connect),
         )

@@ -261,17 +261,20 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 
 *Ordered by leverage. Each item names its gap.*
 
-- [ ] **Preview environment fallback** — branches matching no
-      environment currently fail at deploy creation. Add a designated
-      "preview" env template (default: clone prod config) so every
-      branch/PR gets a deployment — required for PR previews to work
-      without per-branch config
-- [ ] **PR lifecycle** — `pull_request.closed` removes the branch alias
-      + preview deployment (today only opened/synchronize/reopened
-      handled); PR comment with the preview URL (commit status exists)
-- [ ] **Bitbucket push webhook** — `POST /api/bitbucket/webhook`
-      (`repo:push`, token-verified). Bitbucket projects currently
-      deploy manually/cron only
+- [x] **Preview environment fallback** — unmatched branches synthesize
+      a `pv{sha6}` env cloned from `config.preview_template` (default
+      prod), env vars scoped via the template slug; opt out with
+      `config.preview_environments=false` (settings toggle added)
+- [x] **PR lifecycle** — `pull_request.closed` drops branch +
+      preview-env aliases and enqueues container teardown; upserted
+      `runway-preview` PR comment posts the branch URL at create and
+      updates to ready/failed on finalize (`issues: write` on the app
+      manifest; opt out `deployment_rules.preview_comment=false`)
+- [x] **Bitbucket push webhook** — `POST /api/bitbucket/webhook`
+      (`repo:push`). The payload's claimed sha is never trusted — the
+      real branch head resolves via the project's connection API before
+      deploying (closes devpush's forged-sha hole); optional
+      `BITBUCKET_WEBHOOK_SECRET` via `?secret=` on the hook URL
 - [ ] **HTTP health checks** — `config.health_check` path polled by
       the monitor against running containers; container-up-but-app-
       dead is invisible to `observed_status` today. Feed into
