@@ -1,23 +1,90 @@
 @import "tailwindcss";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
 
 @theme {
-  --color-background: oklch(0.145 0 0);
+  --color-background: oklch(0.135 0 0);
   --color-foreground: oklch(0.985 0 0);
-  --color-card: oklch(0.205 0 0);
+  --color-card: oklch(0.18 0 0);
   --color-card-foreground: oklch(0.985 0 0);
   --color-primary: oklch(0.922 0 0);
   --color-primary-foreground: oklch(0.205 0 0);
-  --color-muted: oklch(0.269 0 0);
-  --color-muted-foreground: oklch(0.708 0 0);
-  --color-accent: oklch(0.269 0 0);
-  --color-border: oklch(1 0 0 / 10%);
+  --color-muted: oklch(0.24 0 0);
+  --color-muted-foreground: oklch(0.68 0 0);
+  --color-accent: oklch(0.24 0 0);
+  --color-border: oklch(1 0 0 / 9%);
   --color-ring: oklch(0.556 0 0);
   --color-destructive: oklch(0.704 0.191 22.216);
   --radius: 0.625rem;
 }
 
+html {
+  color-scheme: dark;
+}
+
 body {
   background: var(--color-background);
   color: var(--color-foreground);
-  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-family: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.font-mono,
+pre {
+  font-family: "Geist Mono Variable", ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.page-enter {
+  animation: rise 0.3s ease both;
+}
+
+.stagger > * {
+  animation: rise 0.35s ease both;
+}
+.stagger > *:nth-child(2) { animation-delay: 0.04s; }
+.stagger > *:nth-child(3) { animation-delay: 0.08s; }
+.stagger > *:nth-child(4) { animation-delay: 0.12s; }
+.stagger > *:nth-child(5) { animation-delay: 0.16s; }
+.stagger > *:nth-child(6) { animation-delay: 0.2s; }
+.stagger > *:nth-child(7) { animation-delay: 0.24s; }
+.stagger > *:nth-child(n + 8) { animation-delay: 0.28s; }
+
+::selection {
+  background: oklch(0.92 0 0 / 85%);
+  color: oklch(0.15 0 0);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: oklch(1 0 0 / 14%) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: oklch(1 0 0 / 14%);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: oklch(1 0 0 / 22%);
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
 }

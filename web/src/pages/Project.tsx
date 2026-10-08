@@ -10,7 +10,8 @@ import {
   type RemoteNode,
   type Webhook,
 } from "@/lib/api";
-import { Badge, Button, Card, Input, statusVariant } from "@/components/ui";
+import { Badge, Button, Card, Input, Skeleton, StatusDot, statusVariant } from "@/components/ui";
+import { timeAgo } from "@/lib/utils";
 import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
@@ -33,7 +34,7 @@ function Err({ msg }: { msg: string }) {
 }
 
 function Deployments({ id }: { id: string }) {
-  const [deployments, setDeployments] = useState<Deployment[]>([]);
+  const [deployments, setDeployments] = useState<Deployment[] | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -53,27 +54,30 @@ function Deployments({ id }: { id: string }) {
         </Button>
       </div>
       <Err msg={error} />
-      <div className="grid gap-2">
-        {deployments.map((d) => (
+      <div className="stagger grid gap-2">
+        {deployments === null && [0, 1, 2].map((i) => <Skeleton key={i} className="h-[64px]" />)}
+        {deployments?.map((d) => (
           <Link key={d.id} to={`/deployments/${d.id}`}>
-            <Card className="flex items-center justify-between p-4 transition-colors hover:bg-accent">
+            <Card className="flex items-center justify-between p-4 transition-colors hover:border-muted-foreground/25 hover:bg-accent/50">
               <div className="flex items-center gap-4">
-                <Badge variant={statusVariant(d.status, d.conclusion)}>
-                  {d.conclusion ?? d.status}
-                </Badge>
+                <StatusDot status={d.status} conclusion={d.conclusion} />
                 <div>
                   <div className="font-mono text-sm">{d.commit_sha.slice(0, 7)}</div>
                   <div className="text-xs text-muted-foreground">
                     {d.branch} · {d.environment_id}
                   </div>
                 </div>
+                <Badge variant={statusVariant(d.status, d.conclusion)}>
+                  {d.conclusion ?? d.status}
+                </Badge>
               </div>
-              <div className="text-xs text-muted-foreground">
-                {new Date(d.created_at).toLocaleString()}
-              </div>
+              <div className="text-xs text-muted-foreground">{timeAgo(d.created_at)}</div>
             </Card>
           </Link>
         ))}
+        {deployments !== null && deployments.length === 0 && (
+          <p className="text-sm text-muted-foreground">No deployments yet — hit Deploy now.</p>
+        )}
       </div>
     </>
   );
@@ -113,7 +117,7 @@ function Environment({ id }: { id: string }) {
         </Button>
       </form>
       <Err msg={error} />
-      <div className="grid gap-2">
+      <div className="stagger grid gap-2">
         {vars.map((v) => (
           <Card key={`${v.key}:${v.environment}`} className="flex items-center justify-between p-3">
             <div className="font-mono text-sm">
@@ -136,6 +140,9 @@ function Environment({ id }: { id: string }) {
             </div>
           </Card>
         ))}
+        {vars.length === 0 && (
+          <p className="text-sm text-muted-foreground">No environment variables yet.</p>
+        )}
       </div>
     </>
   );
@@ -182,7 +189,7 @@ function Cron({ id }: { id: string }) {
         </Button>
       </form>
       <Err msg={error} />
-      <div className="grid gap-2">
+      <div className="stagger grid gap-2">
         {jobs.map((j) => (
           <Card key={j.id} className="flex items-center justify-between p-3">
             <div>
@@ -214,6 +221,9 @@ function Cron({ id }: { id: string }) {
             </div>
           </Card>
         ))}
+        {jobs.length === 0 && (
+          <p className="text-sm text-muted-foreground">No cron jobs yet.</p>
+        )}
       </div>
     </>
   );
@@ -274,7 +284,7 @@ function Redirects({ id }: { id: string }) {
         </Button>
       </form>
       <Err msg={error} />
-      <div className="grid gap-2">
+      <div className="stagger grid gap-2">
         {rules.map((r) => (
           <Card key={r.id} className="flex items-center justify-between p-3">
             <div className="font-mono text-sm">
@@ -304,6 +314,9 @@ function Redirects({ id }: { id: string }) {
             </div>
           </Card>
         ))}
+        {rules.length === 0 && (
+          <p className="text-sm text-muted-foreground">No redirect rules yet.</p>
+        )}
       </div>
     </>
   );
@@ -346,7 +359,7 @@ function Domains({ id }: { id: string }) {
         </Button>
       </form>
       <Err msg={error} />
-      <div className="grid gap-2">
+      <div className="stagger grid gap-2">
         {domains.map((d) => (
           <Card key={d.id} className="flex items-center justify-between p-3">
             <div className="font-mono text-sm">{d.hostname}</div>
@@ -362,6 +375,9 @@ function Domains({ id }: { id: string }) {
             </div>
           </Card>
         ))}
+        {domains.length === 0 && (
+          <p className="text-sm text-muted-foreground">No domains yet.</p>
+        )}
       </div>
     </>
   );
@@ -414,7 +430,7 @@ function Webhooks({ id }: { id: string }) {
         </Button>
       </form>
       <Err msg={error} />
-      <div className="grid gap-2">
+      <div className="stagger grid gap-2">
         {hooks.map((w) => (
           <Card key={w.id} className="flex items-center justify-between p-3">
             <div>
@@ -432,6 +448,9 @@ function Webhooks({ id }: { id: string }) {
             </Button>
           </Card>
         ))}
+        {hooks.length === 0 && (
+          <p className="text-sm text-muted-foreground">No webhooks yet.</p>
+        )}
       </div>
     </>
   );
@@ -531,7 +550,7 @@ export default function ProjectPage() {
   }, [id]);
 
   return (
-    <div className="mx-auto max-w-5xl p-8">
+    <div className="page-enter mx-auto max-w-5xl p-8">
       <div className="mb-6 flex items-baseline justify-between">
         <div>
           <h1 className="text-xl font-semibold">{project?.name ?? "Project"}</h1>

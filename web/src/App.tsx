@@ -5,6 +5,10 @@ import Projects from "@/pages/Projects";
 import ProjectPage from "@/pages/Project";
 import DeploymentPage from "@/pages/Deployment";
 import SettingsPage from "@/pages/Settings";
+import TeamsPage from "@/pages/Teams";
+import TeamPage from "@/pages/Team";
+import NotificationsPage from "@/pages/Notifications";
+import InvitePage from "@/pages/Invite";
 import { useEffect, useState } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
@@ -32,6 +36,10 @@ export default function App() {
         <Route path="/projects" element={page(<Projects />)} />
         <Route path="/projects/:id" element={page(<ProjectPage />)} />
         <Route path="/deployments/:id" element={page(<DeploymentPage />)} />
+        <Route path="/teams" element={page(<TeamsPage />)} />
+        <Route path="/teams/:id" element={page(<TeamPage me={me} />)} />
+        <Route path="/invites/:id" element={page(<InvitePage />)} />
+        <Route path="/notifications" element={page(<NotificationsPage />)} />
         <Route path="/settings" element={page(<SettingsPage me={me} />)} />
         <Route path="*" element={<Navigate to="/projects" replace />} />
       </Routes>

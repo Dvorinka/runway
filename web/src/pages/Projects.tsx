@@ -5,7 +5,8 @@ import {
   type Project,
   type Repo,
 } from "@/lib/api";
-import { Badge, Button, Card, Input } from "@/components/ui";
+import { Badge, Button, Card, Input, Skeleton, StatusDot } from "@/components/ui";
+import { timeAgo } from "@/lib/utils";
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
@@ -28,6 +29,8 @@ function NewProject({ onDone }: { onDone: () => void }) {
   const [connections, setConnections] = useState<GitConnection[]>([]);
   const [connId, setConnId] = useState<number | null>(null);
   const [installations, setInstallations] = useState<GhInstallation[]>([]);
+  const [ghInstallUrl, setGhInstallUrl] = useState<string | null>(null);
+  const [ghConfigured, setGhConfigured] = useState(true);
   const [installationId, setInstallationId] = useState<number | null>(null);
   const [repos, setRepos] = useState<(Repo | GhRepo)[]>([]);
   const [repo, setRepo] = useState("");
@@ -50,7 +53,11 @@ function NewProject({ onDone }: { onDone: () => void }) {
     if (provider === "github") {
       fetch("/api/v1/github/installations", { credentials: "include" })
         .then((r) => r.json())
-        .then((d) => setInstallations(d.installations ?? []))
+        .then((d) => {
+          setInstallations(d.installations ?? []);
+          setGhInstallUrl(d.install_url ?? null);
+          setGhConfigured(d.configured !== false);
+        })
         .catch(() => {});
     } else {
       api
@@ -171,6 +178,28 @@ function NewProject({ onDone }: { onDone: () => void }) {
           )}
         </div>
 
+        {provider === "github" && !ghConfigured && (
+          <p className="rounded-md border border-border p-3 text-xs text-muted-foreground">
+            No GitHub App registered on this instance — ask an admin to register one under{" "}
+            <Link to="/settings" className="underline underline-offset-2">
+              Settings → GitHub App
+            </Link>
+            .
+          </p>
+        )}
+        {provider === "github" && ghConfigured && ghInstallUrl && (
+          <p className="text-xs text-muted-foreground">
+            Repository missing?{" "}
+            <a
+              className="underline underline-offset-2"
+              href={ghInstallUrl}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Install the app on another GitHub account or repo →
+            </a>
+          </p>
+        )}
         {provider !== "github" && connections.length === 0 && (
           <div className="grid gap-2 rounded-md border border-border p-3">
             <p className="text-xs text-muted-foreground">
@@ -241,7 +270,7 @@ function NewProject({ onDone }: { onDone: () => void }) {
 }
 
 export default function Projects() {
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [projects, setProjects] = useState<Project[] | null>(null);
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
 
@@ -250,7 +279,7 @@ export default function Projects() {
   }, []);
 
   return (
-    <div className="mx-auto max-w-5xl p-8">
+    <div className="page-enter mx-auto max-w-5xl p-8">
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-xl font-semibold">Projects</h1>
         <Button size="sm" onClick={() => setCreating(true)} disabled={creating}>
@@ -259,22 +288,41 @@ export default function Projects() {
       </div>
       {creating && <NewProject onDone={() => setCreating(false)} />}
       {error && <p className="text-sm text-destructive">{error}</p>}
-      {projects.length === 0 && !error && !creating && (
-        <p className="text-sm text-muted-foreground">
-          No projects yet. Connect a GitHub repository to get started.
-        </p>
+      {projects === null && !error && (
+        <div className="grid gap-3">
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} className="h-[68px]" />
+          ))}
+        </div>
       )}
-      <div className="grid gap-3">
-        {projects.map((p) => (
+      {projects !== null && projects.length === 0 && !error && !creating && (
+        <div className="rounded-lg border border-dashed border-border p-12 text-center">
+          <p className="text-sm font-medium">No projects yet</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Connect a repository and ship your first deploy.
+          </p>
+          <Button size="sm" className="mt-4" onClick={() => setCreating(true)}>
+            New project
+          </Button>
+        </div>
+      )}
+      <div className="stagger grid gap-3">
+        {projects?.map((p) => (
           <Link key={p.id} to={`/projects/${p.id}`}>
-            <Card className="flex items-center justify-between p-4 transition-colors hover:bg-accent">
-              <div>
-                <div className="font-medium">{p.name}</div>
-                <div className="text-xs text-muted-foreground">
-                  {p.repo_full_name} · {p.repo_branch}
+            <Card className="flex items-center justify-between p-4 transition-colors hover:border-muted-foreground/25 hover:bg-accent/50">
+              <div className="flex items-center gap-3">
+                <StatusDot status={p.status} />
+                <div>
+                  <div className="font-medium">{p.name}</div>
+                  <div className="font-mono text-xs text-muted-foreground">
+                    {p.repo_full_name} · {p.repo_branch}
+                  </div>
                 </div>
               </div>
-              <Badge variant={p.status === "active" ? "success" : "secondary"}>{p.status}</Badge>
+              <div className="flex items-center gap-4">
+                <span className="text-xs text-muted-foreground">{timeAgo(p.created_at)}</span>
+                <Badge variant={p.status === "active" ? "success" : "secondary"}>{p.status}</Badge>
+              </div>
             </Card>
           </Link>
         ))}

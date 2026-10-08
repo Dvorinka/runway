@@ -103,6 +103,81 @@ export interface RemoteNode {
   max_deployments: number | null;
 }
 
+export interface Team {
+  id: string;
+  name: string;
+  slug: string | null;
+  role: string;
+}
+
+export interface TeamMember {
+  user_id: number;
+  username: string;
+  role: string;
+}
+
+export interface TeamDetail {
+  id: string;
+  name: string;
+  slug: string | null;
+  members: TeamMember[];
+}
+
+export interface TeamInvite {
+  id: string;
+  email: string;
+  role: string;
+  status: string;
+  expires_at: string;
+}
+
+export interface AuditEntry {
+  id: number;
+  action: string;
+  username: string | null;
+  user_id: number | null;
+  project_id: string | null;
+  resource_type: string | null;
+  resource_id: string | null;
+  detail: string | null;
+  created_at: string;
+}
+
+export interface Storage {
+  id: string;
+  name: string;
+  type: string;
+  status: string;
+  engine: string;
+  config: Record<string, unknown>;
+  error: string | null;
+  links: { project_id: string; project_name: string }[];
+  created_at: string;
+}
+
+export interface AppNotification {
+  id: string;
+  type: string;
+  title: string;
+  body: string | null;
+  link: string | null;
+  read: boolean;
+  created_at: string;
+  team_id: string | null;
+  project_id: string | null;
+}
+
+export interface TeamWebhook {
+  id: string;
+  team_id: string;
+  name: string;
+  url: string;
+  has_secret: boolean;
+  events: string[];
+  project_ids: string[] | null;
+  status: string;
+}
+
 export interface CreateProjectInput {
   name: string;
   provider?: string;
@@ -130,9 +205,27 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   me: () => req<Me>("/api/auth/me"),
+  login: (email: string, password: string) =>
+    req<{ ok: boolean }>("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    }),
+  register: (email: string, password: string, username?: string) =>
+    req<{ ok: boolean }>("/api/auth/register", {
+      method: "POST",
+      body: JSON.stringify({ email, password, username }),
+    }),
   logout: () => req<void>("/api/auth/logout", { method: "POST" }),
   oidcInfo: () =>
     req<{ enabled: boolean; display_name: string | null }>("/api/auth/oidc/info"),
+  githubAppStatus: () =>
+    req<{
+      configured: boolean;
+      source: "env" | "db";
+      slug: string | null;
+      install_url: string | null;
+      web_base: string;
+    }>("/api/v1/github/app/status"),
 
   projects: () => req<{ projects: Project[] }>("/api/v1/projects"),
   project: (id: string) => req<Project>(`/api/v1/projects/${id}`),
@@ -252,6 +345,76 @@ export const api = {
   deleteNode: (id: string) => req<void>(`/api/v1/admin/nodes/${id}`, { method: "DELETE" }),
   checkNode: (id: string) =>
     req<RemoteNode>(`/api/v1/admin/nodes/${id}/health`, { method: "POST" }),
+
+  teams: () => req<{ teams: Team[] }>("/api/v1/teams"),
+  createTeam: (name: string) =>
+    req<{ team: Team }>("/api/v1/teams", { method: "POST", body: JSON.stringify({ name }) }),
+  team: (id: string) => req<{ team: TeamDetail }>(`/api/v1/teams/${id}`),
+  renameTeam: (id: string, name: string) =>
+    req<{ ok: boolean }>(`/api/v1/teams/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name }),
+    }),
+  deleteTeam: (id: string) => req<void>(`/api/v1/teams/${id}`, { method: "DELETE" }),
+  updateMember: (teamId: string, userId: number, role: string) =>
+    req<{ ok: boolean }>(`/api/v1/teams/${teamId}/members/${userId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ role }),
+    }),
+  removeMember: (teamId: string, userId: number) =>
+    req<void>(`/api/v1/teams/${teamId}/members/${userId}`, { method: "DELETE" }),
+  invites: (teamId: string) =>
+    req<{ invites: TeamInvite[] }>(`/api/v1/teams/${teamId}/invites`),
+  createInvite: (teamId: string, email: string, role = "member") =>
+    req<{ invite: TeamInvite }>(`/api/v1/teams/${teamId}/invites`, {
+      method: "POST",
+      body: JSON.stringify({ email, role }),
+    }),
+  revokeInvite: (teamId: string, inviteId: string) =>
+    req<{ ok: boolean }>(`/api/v1/teams/${teamId}/invites/${inviteId}`, { method: "DELETE" }),
+  acceptInvite: (inviteId: string) =>
+    req<{ ok: boolean; team_id: string }>(`/api/v1/invites/${inviteId}/accept`, {
+      method: "POST",
+    }),
+  teamAudit: (teamId: string) =>
+    req<{ entries: AuditEntry[] }>(`/api/v1/teams/${teamId}/audit`),
+  teamWebhooks: (teamId: string) =>
+    req<{ webhooks: TeamWebhook[] }>(`/api/v1/teams/${teamId}/webhooks`),
+  createTeamWebhook: (
+    teamId: string,
+    body: { name: string; url: string; secret?: string; events?: string[] },
+  ) =>
+    req<TeamWebhook>(`/api/v1/teams/${teamId}/webhooks`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  deleteTeamWebhook: (teamId: string, webhookId: string) =>
+    req<void>(`/api/v1/teams/${teamId}/webhooks/${webhookId}`, { method: "DELETE" }),
+
+  storage: (teamId: string) =>
+    req<{ storage: Storage[] }>(`/api/v1/teams/${teamId}/storage`),
+  createStorage: (teamId: string, body: { name: string; type: string; engine?: string }) =>
+    req<void>(`/api/v1/teams/${teamId}/storage`, { method: "POST", body: JSON.stringify(body) }),
+  deleteStorage: (teamId: string, storageId: string) =>
+    req<void>(`/api/v1/teams/${teamId}/storage/${storageId}`, { method: "DELETE" }),
+  resetStorage: (teamId: string, storageId: string) =>
+    req<{ ok: boolean }>(`/api/v1/teams/${teamId}/storage/${storageId}/reset`, {
+      method: "POST",
+    }),
+  linkStorage: (teamId: string, storageId: string, projectId: string) =>
+    req<{ ok: boolean }>(`/api/v1/teams/${teamId}/storage/${storageId}/link`, {
+      method: "POST",
+      body: JSON.stringify({ project_id: projectId }),
+    }),
+  unlinkStorage: (teamId: string, storageId: string, projectId: string) =>
+    req<void>(`/api/v1/teams/${teamId}/storage/${storageId}/link/${projectId}`, {
+      method: "DELETE",
+    }),
+
+  notifications: () =>
+    req<{ notifications: AppNotification[]; unread: number }>("/api/v1/notifications"),
+  markAllRead: () =>
+    req<{ ok: boolean }>("/api/v1/notifications/mark-read", { method: "POST" }),
 };
 
 export function deploymentLogsStream(id: string): EventSource {

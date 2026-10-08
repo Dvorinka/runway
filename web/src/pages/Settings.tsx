@@ -103,6 +103,57 @@ function GitProviders() {
   );
 }
 
+function GithubApp() {
+  const [st, setSt] = useState<Awaited<ReturnType<typeof api.githubAppStatus>> | null>(null);
+
+  useEffect(() => {
+    api.githubAppStatus().then(setSt).catch(() => {});
+  }, []);
+
+  return (
+    <Card className="p-5">
+      <h2 className="mb-1 text-sm font-medium">GitHub App</h2>
+      <p className="mb-4 text-xs text-muted-foreground">
+        Powers repository browsing, push-triggered deploys, and preview URLs for GitHub projects.
+      </p>
+      {st === null ? (
+        <p className="text-xs text-muted-foreground">Loading…</p>
+      ) : st.configured ? (
+        <div className="grid gap-2">
+          <div className="flex items-center gap-2">
+            <Badge variant="success">configured</Badge>
+            <span className="text-xs text-muted-foreground">
+              via {st.source === "env" ? "environment" : "instance registration"}
+            </span>
+          </div>
+          {st.slug && <p className="font-mono text-xs">@{st.slug}</p>}
+          {st.install_url && (
+            <a
+              className="w-fit text-xs text-muted-foreground underline-offset-2 hover:underline"
+              href={st.install_url}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Install / manage the app on GitHub →
+            </a>
+          )}
+        </div>
+      ) : (
+        <div className="grid gap-2">
+          <a href="/api/v1/github/app/register" className="w-fit">
+            <Button size="sm">Register with GitHub</Button>
+          </a>
+          <p className="text-xs text-muted-foreground">
+            Creates a private GitHub App on your account with the permissions Runway needs —
+            credentials are stored encrypted on this instance. The GITHUB_APP_* environment
+            variables remain a manual alternative.
+          </p>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function Allowlist() {
   const [rules, setRules] = useState<AllowlistRule[]>([]);
   const [type, setType] = useState("email");
@@ -262,12 +313,13 @@ function Nodes() {
 
 export default function SettingsPage({ me }: { me: Me }) {
   return (
-    <div className="mx-auto max-w-5xl p-8">
+    <div className="page-enter mx-auto max-w-5xl p-8">
       <h1 className="mb-6 text-xl font-semibold">Settings</h1>
       <div className="grid gap-4">
         <GitProviders />
         {me.id === 1 && (
           <>
+            <GithubApp />
             <Allowlist />
             <Nodes />
           </>

@@ -36,6 +36,12 @@ export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElemen
   );
 }
 
+export function Skeleton({ className }: { className?: string }) {
+  return (
+    <div className={cn("animate-pulse rounded-lg border border-border bg-card/60", className)} />
+  );
+}
+
 export const Input = forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(
   ({ className, ...props }, ref) => (
     <input
@@ -82,4 +88,40 @@ export function statusVariant(status: string, conclusion?: string | null) {
   if (status === "deploy" || status === "prepare" || status === "finalize")
     return "warning" as const;
   return "secondary" as const;
+}
+
+const RUNNING = ["pending", "prepare", "deploy", "finalize", "queued"];
+
+export function isRunning(status: string, conclusion?: string | null) {
+  return !conclusion && RUNNING.includes(status);
+}
+
+export function StatusDot({
+  status,
+  conclusion,
+  className,
+}: {
+  status: string;
+  conclusion?: string | null;
+  className?: string;
+}) {
+  const bad = conclusion === "failed" || conclusion === "canceled";
+  const ok = conclusion === "succeeded" || status === "active" || status === "running";
+  const color = bad
+    ? "bg-red-500"
+    : isRunning(status, conclusion)
+      ? "bg-amber-400"
+      : ok
+        ? "bg-emerald-500"
+        : "bg-zinc-500";
+  return (
+    <span className={cn("relative flex h-2 w-2 shrink-0", className)}>
+      {isRunning(status, conclusion) && (
+        <span
+          className={cn("absolute inline-flex h-full w-full animate-ping rounded-full opacity-60", color)}
+        />
+      )}
+      <span className={cn("relative inline-flex h-2 w-2 rounded-full", color)} />
+    </span>
+  );
 }
