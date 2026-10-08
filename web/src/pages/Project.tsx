@@ -970,6 +970,7 @@ function Settings({ id, project }: { id: string; project: Project | null }) {
       <Environments id={id} project={project} />
       <DockerBuild id={id} project={project} />
       <HealthCheck id={id} project={project} />
+      <Retention id={id} project={project} />
       <Firewall id={id} project={project} />
       <Card className="p-4">
         <h3 className="mb-2 text-sm font-medium">Export / import</h3>
@@ -1274,6 +1275,65 @@ function HealthCheck({ id, project }: { id: string; project: Project | null }) {
           value={path}
           onChange={(e) => setPath(e.target.value)}
           className="font-mono"
+        />
+        <Button size="sm" onClick={save}>
+          Save
+        </Button>
+      </div>
+      <Err msg={error} />
+      {msg && <p className="mt-2 text-xs text-muted-foreground">{msg}</p>}
+    </Card>
+  );
+}
+
+function Retention({ id, project }: { id: string; project: Project | null }) {
+  const [count, setCount] = useState("");
+  const [msg, setMsg] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const n = project?.config?.deployment_retention;
+    setCount(typeof n === "number" && n > 0 ? String(n) : "");
+  }, [project?.config]);
+
+  async function save() {
+    setError("");
+    setMsg("");
+    const n = count.trim() ? parseInt(count, 10) : 0;
+    if (!Number.isInteger(n) || n < 0) {
+      setError("enter a positive number or leave empty");
+      return;
+    }
+    try {
+      await api.patchProject(id, {
+        config: { deployment_retention: n > 0 ? n : null },
+      });
+      setMsg(
+        n > 0
+          ? `Saved — keeps the newest ${n} per environment, rollback targets spared.`
+          : "Saved — retention disabled.",
+      );
+      setTimeout(() => setMsg(""), 2500);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "save failed");
+    }
+  }
+
+  return (
+    <Card className="p-4">
+      <h3 className="mb-1 text-sm font-medium">Deployment retention</h3>
+      <p className="mb-3 text-xs text-muted-foreground">
+        Keep the newest <em>N</em> completed deployments per environment — older
+        rows, metrics, logs, and build artifacts are pruned after each deploy.
+        Deployments an alias still points at (including rollback targets) are
+        never pruned. Empty keeps everything.
+      </p>
+      <div className="flex gap-2">
+        <Input
+          placeholder="e.g. 5 — empty keeps all"
+          value={count}
+          onChange={(e) => setCount(e.target.value.replace(/\D/g, ""))}
+          className="w-44"
         />
         <Button size="sm" onClick={save}>
           Save

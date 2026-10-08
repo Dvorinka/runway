@@ -1573,6 +1573,57 @@ pub async fn cleanup_inactive(ctx: &Ctx, project_id: &str) -> anyhow::Result<()>
             }
         }
     }
+
+    // Retention — opt-in `config.deployment_retention` keeps the newest N
+    // completed deployments per environment; older rows no alias
+    // references are pruned with metrics, logs, and artifacts. Rollback
+    // targets (any alias's previous_deployment_id) are always spared.
+    let keep = project
+        .config
+        .get("deployment_retention")
+        .and_then(|v| v.as_i64())
+        .filter(|&n| n > 0)
+        .unwrap_or(i64::MAX);
+    if keep < i64::MAX {
+        let stale: Vec<(String,)> = sqlx::query_as(
+            "SELECT id FROM (
+                 SELECT id,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY environment_id ORDER BY created_at DESC
+                        ) rn
+                 FROM deployment
+                 WHERE project_id = $1 AND status = 'completed'
+                   AND id NOT IN (
+                       SELECT a.deployment_id FROM alias a
+                       JOIN deployment d ON a.deployment_id = d.id
+                       WHERE d.project_id = $1
+                       UNION
+                       SELECT a.previous_deployment_id FROM alias a
+                       JOIN deployment d ON a.previous_deployment_id = d.id
+                       WHERE d.project_id = $1
+                   )
+             ) t WHERE rn > $2",
+        )
+        .bind(project_id)
+        .bind(keep)
+        .fetch_all(&ctx.db)
+        .await?;
+        for (id,) in stale {
+            let Some(dep) = deploy::get(&ctx.db, &id).await? else {
+                continue;
+            };
+            drop_artifacts(ctx, &dep).await;
+            sqlx::query("DELETE FROM deployment_metric WHERE deployment_id = $1")
+                .bind(&dep.id)
+                .execute(&ctx.db)
+                .await?;
+            let _ = tokio::fs::remove_file(ctx.logs.path(&dep.id)).await;
+            sqlx::query("DELETE FROM deployment WHERE id = $1")
+                .bind(&dep.id)
+                .execute(&ctx.db)
+                .await?;
+        }
+    }
     Ok(())
 }
 

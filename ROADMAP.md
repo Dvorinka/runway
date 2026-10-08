@@ -286,9 +286,12 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
       `protection_password` PATCH field → bcrypt `protection.users`;
       prod env alias + prod domains stay public; edge rewrite on
       PATCH; middleware order firewall → protect → cdn
-- [ ] **Deployment retention policy** — keep N per environment; prune
-      old immutable aliases/containers/artifacts (log retention done,
-      deployment pruning is the remaining half)
+- [x] **Deployment retention policy** — opt-in
+      `config.deployment_retention` keeps the newest N completed
+      deployments per environment; older unreferenced rows pruned with
+      metrics, logs, and artifacts after each deploy; alias-referenced
+      deployments (incl. `previous_deployment_id` rollback targets)
+      always spared. Settings card added
 - [ ] **TOTP 2FA** — `otpauth://` enrollment + recovery codes on the
       account surface
 - [ ] **First-party web analytics** — extend the `/_runway-rum` beacon
