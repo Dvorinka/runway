@@ -44,6 +44,12 @@ fn tools() -> Value {
                    "properties": {"deployment_id": {"type": "string"}}})
         ),
         tool(
+            "deployment_stats",
+            "Live container resource snapshot (cpu %, memory, network, pids)",
+            json!({"type": "object", "required": ["deployment_id"],
+                   "properties": {"deployment_id": {"type": "string"}}})
+        ),
+        tool(
             "get_deployment_logs",
             "Tail of a deployment's build/runtime log",
             json!({"type": "object", "required": ["deployment_id"],
@@ -227,6 +233,30 @@ async fn call(state: &AppState, user_id: i64, name: &str, args: &Value) -> ApiRe
                 "url": d.url(p.slug.as_deref().unwrap_or(&p.id), &state.settings),
                 "created_at": d.created_at, "concluded_at": d.concluded_at,
             }))
+        }
+        "deployment_stats" => {
+            let (d, _p) = deployment_for(state, user_id, arg(args, "deployment_id")?).await?;
+            let Some(cid) = d.container_id.clone() else {
+                return Ok(json!({ "running": false }));
+            };
+            let docker = match d.remote_node_id.as_deref() {
+                Some(nid) => match runway_core::docker::node_client(&state.db, nid).await {
+                    Some(c) => c,
+                    None => return Ok(json!({ "running": false })),
+                },
+                None => match &state.docker {
+                    Some(d) => d.clone(),
+                    None => return Ok(json!({ "running": false })),
+                },
+            };
+            match runway_core::docker::stats_snapshot(&docker, &cid).await {
+                Some(s) => Ok(json!({
+                    "running": true, "cpu_pct": s.cpu_pct,
+                    "mem_used": s.mem_used, "mem_limit": s.mem_limit,
+                    "net_rx": s.net_rx, "net_tx": s.net_tx, "pids": s.pids,
+                })),
+                None => Ok(json!({ "running": false })),
+            }
         }
         "get_deployment_logs" => {
             let (d, _p) = deployment_for(state, user_id, arg(args, "deployment_id")?).await?;

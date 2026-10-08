@@ -76,6 +76,11 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Live container resource stats for a deployment.
+    Stats {
+        /// Deployment ID (defaults to latest of the linked project).
+        deployment: Option<String>,
+    },
     /// List recent deployments for the linked project.
     Deployments {
         /// Max rows to print.
@@ -172,6 +177,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Logs { deployment, follow } => commands::logs(deployment, follow).await?,
         Command::Env { args, environment } => commands::env(args, environment).await?,
         Command::Domains { args } => commands::domains(args).await?,
+        Command::Stats { deployment } => commands::stats(deployment).await?,
         Command::Deployments { limit } => commands::deployments(limit).await?,
         Command::Rollback { environment } => commands::rollback(environment).await?,
         Command::Open { print } => commands::open(print).await?,

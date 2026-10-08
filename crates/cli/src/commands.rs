@@ -158,6 +158,43 @@ pub async fn deployments(limit: usize) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `runway stats [deployment]` — live container resource snapshot.
+pub async fn stats(deployment: Option<String>) -> anyhow::Result<()> {
+    let client = Client::from_config()?;
+    let dep_id = match deployment {
+        Some(d) => d,
+        None => latest_deployment(&client).await?,
+    };
+    let s = client
+        .get(&format!("/api/v1/deployments/{dep_id}/stats"))
+        .await?;
+    if !s["running"].as_bool().unwrap_or(false) {
+        println!("{} — container not running", &dep_id[..dep_id.len().min(7)]);
+        return Ok(());
+    }
+    let fmt_b = |v: &serde_json::Value| {
+        let n = v.as_u64().unwrap_or(0) as f64;
+        if n >= (1u64 << 30) as f64 {
+            format!("{:.1} GB", n / (1u64 << 30) as f64)
+        } else if n >= (1u64 << 20) as f64 {
+            format!("{:.0} MB", n / (1u64 << 20) as f64)
+        } else {
+            format!("{:.0} KB", n / (1u64 << 10) as f64)
+        }
+    };
+    println!(
+        "{}  cpu {:>5.1}%  mem {} / {}  net ↓{} ↑{}  pids {}",
+        &dep_id[..dep_id.len().min(7)],
+        s["cpu_pct"].as_f64().unwrap_or(0.0),
+        fmt_b(&s["mem_used"]),
+        fmt_b(&s["mem_limit"]),
+        fmt_b(&s["net_rx"]),
+        fmt_b(&s["net_tx"]),
+        s["pids"].as_u64().unwrap_or(0),
+    );
+    Ok(())
+}
+
 /// `runway rollback [environment]`.
 pub async fn rollback(environment: String) -> anyhow::Result<()> {
     let client = Client::from_config()?;
