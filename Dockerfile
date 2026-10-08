@@ -2,6 +2,14 @@
 # Build:  docker build -t runway .
 # Run:    see compose/development.yml for a full stack.
 
+FROM node:22-bookworm-slim AS web
+WORKDIR /src/web
+RUN corepack enable
+COPY web/package.json web/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+COPY web/ ./
+RUN pnpm build
+
 FROM rust:1-bookworm AS build
 WORKDIR /src
 
@@ -32,6 +40,8 @@ RUN apt-get update \
 USER runway
 WORKDIR /home/runway
 COPY --from=build /src/target/release/runway /usr/local/bin/runway
+COPY --from=web /src/web/dist /home/runway/web/dist
+ENV WEB_DIR=/home/runway/web/dist
 
 EXPOSE 8000
 VOLUME ["/home/runway/data"]

@@ -1,0 +1,20 @@
+{
+  "name": "@runway-deploy/cli",
+  "version": "0.1.0",
+  "description": "Runway CLI — self-hosted deployment platform (binary wrapper)",
+  "license": "MIT",
+  "bin": {
+    "runway": "./runway.js"
+  },
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "files": [
+    "install.js",
+    "runway.js"
+  ],
+  "repository": "https://github.com/Dvorinka/runway",
+  "engines": {
+    "node": ">=18"
+  }
+}

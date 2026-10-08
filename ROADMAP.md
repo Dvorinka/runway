@@ -316,8 +316,12 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
       the same path; Settings node list gains an mTLS badge + provision
       flow with install instructions
 - [ ] **Bitbucket deploys tested against a real workspace**
-- [ ] **Release packaging** — `runway` npm wrapper/brew formula,
-      published container images, versioned releases
+- [x] **Release packaging** — `v*` tags trigger `release.yml`: linux/
+      macOS CLI binaries → GitHub release assets, multi-arch image →
+      `ghcr.io/dvorinka/runway`; `npm/runway` wrapper downloads the
+      matching tarball on postinstall; `homebrew/runway.rb` formula
+      template; production Dockerfile now builds `web/dist` in-image
+      (previously the SPA was missing from the published container)
 - [ ] **Docs site** — preset matrix, config reference (`runway.json`,
       firewall, health checks), self-host install, agent/MCP guide
 
