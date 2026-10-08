@@ -92,16 +92,18 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
       streamed to `data/uploads`, sha256 commit id, `source_archive`
       pipeline branch — skips git clone; tarball retained for redeploy)
 - [x] `runway` CLI: `login`, `link`, `deploy --follow`,
-      `logs --follow`, `env list|set|unset`,
-      `domains list|add|remove|assign-cf`, `open` — config in
-      `~/.config/runway`, link in `.runway/project.json`
-      (releases/npm/brew publishing deferred)
+      `logs [--follow] [--project]`, `deployments`, `rollback`,
+      `stats`, `env list|set|unset`, `domains list|add|remove|assign-cf`,
+      `open` — config in `~/.config/runway`, link in
+      `.runway/project.json` (releases/npm/brew publishing deferred)
 - [x] Real MCP server: JSON-RPC 2.0 `initialize`/`tools/list`/`tools/call`
-      on `POST /api/mcp`, `ak_` auth — 7 tools (project/deployment reads,
-      logs, domains, redeploy)
+      on `POST /api/mcp`, `ak_` auth — 12 tools: reads (projects,
+      deployments, logs, domains) + writes (`deploy_project`,
+      `cancel_deployment`, `rollback_environment`, `list_env`,
+      `set_env`, `deployment_stats`)
 - [x] Outbound webhooks: `project_webhook` + `team_webhook` tables,
-      `deployment.{started,succeeded,failed,canceled,skipped}` events,
-      `X-Runway-Signature` HMAC + delivery ids (verified live)
+      `deployment.{started,succeeded,failed,canceled,skipped,crashed}`
+      events, `X-Runway-Signature` HMAC + delivery ids (verified live)
 
 ## Phase 5 — Breadth (port from devpush, in order)
 
@@ -192,8 +194,108 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
       webhooks, audit log, rename/delete), storage UI (create/reset/
       delete, project link/unlink — `links` added to storage list
       response), notifications feed + unread badge, invite-accept page
-- [ ] Remote-node mTLS (columns exist; needs cert provisioning flow)
-- [ ] Bitbucket deploys tested against a real workspace
+
+## Phase 7 — Production hardening
+
+*Beyond devpush parity — the operational layer.*
+
+- [x] Dockerfile builds: `config.dockerfile_path` (auto-detected on
+      project create) → fetch container stages source to a host context
+      dir, `docker build` with the real repo as context (devpush built
+      with an empty context — `COPY` could never work), built image
+      serves directly. Settings card + tarball-deploy support verified
+      end-to-end
+- [x] CDN asset caching: hashed-asset paths get `immutable` + long
+      `max-age`, HTML `must-revalidate` — Traefik headers middleware on
+      static-output projects
+- [x] Edge firewall: `config.firewall` → Traefik `ipAllowList` +
+      `rateLimit` middlewares, applied on `PATCH` immediately
+      (no redeploy). Settings card
+- [x] Runtime observability: monitor observes container state →
+      `observed_status`/`observed_exit_code`/`observed_missing_count`,
+      `computed_status` (`crashed`/`missing`/`stopped`) surfaced in API
+      + UI badges, manual `POST /deployments/{id}/reconcile`,
+      crash → team notification + `crashed` webhook event
+      (deduped on transition), Overview "Needs attention" section
+- [x] Container metrics: `deployment_metric` table, 30s sampling in the
+      monitor sweep, p-series endpoint + sparkline, one-shot
+      `GET /deployments/{id}/stats` (live CPU/mem/net/disk),
+      `runway stats` + MCP `deployment_stats`
+- [x] Logs: per-deployment file logs + SSE, project-level merged tail
+      (`GET /projects/{id}/logs`, Logs tab, `runway logs --project`),
+      30-day file retention prune
+- [x] Cascading deletes: `delete_project`/`delete_team`/`delete_user`
+      queue jobs — containers, aliases, domains, storage links, Traefik
+      config, memberships; name-confirmation on project delete
+- [x] Account surface: `PATCH /api/auth/me`, `POST /api/auth/password`
+      (bumps `tokens_invalid_before` → all sessions revoked except
+      current), `DELETE /api/auth/me` with cleanup job
+- [x] RBAC gate: project mutations require team `creator`+
+      (devpush parity), deploys `member`+, storage `admin`+ — verified
+      with a second user
+- [x] Environments management: full-array `environments` PATCH +
+      Settings UI card
+- [x] Avatars: user/team/project upload + public serve
+      (`has_avatar` flags, normalized files under `data_dir`,
+      dashboard pickers + display everywhere)
+- [x] Speed insights (RUM): `rum_event` table, same-origin
+      `/_runway-rum` beacon routed through Traefik to the API
+      (ad-blocker resistant, works without public dashboard), ~1KB
+      `PerformanceObserver` script injected at deploy, p75 cards
+      (LCP/INP/CLS/FCP/TTFB) + top paths — verified end-to-end
+- [x] Analytics injection: `config.analytics` provider presets
+      (Umami/Rybbit/Plausible/custom) + Google Search Console meta —
+      scripts before `</body>`, meta in `<head>` — verified in served
+      HTML
+- [x] 7 new frontend presets: `static` (bare HTML), Angular,
+      SolidStart, Qwik, Eleventy, Gatsby, Docusaurus — 25 total
+- [x] Cloudflare UI: Team page connect card (token → account + tunnel
+      status), Domains tab Verify + Assign-via-Cloudflare buttons
+- [x] Dashboard rebuild: Overview at `/` (stats, project cards, recent
+      deployments, needs-attention), Deployments index across
+      projects, Vercel-grade project cards (search, grid/list, preset
+      tags, latest deploy), drag-and-drop instant deploy (in-browser
+      tar.gz, drop → upload → live logs)
+
+## Phase 8 — Vercel-class polish
+
+*Ordered by leverage. Each item names its gap.*
+
+- [ ] **Preview environment fallback** — branches matching no
+      environment currently fail at deploy creation. Add a designated
+      "preview" env template (default: clone prod config) so every
+      branch/PR gets a deployment — required for PR previews to work
+      without per-branch config
+- [ ] **PR lifecycle** — `pull_request.closed` removes the branch alias
+      + preview deployment (today only opened/synchronize/reopened
+      handled); PR comment with the preview URL (commit status exists)
+- [ ] **Bitbucket push webhook** — `POST /api/bitbucket/webhook`
+      (`repo:push`, token-verified). Bitbucket projects currently
+      deploy manually/cron only
+- [ ] **HTTP health checks** — `config.health_check` path polled by
+      the monitor against running containers; container-up-but-app-
+      dead is invisible to `observed_status` today. Feed into
+      computed_status + crash pipeline
+- [ ] **Deployment protection** — `basicAuth` middleware option for
+      preview/non-prod envs (Vercel Deployment Protection equivalent;
+      IP allowlist exists, this is the password half)
+- [ ] **Deployment retention policy** — keep N per environment; prune
+      old immutable aliases/containers/artifacts (log retention done,
+      deployment pruning is the remaining half)
+- [ ] **TOTP 2FA** — `otpauth://` enrollment + recovery codes on the
+      account surface
+- [ ] **First-party web analytics** — extend the `/_runway-rum` beacon
+      with `pageview`/`custom` events → privacy-preserving built-in
+      analytics (Umami-free tier of Umami's value, zero deps)
+- [ ] **Public status pages** — per-project uptime view from
+      `deployment.observed_*` + metric samples; opt-in public route
+- [ ] **Remote-node mTLS** — columns exist; needs cert provisioning
+      flow
+- [ ] **Bitbucket deploys tested against a real workspace**
+- [ ] **Release packaging** — `runway` npm wrapper/brew formula,
+      published container images, versioned releases
+- [ ] **Docs site** — preset matrix, config reference (`runway.json`,
+      firewall, health checks), self-host install, agent/MCP guide
 
 ## Non-goals
 
