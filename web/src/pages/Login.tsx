@@ -1,6 +1,6 @@
 import { api } from "@/lib/api";
 import { Button, Input } from "@/components/ui";
-import { Eye, EyeOff, GitBranch, KeyRound, Rocket, Server } from "lucide-react";
+import { Eye, EyeOff, GitBranch, KeyRound, Mail, Rocket, Server } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 const POINTS = [
@@ -18,12 +18,18 @@ export default function Login() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [oidc, setOidc] = useState<{ enabled: boolean; display_name: string | null } | null>(null);
+  const [magic, setMagic] = useState(false);
+  const [sent, setSent] = useState(false);
   const [pending, setPending] = useState("");
   const [code, setCode] = useState("");
   const emailRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     api.oidcInfo().then(setOidc).catch(() => {});
+    api.providers().then((p) => setMagic(p.magic_link)).catch(() => {});
+    if (new URLSearchParams(location.search).get("error") === "invalid_link") {
+      setError("That sign-in link is invalid or has expired.");
+    }
     emailRef.current?.focus();
   }, []);
 
@@ -212,22 +218,48 @@ export default function Login() {
             </>
             )}
             {error && <p className="text-xs text-destructive">{error}</p>}
+            {sent && (
+              <p className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+                If that address has an account, a sign-in link is on its way.
+              </p>
+            )}
             <Button type="submit" className="w-full" disabled={busy}>
               {busy ? "…" : pending ? "Verify" : mode === "login" ? "Sign in" : "Create account"}
             </Button>
           </form>
 
+          {(oidc?.enabled || (magic && mode === "login")) && (
+            <div className="my-6 flex items-center gap-3 text-xs text-muted-foreground">
+              <div className="h-px flex-1 bg-border" /> or <div className="h-px flex-1 bg-border" />
+            </div>
+          )}
           {oidc?.enabled && (
-            <>
-              <div className="my-6 flex items-center gap-3 text-xs text-muted-foreground">
-                <div className="h-px flex-1 bg-border" /> or <div className="h-px flex-1 bg-border" />
-              </div>
-              <a href="/api/auth/oidc" className="block">
-                <Button variant="outline" className="w-full">
-                  <KeyRound className="h-4 w-4" /> Continue with {oidc.display_name || "SSO"}
-                </Button>
-              </a>
-            </>
+            <a href="/api/auth/oidc" className="block">
+              <Button variant="outline" className="w-full">
+                <KeyRound className="h-4 w-4" /> Continue with {oidc.display_name || "SSO"}
+              </Button>
+            </a>
+          )}
+          {magic && mode === "login" && !pending && (
+            <Button
+              variant="outline"
+              className={`w-full ${oidc?.enabled ? "mt-3" : ""}`}
+              disabled={busy || !email.includes("@")}
+              onClick={async () => {
+                setError("");
+                setBusy(true);
+                try {
+                  await api.magicLink(email);
+                  setSent(true);
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : "failed");
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              <Mail className="h-4 w-4" /> Email me a sign-in link
+            </Button>
           )}
         </div>
       </div>

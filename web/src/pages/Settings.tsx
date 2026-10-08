@@ -433,13 +433,32 @@ function Account({ me }: { me: Me }) {
             onChange={(e) => setUsername(e.target.value)}
             required
           />
-          <Input
-            type="email"
-            placeholder="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
+          <div className="relative">
+            <Input
+              type="email"
+              placeholder="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              className="pr-16"
+            />
+            {me.email_verified === false && me.email === email && (
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    await api.emailResend();
+                    setProfileMsg("verification email sent");
+                  } catch (err) {
+                    setProfileErr(err instanceof Error ? err.message : "failed");
+                  }
+                }}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+              >
+                verify
+              </button>
+            )}
+          </div>
           <div className="flex items-center gap-3 sm:col-span-3">
             <Button type="submit" size="sm">
               Save

@@ -45,6 +45,7 @@ export interface Me {
   name: string | null;
   has_avatar: boolean;
   totp_enabled?: boolean;
+  email_verified?: boolean;
 }
 
 export interface EnvVar {
@@ -259,6 +260,16 @@ export const api = {
       body: JSON.stringify({ email, password, username }),
     }),
   logout: () => req<void>("/api/auth/logout", { method: "POST" }),
+  providers: () => req<{ magic_link: boolean }>("/api/auth/providers"),
+  magicLink: (email: string) =>
+    req<{ ok: boolean }>("/api/auth/email/login", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    }),
+  emailResend: () =>
+    req<{ ok: boolean; verified?: boolean }>("/api/auth/email/resend", {
+      method: "POST",
+    }),
   oidcInfo: () =>
     req<{ enabled: boolean; display_name: string | null }>("/api/auth/oidc/info"),
   githubAppStatus: () =>

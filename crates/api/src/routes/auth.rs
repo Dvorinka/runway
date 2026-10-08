@@ -212,6 +212,7 @@ pub async fn me(user: AuthUser) -> ApiResult<Response> {
         "name": user.user.name,
         "has_avatar": user.user.has_avatar,
         "totp_enabled": user.user.totp_enabled,
+        "email_verified": user.user.email_verified,
         "default_team_id": user.user.default_team_id,
     }))
     .into_response())
@@ -587,4 +588,173 @@ pub async fn totp_disable(
     .execute(&state.db)
     .await?;
     Ok(axum::Json(json!({ "ok": true })).into_response())
+}
+
+// ---- Email verification + magic-link login -----------------------------
+
+/// Insert a single-use `et_` token; returns the raw value for the mail link.
+async fn mint_email_token(
+    state: &AppState,
+    user_id: Option<i64>,
+    email: &str,
+    kind: &str,
+    ttl_secs: f64,
+) -> ApiResult<String> {
+    let raw = format!("et_{}", token_hex(24));
+    let hash = runway_core::crypto::sha256_hex(&raw);
+    sqlx::query(
+        "INSERT INTO email_token (id, user_id, email, token, kind, expires_at)
+         VALUES ($1, $2, $3, $4, $5, now() + make_interval(secs => $6))",
+    )
+    .bind(token_hex(16))
+    .bind(user_id)
+    .bind(email)
+    .bind(&hash)
+    .bind(kind)
+    .bind(ttl_secs)
+    .execute(&state.db)
+    .await?;
+    Ok(raw)
+}
+
+fn verify_url(state: &AppState, raw: &str) -> String {
+    format!(
+        "{}://{}/api/auth/email/verify?token={raw}",
+        state.settings.url_scheme, state.settings.app_hostname
+    )
+}
+
+async fn send_token_mail(state: &AppState, email: &str, kind: &str, raw: &str) -> ApiResult<()> {
+    let (subject, body) = if kind == "verify" {
+        (
+            "Verify your Runway email",
+            format!(
+                "Confirm this address for your Runway account:\n\n{}\n\n\
+                 If you didn't request this, ignore the message.",
+                verify_url(state, raw)
+            ),
+        )
+    } else {
+        (
+            "Your Runway sign-in link",
+            format!(
+                "Sign in to Runway:\n\n{}\n\nThe link expires in 15 minutes and \
+                 works once. If you didn't request it, ignore this message.",
+                verify_url(state, raw)
+            ),
+        )
+    };
+    runway_core::mail::send(&state.settings, email, subject, &body)
+        .await
+        .map_err(ApiError::internal)
+}
+
+/// `GET /api/auth/providers` — public: which sign-in methods are on.
+pub async fn providers(State(state): State<AppState>) -> Response {
+    axum::Json(json!({
+        "magic_link": runway_core::mail::smtp_configured(&state.settings),
+    }))
+    .into_response()
+}
+
+/// `POST /api/auth/email/resend` — send a verification link for the
+/// signed-in user's address. No-op (204-ish ok) when already verified.
+pub async fn email_resend(user: AuthUser, State(state): State<AppState>) -> ApiResult<Response> {
+    if !runway_core::mail::smtp_configured(&state.settings) {
+        return Err(ApiError::bad_request("outgoing mail is not configured"));
+    }
+    if user.user.email_verified {
+        return Ok(axum::Json(json!({ "ok": true, "verified": true })).into_response());
+    }
+    let raw = mint_email_token(
+        &state,
+        Some(user.user.id),
+        &user.user.email,
+        "verify",
+        86400.0,
+    )
+    .await?;
+    send_token_mail(&state, &user.user.email, "verify", &raw).await?;
+    Ok(axum::Json(json!({ "ok": true })).into_response())
+}
+
+#[derive(Deserialize)]
+pub struct MagicBody {
+    email: String,
+}
+
+/// `POST /api/auth/email/login` — magic-link sign-in. Always returns ok so
+/// the response can't enumerate accounts; the mail is only sent when the
+/// address maps to an active user.
+pub async fn email_login(
+    State(state): State<AppState>,
+    axum::Json(body): axum::Json<MagicBody>,
+) -> ApiResult<Response> {
+    let email = body.email.trim().to_lowercase();
+    if runway_core::mail::smtp_configured(&state.settings) && email.contains('@') {
+        let user: Option<User> =
+            sqlx::query_as("SELECT * FROM \"user\" WHERE email = $1 AND status = 'active'")
+                .bind(&email)
+                .fetch_optional(&state.db)
+                .await?;
+        if let Some(user) = user {
+            let raw = mint_email_token(&state, Some(user.id), &email, "login", 900.0).await?;
+            if let Err(e) = send_token_mail(&state, &email, "login", &raw).await {
+                tracing::warn!(error = %e.1, "magic-link mail failed");
+            }
+        }
+    }
+    Ok(axum::Json(json!({ "ok": true })).into_response())
+}
+
+#[derive(Deserialize)]
+pub struct EmailVerifyQuery {
+    token: String,
+}
+
+/// `GET /api/auth/email/verify?token=…` — single-use consume.
+/// `verify` marks the user's email confirmed; `login` mints a session.
+/// Failures redirect to /login so a mistyped link lands somewhere useful.
+pub async fn email_verify(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    axum::extract::Query(q): axum::extract::Query<EmailVerifyQuery>,
+) -> ApiResult<Response> {
+    let bad = axum::response::Redirect::to("/login?error=invalid_link").into_response();
+    let hash = runway_core::crypto::sha256_hex(&q.token);
+    // Atomic single-use consume — a replay finds used_at already set.
+    let row: Option<(Option<i64>, String, String)> = sqlx::query_as(
+        "UPDATE email_token SET used_at = now()
+          WHERE token = $1 AND used_at IS NULL AND expires_at > now()
+          RETURNING user_id, email, kind",
+    )
+    .bind(&hash)
+    .fetch_optional(&state.db)
+    .await?;
+    let Some((user_id, email, kind)) = row else {
+        return Ok(bad);
+    };
+    let Some(user_id) = user_id else {
+        return Ok(bad);
+    };
+    match kind.as_str() {
+        "verify" => {
+            sqlx::query(
+                "UPDATE \"user\" SET email_verified = true, updated_at = now()
+                  WHERE id = $1 AND email = $2",
+            )
+            .bind(user_id)
+            .bind(&email)
+            .execute(&state.db)
+            .await?;
+            Ok(axum::response::Redirect::to("/settings?verified=1").into_response())
+        }
+        "login" => {
+            let user = crate::auth::user_by_id(&state, user_id).await?;
+            let user = ensure_personal_team(&state, user).await?;
+            let jar = jar.add(session_cookie(&state, user.id)?);
+            Ok((jar, axum::response::Redirect::to("/")).into_response())
+        }
+        _ => Ok(bad),
+    }
 }

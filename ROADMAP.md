@@ -338,6 +338,16 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
       orphaned by a restart; every job task is supervised by a watcher
       so panics land as retried/failed instead of wedging `running`
       forever
+- [x] **Email verification + magic-link login** — single-use `et_`
+      tokens in `email_token` (sha256-stored, TTL'd, consumed
+      atomically); `POST /api/auth/email/resend` mails a verify link
+      (authed), `POST /api/auth/email/login` mails a sign-in link
+      (public, enumeration-safe). `GET /api/auth/email/verify` consumes
+      either kind: `verify` sets `email_verified` → /settings, `login`
+      mints a session → /. Login page gains a magic-link button when
+      `GET /api/auth/providers` reports SMTP configured; Settings shows
+      an inline "verify" control on an unverified email (migration
+      0020). Verified end-to-end through a captured SMTP session
 
 ## Non-goals
 

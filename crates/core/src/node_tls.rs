@@ -177,6 +177,7 @@ mod tests {
         // any response proves the mTLS handshake incl. client cert verify.
         let r = docker.ping().await;
         let _ = srv.kill();
+        let _ = srv.wait();
         assert!(r.is_ok(), "mTLS handshake or request failed: {r:?}");
     }
 }

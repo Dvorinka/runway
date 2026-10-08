@@ -23,6 +23,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/auth/login", post(routes::auth::login))
         .route("/api/auth/register", post(routes::auth::register))
         .route("/api/auth/logout", post(routes::auth::logout))
+        .route("/api/auth/providers", get(routes::auth::providers))
+        .route("/api/auth/email/login", post(routes::auth::email_login))
+        .route("/api/auth/email/resend", post(routes::auth::email_resend))
+        .route("/api/auth/email/verify", get(routes::auth::email_verify))
         .route(
             "/api/auth/me",
             get(routes::auth::me)
