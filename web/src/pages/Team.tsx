@@ -420,6 +420,90 @@ function Webhooks({ teamId, admin }: { teamId: string; admin: boolean }) {
   );
 }
 
+function Cloudflare({ teamId, admin }: { teamId: string; admin: boolean }) {
+  const [status, setStatus] = useState<Awaited<ReturnType<typeof api.cfStatus>> | null>(null);
+  const [token, setToken] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const load = useCallback(
+    () => api.cfStatus(teamId).then(setStatus).catch((e) => setError(e.message)),
+    [teamId],
+  );
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function connect(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    setBusy(true);
+    try {
+      await api.cfConnect(teamId, token.trim());
+      setToken("");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "connect failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card className="p-5">
+      <h2 className="mb-1 text-sm font-medium">Cloudflare</h2>
+      <p className="mb-4 text-xs text-muted-foreground">
+        One-token setup: DNS records are created automatically when you assign a domain. When
+        the instance sits behind CGNAT or a private IP, a cloudflared tunnel is created and
+        hostnames route through it — no inbound ports needed.
+      </p>
+      {status?.connected ? (
+        <div className="flex items-center justify-between">
+          <div className="text-sm">
+            <span className="text-muted-foreground">Account:</span> {status.account_name}
+            {status.tunnel_name && (
+              <span className="ml-3 text-xs text-muted-foreground">
+                tunnel {status.tunnel_name} · {status.container_status ?? "unknown"}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <Badge variant="success">connected</Badge>
+            {admin && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => api.cfDisconnect(teamId).then(load).catch((e) => setError(e.message))}
+              >
+                Disconnect
+              </Button>
+            )}
+          </div>
+        </div>
+      ) : (
+        admin && (
+          <form onSubmit={connect} className="flex gap-2">
+            <Input
+              type="password"
+              placeholder="API token (Zone.DNS edit on your zones)"
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              required
+            />
+            <Button type="submit" size="sm" disabled={busy}>
+              {busy ? "Connecting…" : "Connect"}
+            </Button>
+          </form>
+        )
+      )}
+      {!status?.connected && !admin && (
+        <p className="text-xs text-muted-foreground">Not connected.</p>
+      )}
+      <Err msg={error} />
+    </Card>
+  );
+}
+
 function Audit({ teamId }: { teamId: string }) {
   const [entries, setEntries] = useState<AuditEntry[]>([]);
   const [error, setError] = useState("");
@@ -524,6 +608,7 @@ export default function TeamPage({ me }: { me: Me }) {
         <Members team={team} myRole={myRole} me={me} reload={load} />
         <Invites teamId={team.id} admin={admin} />
         <StorageSection teamId={team.id} admin={admin} />
+        <Cloudflare teamId={team.id} admin={admin} />
         <Webhooks teamId={team.id} admin={admin} />
         {admin && <Audit teamId={team.id} />}
       </div>

@@ -248,6 +248,15 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
+  speedInsights: (id: string, days = 7) =>
+    req<{
+      days: number;
+      views: number;
+      p75: { lcp?: number; fcp?: number; inp?: number; cls?: number; ttfb?: number };
+      paths: { path: string; views: number; lcp?: number }[];
+      series: { day: string; views: number; lcp?: number }[];
+    }>(`/api/v1/projects/${id}/speed?days=${days}`),
+
   getEnv: (id: string) => req<{ env: EnvVar[] }>(`/api/v1/projects/${id}/env`),
   patchEnv: (id: string, vars: { key: string; value?: string; delete?: boolean }[]) =>
     req<{ ok: boolean }>(`/api/v1/projects/${id}/env`, {
@@ -339,6 +348,32 @@ export const api = {
     }),
   deleteDomain: (projectId: string, domainId: string) =>
     req<void>(`/api/v1/projects/${projectId}/domains/${domainId}`, { method: "DELETE" }),
+  verifyDomain: (projectId: string, domainId: string) =>
+    req<{ ok: boolean; status?: string }>(
+      `/api/v1/projects/${projectId}/domains/${domainId}/verify`,
+      { method: "POST", body: "{}" },
+    ),
+  assignCloudflareDomain: (projectId: string, domainId: string) =>
+    req<{ ok: boolean }>(
+      `/api/v1/projects/${projectId}/domains/${domainId}/assign-cloudflare`,
+      { method: "POST", body: "{}" },
+    ),
+
+  cfStatus: (teamId: string) =>
+    req<{
+      connected: boolean;
+      account_name?: string;
+      auth_method?: string;
+      tunnel_name?: string;
+      container_status?: string;
+    }>(`/api/v1/teams/${teamId}/cloudflare`),
+  cfConnect: (teamId: string, apiToken: string) =>
+    req<void>(`/api/v1/teams/${teamId}/cloudflare/connect`, {
+      method: "POST",
+      body: JSON.stringify({ api_token: apiToken }),
+    }),
+  cfDisconnect: (teamId: string) =>
+    req<void>(`/api/v1/teams/${teamId}/cloudflare`, { method: "DELETE" }),
 
   gitConnect: (provider: string, body: { base_url?: string; workspace?: string; token: string }) =>
     req<GitConnection>(`/api/v1/git/${provider}/connect`, {

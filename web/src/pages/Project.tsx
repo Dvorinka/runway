@@ -20,6 +20,7 @@ const TABS = [
   "deployments",
   "environment",
   "analytics",
+  "speed",
   "cron",
   "redirects",
   "domains",
@@ -51,6 +52,7 @@ function Analytics({ id }: { id: string }) {
   const [src, setSrc] = useState("");
   const [domain, setDomain] = useState("");
   const [custom, setCustom] = useState("");
+  const [gsc, setGsc] = useState("");
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
   const [loaded, setLoaded] = useState(false);
@@ -65,12 +67,16 @@ function Analytics({ id }: { id: string }) {
         setSrc(a.src ?? "");
         setDomain(a.domain ?? "");
         setCustom(a.custom ?? "");
+        setGsc(a.gsc ?? "");
       })
       .catch(() => {})
       .finally(() => setLoaded(true));
   }, [id]);
 
   const snippet = buildSnippet(provider, { siteId, src, domain, custom });
+  const meta = gsc.trim()
+    ? `<meta name="google-site-verification" content="${gsc.trim()}">`
+    : "";
   const needsFields =
     ((provider === "umami" || provider === "rybbit") && !siteId) ||
     (provider === "plausible" && !domain) ||
@@ -82,8 +88,9 @@ function Analytics({ id }: { id: string }) {
     try {
       await api.patchProject(id, {
         config: {
-          analytics: { provider, site_id: siteId, src, domain, custom },
+          analytics: { provider, site_id: siteId, src, domain, custom, gsc },
           analytics_snippet: provider === "none" ? null : snippet,
+          analytics_meta: meta || null,
         },
       });
       setSaved(true);
@@ -148,9 +155,14 @@ function Analytics({ id }: { id: string }) {
             className="w-full rounded-md border border-border bg-transparent px-3 py-2 font-mono text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
           />
         )}
-        {provider !== "none" && !needsFields && (
+        <Input
+          placeholder="Google Search Console verification token (optional)"
+          value={gsc}
+          onChange={(e) => setGsc(e.target.value)}
+        />
+        {((provider !== "none" && !needsFields) || meta) && (
           <pre className="overflow-x-auto rounded-md border border-border bg-black/40 p-3 font-mono text-xs text-muted-foreground">
-            {snippet}
+            {[meta, snippet].filter(Boolean).join("\n")}
           </pre>
         )}
         <Err msg={error} />
@@ -162,6 +174,129 @@ function Analytics({ id }: { id: string }) {
         </div>
       </div>
     </Card>
+  );
+}
+
+// p75 thresholds → green / amber / red (Core Web Vitals ratings).
+const VITALS: {
+  key: "lcp" | "fcp" | "inp" | "cls" | "ttfb";
+  label: string;
+  good: number;
+  poor: number;
+  fmt: (v: number) => string;
+}[] = [
+  { key: "lcp", label: "LCP", good: 2500, poor: 4000, fmt: (v) => (v / 1000).toFixed(2) + " s" },
+  { key: "inp", label: "INP", good: 200, poor: 500, fmt: (v) => Math.round(v) + " ms" },
+  { key: "cls", label: "CLS", good: 0.1, poor: 0.25, fmt: (v) => v.toFixed(2) },
+  { key: "fcp", label: "FCP", good: 1800, poor: 3000, fmt: (v) => (v / 1000).toFixed(2) + " s" },
+  { key: "ttfb", label: "TTFB", good: 800, poor: 1800, fmt: (v) => Math.round(v) + " ms" },
+];
+
+function Speed({ id }: { id: string }) {
+  const [enabled, setEnabled] = useState(false);
+  const [data, setData] = useState<Awaited<ReturnType<typeof api.speedInsights>> | null>(null);
+  const [error, setError] = useState("");
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    api
+      .project(id)
+      .then((p) => {
+        const s = (p.config?.speed_insights ?? {}) as { enabled?: boolean };
+        setEnabled(!!s.enabled);
+      })
+      .catch(() => {});
+    api
+      .speedInsights(id)
+      .then(setData)
+      .catch((e) => setError(e instanceof Error ? e.message : "failed to load"))
+      .finally(() => setLoaded(true));
+  }, [id]);
+
+  async function toggle() {
+    const next = !enabled;
+    setEnabled(next);
+    setError("");
+    try {
+      await api.patchProject(id, { config: { speed_insights: { enabled: next } } });
+    } catch (e) {
+      setEnabled(!next);
+      setError(e instanceof Error ? e.message : "save failed");
+    }
+  }
+
+  if (!loaded) return <Skeleton className="h-40" />;
+
+  return (
+    <div className="max-w-2xl space-y-4">
+      <Card className="p-5">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="mb-1 text-sm font-medium">Speed insights</h2>
+            <p className="text-xs text-muted-foreground">
+              Real-user Core Web Vitals, collected by a ~1 KB script injected into every HTML
+              page on the next static deploy. Data stays on your instance — nothing leaves.
+            </p>
+          </div>
+          <button
+            onClick={toggle}
+            className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
+              enabled ? "bg-emerald-500" : "bg-muted"
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${
+                enabled ? "left-[18px]" : "left-0.5"
+              }`}
+            />
+          </button>
+        </div>
+        <Err msg={error} />
+      </Card>
+
+      {enabled && (data?.views ?? 0) === 0 && (
+        <Card className="p-5 text-sm text-muted-foreground">
+          No data yet — redeploy to inject the beacon, then visits report automatically.
+        </Card>
+      )}
+
+      {enabled && (data?.views ?? 0) > 0 && (
+        <>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+            {VITALS.map((v) => {
+              const val = data!.p75[v.key];
+              const cls =
+                val == null
+                  ? "text-muted-foreground"
+                  : val <= v.good
+                    ? "text-emerald-400"
+                    : val <= v.poor
+                      ? "text-amber-400"
+                      : "text-red-400";
+              return (
+                <Card key={v.key} className="p-3">
+                  <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{v.label}</p>
+                  <p className={`mt-1 font-mono text-lg ${cls}`}>{val == null ? "—" : v.fmt(val)}</p>
+                </Card>
+              );
+            })}
+          </div>
+          <Card className="p-5">
+            <h3 className="mb-3 text-sm font-medium">Top paths · p75 LCP</h3>
+            <div className="space-y-2">
+              {data!.paths.map((p) => (
+                <div key={p.path} className="flex items-center justify-between text-sm">
+                  <span className="truncate font-mono text-xs">{p.path}</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {p.lcp != null ? (p.lcp / 1000).toFixed(2) + " s" : "—"} · {p.views} views
+                  </span>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -633,6 +768,28 @@ function Domains({ id }: { id: string }) {
             <div className="font-mono text-sm">{d.hostname}</div>
             <div className="flex items-center gap-2">
               <Badge variant={d.status === "active" ? "success" : "warning"}>{d.status}</Badge>
+              {d.status !== "active" && (
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      api.assignCloudflareDomain(id, d.id).then(load).catch((e) => setError(e.message))
+                    }
+                  >
+                    Assign via Cloudflare
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() =>
+                      api.verifyDomain(id, d.id).then(load).catch((e) => setError(e.message))
+                    }
+                  >
+                    Verify
+                  </Button>
+                </>
+              )}
               <Button
                 variant="ghost"
                 size="sm"
@@ -790,6 +947,7 @@ function Settings({ id, project }: { id: string; project: Project | null }) {
           ))}
         </select>
       </Card>
+      <Firewall id={id} project={project} />
       <Card className="p-4">
         <h3 className="mb-2 text-sm font-medium">Export / import</h3>
         <div className="flex gap-2">
@@ -805,6 +963,89 @@ function Settings({ id, project }: { id: string; project: Project | null }) {
       <Err msg={error} />
       {msg && <p className="text-xs text-muted-foreground">{msg}</p>}
     </div>
+  );
+}
+
+function Firewall({ id, project }: { id: string; project: Project | null }) {
+  const [allow, setAllow] = useState("");
+  const [avg, setAvg] = useState("");
+  const [burst, setBurst] = useState("");
+  const [msg, setMsg] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const fw = (project?.config?.firewall ?? {}) as {
+      ip_allowlist?: string[];
+      rate_limit?: { average?: number; burst?: number };
+    };
+    setAllow((fw.ip_allowlist ?? []).join("\n"));
+    setAvg(fw.rate_limit?.average ? String(fw.rate_limit.average) : "");
+    setBurst(fw.rate_limit?.burst ? String(fw.rate_limit.burst) : "");
+  }, [project?.config]);
+
+  async function save() {
+    setError("");
+    setMsg("");
+    const cidrs = allow.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
+    for (const c of cidrs) {
+      if (!/^[\d.:a-fA-F]+\/\d+$/.test(c) && !/^\d+\.\d+\.\d+\.\d+$/.test(c)) {
+        setError(`not an IP or CIDR: ${c}`);
+        return;
+      }
+    }
+    try {
+      await api.patchProject(id, {
+        config: {
+          firewall: {
+            ip_allowlist: cidrs,
+            rate_limit: avg ? { average: +avg, burst: burst ? +burst : +avg * 2 } : null,
+          },
+        },
+      });
+      setMsg("Saved — applies at the edge immediately.");
+      setTimeout(() => setMsg(""), 2500);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "save failed");
+    }
+  }
+
+  return (
+    <Card className="p-4">
+      <h3 className="mb-2 text-sm font-medium">Firewall</h3>
+      <p className="mb-3 text-xs text-muted-foreground">
+        Applied at the edge (Traefik) — blocked traffic never reaches the app. One IP/CIDR per
+        line; leave empty to allow everyone.
+      </p>
+      <div className="grid gap-3">
+        <textarea
+          value={allow}
+          onChange={(e) => setAllow(e.target.value)}
+          placeholder={"IP allowlist — e.g.\n203.0.113.0/24\n198.51.100.7"}
+          rows={3}
+          className="w-full rounded-md border border-border bg-transparent px-3 py-2 font-mono text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+        />
+        <div className="flex items-center gap-2">
+          <Input
+            className="w-36"
+            placeholder="Rate limit /s"
+            value={avg}
+            onChange={(e) => setAvg(e.target.value.replace(/\D/g, ""))}
+          />
+          <Input
+            className="w-36"
+            placeholder="Burst"
+            value={burst}
+            onChange={(e) => setBurst(e.target.value.replace(/\D/g, ""))}
+          />
+          <span className="text-xs text-muted-foreground">requests/sec per client IP</span>
+        </div>
+        <div className="flex items-center gap-3">
+          <Button size="sm" onClick={save}>Save</Button>
+          {msg && <span className="text-xs text-muted-foreground">{msg}</span>}
+        </div>
+        <Err msg={error} />
+      </div>
+    </Card>
   );
 }
 
@@ -880,6 +1121,7 @@ export default function ProjectPage() {
       {tab === "deployments" && <Deployments id={id} />}
       {tab === "environment" && <Environment id={id} />}
       {tab === "analytics" && <Analytics id={id} />}
+      {tab === "speed" && <Speed id={id} />}
       {tab === "cron" && <Cron id={id} />}
       {tab === "redirects" && <Redirects id={id} />}
       {tab === "domains" && <Domains id={id} />}
