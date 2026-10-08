@@ -129,10 +129,16 @@ pub async fn update_project_config(
         }
     };
 
+    // Hosts serving this project — `/_runway-rum` on any of them is
+    // routed to the API (speed-insights beacon, same origin as the site).
+    let mut rum_hosts: Vec<String> = Vec::new();
+
     for (subdomain, deployment_id, _ty, _value, alias_id, rnode, rport, rhost) in &aliases {
         let svc = service_ref(deployment_id, rnode, *rport, rhost, &mut services);
+        let host = format!("{subdomain}.{}", settings.deploy_domain);
+        rum_hosts.push(host.clone());
         let mut router = json!({
-            "rule": format!("Host(`{}.{}`)", subdomain, settings.deploy_domain),
+            "rule": format!("Host(`{host}`)"),
             "service": svc,
             "entryPoints": entry_points,
         });
@@ -153,6 +159,7 @@ pub async fn update_project_config(
 
         if domain.r#type == "route" {
             let svc = service_ref(deployment_id, rnode, *rport, rhost, &mut services);
+            rum_hosts.push(domain.hostname.clone());
             let mut router = json!({
                 "rule": format!("Host(`{}`)", domain.hostname),
                 "service": svc,
@@ -226,6 +233,73 @@ pub async fn update_project_config(
                 }
             }
         }
+    }
+
+    // Project firewall — `config.firewall` carries optional
+    // `ip_allowlist: [cidr]` and `rate_limit: {average, burst}`; both
+    // become Traefik middlewares attached to every deployment router.
+    let fw = project.config.get("firewall");
+    let mut fw_mws: Vec<String> = Vec::new();
+    if let Some(allow) = fw
+        .and_then(|f| f.get("ip_allowlist"))
+        .and_then(|v| v.as_array())
+        .filter(|a| !a.is_empty())
+    {
+        middlewares.insert(
+            "fw-allowlist".into(),
+            json!({ "ipAllowList": { "sourceRange": allow } }),
+        );
+        fw_mws.push("fw-allowlist".into());
+    }
+    if let Some(rl) = fw.and_then(|f| f.get("rate_limit")) {
+        let avg = rl.get("average").and_then(|v| v.as_u64()).unwrap_or(0);
+        if avg > 0 {
+            let burst = rl.get("burst").and_then(|v| v.as_u64()).unwrap_or(avg * 2);
+            middlewares.insert(
+                "fw-ratelimit".into(),
+                json!({
+                    "rateLimit": {
+                        "average": avg,
+                        "burst": burst,
+                        "period": "1s",
+                        "sourceCriterion": { "ipStrategy": { "depth": 2 } },
+                    }
+                }),
+            );
+            fw_mws.push("fw-ratelimit".into());
+        }
+    }
+    if !fw_mws.is_empty() {
+        for router in routers.values_mut() {
+            if router["service"]
+                .as_str()
+                .is_some_and(|s| s.starts_with("deployment-"))
+            {
+                let existing: Vec<Value> = router["middlewares"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default();
+                // Firewall runs first — an attacker shouldn't hit the app
+                // before the allowlist check.
+                router["middlewares"] =
+                    json!(fw_mws.iter().map(|m| json!(m)).chain(existing).collect::<Vec<_>>());
+            }
+        }
+    }
+
+    // `/_runway-rum` → API. The longer rule wins over plain `Host()`.
+    // `runway@docker` is the compose-defined service for the app itself.
+    for host in rum_hosts {
+        let mut router = json!({
+            "rule": format!("Host(`{host}`) && PathPrefix(`/_runway-rum`)"),
+            "service": "runway@docker",
+            "entryPoints": entry_points,
+        });
+        if https {
+            router["tls"] = json!({ "certResolver": "le" });
+        }
+        let key = format!("router-rum-{}", host.replace(['.', '_'], "-"));
+        routers.insert(key, router);
     }
 
     let doc = json!({

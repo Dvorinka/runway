@@ -352,8 +352,10 @@ pub async fn patch(
     if let Some(desc) = body.description {
         project.description = desc;
     }
+    let mut edge_dirty = false;
     if let Some(patch) = body.config {
         if let (Some(obj), Some(patch)) = (project.config.as_object_mut(), patch.as_object()) {
+            edge_dirty = patch.contains_key("firewall");
             for (k, v) in patch {
                 obj.insert(k.clone(), v.clone());
             }
@@ -385,6 +387,11 @@ pub async fn patch(
     .bind(&project.remote_node_id)
     .fetch_one(&state.db)
     .await?;
+    // Firewall changes apply at the edge immediately — waiting for the
+    // next deploy would leave a window open.
+    if edge_dirty {
+        rewrite_traefik(&state, &updated).await?;
+    }
     Ok(Json(project_json(&state, &updated)).into_response())
 }
 

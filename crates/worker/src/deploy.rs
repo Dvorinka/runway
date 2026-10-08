@@ -349,23 +349,48 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
              (cp runway.json /out/.runway.json 2>/dev/null || true) && \
              echo 'Static output published'"
         ));
-        // Analytics snippet: injected post-publish into every .html under /out.
-        // Passed via env so arbitrary HTML never touches shell interpolation.
-        let snippet = config
+        // Analytics + speed-insights snippets: injected post-publish into
+        // every .html under /out. Passed via env so arbitrary HTML never
+        // touches shell interpolation.
+        let mut snippets: Vec<&str> = Vec::new();
+        if let Some(s) = config
+            .get("analytics_meta")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.trim().is_empty())
+        {
+            snippets.push(s);
+        }
+        if let Some(s) = config
             .get("analytics_snippet")
             .and_then(|v| v.as_str())
-            .filter(|s| !s.trim().is_empty());
-        if let Some(s) = snippet {
-            env.push(format!("RUNWAY_ANALYTICS_SNIPPET={s}"));
+            .filter(|s| !s.trim().is_empty())
+        {
+            snippets.push(s);
+        }
+        let speed_snippet;
+        if config
+            .get("speed_insights")
+            .and_then(|v| v.get("enabled"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            speed_snippet = runway_core::rum::beacon_snippet();
+            snippets.push(speed_snippet);
+        }
+        if !snippets.is_empty() {
+            env.push(format!("RUNWAY_SNIPPETS={}", snippets.join("\n<!-- -->\n")));
             commands.push(
                 "if command -v node >/dev/null 2>&1; then \
-                 echo 'Injecting analytics snippet...'; \
-                 node -e 'const fs=require(\"fs\"),p=require(\"path\"),s=process.env.RUNWAY_ANALYTICS_SNIPPET; \
+                 echo 'Injecting head snippets...'; \
+                 node -e 'const fs=require(\"fs\"),p=require(\"path\"),ss=process.env.RUNWAY_SNIPPETS.split(\"\\n<!-- -->\\n\"); \
                  function w(d){for(const f of fs.readdirSync(d)){const q=p.join(d,f); \
                  if(fs.statSync(q).isDirectory()){w(q)}else if(f.endsWith(\".html\")){let h=fs.readFileSync(q,\"utf8\"); \
-                 if(!h.includes(s)){h=h.includes(\"</body>\")?h.replace(\"</body>\",s+\"</body>\"):h+s;fs.writeFileSync(q,h)}}}} \
+                 for(const s of ss){if(!h.includes(s)){ \
+                 var t=s.trimStart().startsWith(\"<meta\")&&h.includes(\"</head>\")?\"</head>\":\"</body>\"; \
+                 h=h.includes(t)?h.replace(t,s+t):h+s;}} \
+                 fs.writeFileSync(q,h)}}} \
                  w(\"/out\")'; \
-                 else echo 'Analytics snippet skipped (node unavailable)'; fi"
+                 else echo 'Snippet injection skipped (node unavailable)'; fi"
                     .to_string(),
             );
         }
