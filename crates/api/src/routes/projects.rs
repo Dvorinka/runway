@@ -45,6 +45,29 @@ async fn accessible_project(state: &AppState, user_id: i64, id: &str) -> ApiResu
     project.ok_or_else(|| ApiError::not_found("project"))
 }
 
+/// devpush `get_access(role, "creator")` — owner/admin always pass; a
+/// plain member passes only for a project they created. Mutating
+/// project settings routes use this.
+async fn accessible_project_writer(state: &AppState, user_id: i64, id: &str) -> ApiResult<Project> {
+    let project = accessible_project(state, user_id, id).await?;
+    let role: Option<String> =
+        sqlx::query_scalar("SELECT role FROM team_member WHERE team_id = $1 AND user_id = $2")
+            .bind(&project.team_id)
+            .bind(user_id)
+            .fetch_optional(&state.db)
+            .await?;
+    let allowed = match role.as_deref() {
+        Some("owner" | "admin") => true,
+        _ => project.created_by_user_id == Some(user_id),
+    };
+    if !allowed {
+        return Err(ApiError::forbidden(
+            "project settings require a creator role",
+        ));
+    }
+    Ok(project)
+}
+
 async fn default_team_id(state: &AppState, user: &runway_core::models::User) -> ApiResult<String> {
     if let Some(id) = &user.default_team_id {
         return Ok(id.clone());
@@ -357,7 +380,7 @@ pub async fn patch(
     Path(id): Path<String>,
     Json(body): Json<PatchProject>,
 ) -> ApiResult<Response> {
-    let mut project = accessible_project(&state, user.user.id, &id).await?;
+    let mut project = accessible_project_writer(&state, user.user.id, &id).await?;
     if let Some(name) = body.name {
         project.name = name;
     }
@@ -491,7 +514,7 @@ pub async fn put_env(
     Path(id): Path<String>,
     Json(body): Json<Vec<EnvVarInput>>,
 ) -> ApiResult<Response> {
-    let mut project = accessible_project(&state, user.user.id, &id).await?;
+    let mut project = accessible_project_writer(&state, user.user.id, &id).await?;
     for v in &body {
         if v.key.is_empty() || !v.key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
             return Err(ApiError::bad_request(format!(
@@ -547,7 +570,7 @@ pub async fn patch_env(
     Path(id): Path<String>,
     Json(body): Json<Vec<EnvPatchInput>>,
 ) -> ApiResult<Response> {
-    let mut project = accessible_project(&state, user.user.id, &id).await?;
+    let mut project = accessible_project_writer(&state, user.user.id, &id).await?;
     let mut vars = project.env_vars(&state.crypto)?;
     for p in &body {
         if p.key.is_empty() || !p.key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
@@ -605,7 +628,7 @@ pub async fn create_deploy_token(
     Path(id): Path<String>,
     Json(body): Json<CreateDeployToken>,
 ) -> ApiResult<Response> {
-    let project = accessible_project(&state, user.user.id, &id).await?;
+    let project = accessible_project_writer(&state, user.user.id, &id).await?;
     let (raw, hash) = DeployToken::generate();
     let token_id = token_hex(16);
     sqlx::query(
@@ -632,7 +655,7 @@ pub async fn delete_deploy_token(
     State(state): State<AppState>,
     Path((project_id, token_id)): Path<(String, String)>,
 ) -> ApiResult<Response> {
-    let _project = accessible_project(&state, user.user.id, &project_id).await?;
+    let _project = accessible_project_writer(&state, user.user.id, &project_id).await?;
     sqlx::query("UPDATE deploy_token SET status = 'revoked' WHERE id = $1 AND project_id = $2")
         .bind(&token_id)
         .bind(&project_id)
@@ -678,7 +701,7 @@ pub async fn add_domain(
     Path(id): Path<String>,
     Json(body): Json<CreateDomain>,
 ) -> ApiResult<Response> {
-    let project = accessible_project(&state, user.user.id, &id).await?;
+    let project = accessible_project_writer(&state, user.user.id, &id).await?;
     let hostname = body.hostname.trim().to_lowercase();
     if hostname.is_empty()
         || hostname.len() > 253
@@ -737,7 +760,7 @@ pub async fn assign_cloudflare_domain(
     State(state): State<AppState>,
     Path((project_id, domain_id)): Path<(String, i64)>,
 ) -> ApiResult<Response> {
-    let project = accessible_project(&state, user.user.id, &project_id).await?;
+    let project = accessible_project_writer(&state, user.user.id, &project_id).await?;
     let domain: Option<(String,)> =
         sqlx::query_as("SELECT hostname FROM domain WHERE id = $1 AND project_id = $2")
             .bind(domain_id)
@@ -832,7 +855,7 @@ pub async fn delete_domain(
     State(state): State<AppState>,
     Path((project_id, domain_id)): Path<(String, i64)>,
 ) -> ApiResult<Response> {
-    let project = accessible_project(&state, user.user.id, &project_id).await?;
+    let project = accessible_project_writer(&state, user.user.id, &project_id).await?;
     let domain: Option<(String, Option<String>, Option<String>)> = sqlx::query_as(
         "SELECT hostname, cloudflare_zone_id, cloudflare_record_id
          FROM domain WHERE id = $1 AND project_id = $2",
@@ -958,7 +981,7 @@ pub async fn create_webhook(
     Path(id): Path<String>,
     Json(body): Json<CreateWebhook>,
 ) -> ApiResult<Response> {
-    let project = accessible_project(&state, user.user.id, &id).await?;
+    let project = accessible_project_writer(&state, user.user.id, &id).await?;
     let events = body.events.unwrap_or_default();
     validate_webhook_input(&body.name, &body.url, &events)?;
     let secret_enc = match &body.secret {
@@ -991,7 +1014,7 @@ pub async fn delete_webhook(
     State(state): State<AppState>,
     Path((id, webhook_id)): Path<(String, String)>,
 ) -> ApiResult<Response> {
-    let project = accessible_project(&state, user.user.id, &id).await?;
+    let project = accessible_project_writer(&state, user.user.id, &id).await?;
     let res = sqlx::query("DELETE FROM project_webhook WHERE id = $1 AND project_id = $2")
         .bind(&webhook_id)
         .bind(&project.id)
@@ -1066,7 +1089,7 @@ pub async fn create_cron(
     Path(id): Path<String>,
     Json(body): Json<CreateCronJob>,
 ) -> ApiResult<Response> {
-    let project = accessible_project(&state, user.user.id, &id).await?;
+    let project = accessible_project_writer(&state, user.user.id, &id).await?;
     let name = body.name.trim();
     let schedule = body.schedule.trim();
     if name.is_empty() || schedule.is_empty() {
@@ -1112,7 +1135,7 @@ pub async fn patch_cron(
     Path((id, job_id)): Path<(String, String)>,
     Json(body): Json<PatchCronJob>,
 ) -> ApiResult<Response> {
-    let project = accessible_project(&state, user.user.id, &id).await?;
+    let project = accessible_project_writer(&state, user.user.id, &id).await?;
     let Some(enabled) = body.enabled else {
         return Err(ApiError::bad_request("nothing to update"));
     };
@@ -1142,7 +1165,7 @@ pub async fn delete_cron(
     State(state): State<AppState>,
     Path((id, job_id)): Path<(String, String)>,
 ) -> ApiResult<Response> {
-    let project = accessible_project(&state, user.user.id, &id).await?;
+    let project = accessible_project_writer(&state, user.user.id, &id).await?;
     let res = sqlx::query("DELETE FROM cron_job WHERE id = $1 AND project_id = $2")
         .bind(&job_id)
         .bind(&project.id)
@@ -1214,7 +1237,7 @@ pub async fn create_redirect(
     Path(id): Path<String>,
     Json(body): Json<CreateRedirect>,
 ) -> ApiResult<Response> {
-    let project = accessible_project(&state, user.user.id, &id).await?;
+    let project = accessible_project_writer(&state, user.user.id, &id).await?;
     let source = body.source_path.trim();
     let target = body.target_url.trim();
     if !source.starts_with('/') {
@@ -1261,7 +1284,7 @@ pub async fn patch_redirect(
     Path((id, rid)): Path<(String, String)>,
     Json(body): Json<PatchRedirect>,
 ) -> ApiResult<Response> {
-    let project = accessible_project(&state, user.user.id, &id).await?;
+    let project = accessible_project_writer(&state, user.user.id, &id).await?;
     if let Some(sc) = body.status_code {
         if !matches!(sc, 301 | 302 | 307 | 308) {
             return Err(ApiError::bad_request("status_code must be 301/302/307/308"));
@@ -1298,7 +1321,7 @@ pub async fn delete_redirect(
     State(state): State<AppState>,
     Path((id, rid)): Path<(String, String)>,
 ) -> ApiResult<Response> {
-    let project = accessible_project(&state, user.user.id, &id).await?;
+    let project = accessible_project_writer(&state, user.user.id, &id).await?;
     let res = sqlx::query("DELETE FROM redirect_rule WHERE id = $1 AND project_id = $2")
         .bind(&rid)
         .bind(&project.id)
@@ -1370,7 +1393,7 @@ pub async fn import_project(
     Path(id): Path<String>,
     Json(body): Json<Value>,
 ) -> ApiResult<Response> {
-    let mut project = accessible_project(&state, user.user.id, &id).await?;
+    let mut project = accessible_project_writer(&state, user.user.id, &id).await?;
 
     // config merge
     if let Some(imported) = body
