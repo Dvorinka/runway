@@ -232,6 +232,14 @@ export default function DeploymentPage() {
           )}
         </div>
         <div className="flex gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            title="Refresh container status"
+            onClick={() => api.reconcile(id).then(setDep).catch(() => api.deployment(id).then(setDep))}
+          >
+            Refresh
+          </Button>
           {dep?.url && (
             <Button
               variant="outline"

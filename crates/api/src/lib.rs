@@ -329,6 +329,10 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/deployments/{id}/metrics",
             get(routes::deployments::metrics),
         )
+        .route(
+            "/api/v1/deployments/{id}/reconcile",
+            post(routes::deployments::reconcile),
+        )
         // API keys + deploy-token deploy
         .route(
             "/api/v1/keys",

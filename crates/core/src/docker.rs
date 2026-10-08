@@ -44,6 +44,36 @@ pub fn is_not_found(err: &BollardError) -> bool {
     )
 }
 
+/// Inspect a container → `(observed_status, exit_code)`.
+/// `Some("not_found")` on 404; `None` when the daemon couldn't be
+/// reached (caller should keep the previous observation).
+pub async fn inspect_observed(
+    docker: &Docker,
+    container_id: &str,
+) -> Option<(String, Option<i64>)> {
+    use bollard::container::InspectContainerOptions;
+    match docker
+        .inspect_container(container_id, None::<InspectContainerOptions>)
+        .await
+    {
+        Ok(info) => {
+            let s = info.state.unwrap_or_default();
+            let status = if s.running.unwrap_or(false) {
+                "running"
+            } else if s.paused.unwrap_or(false) {
+                "paused"
+            } else if s.dead.unwrap_or(false) {
+                "dead"
+            } else {
+                "exited"
+            };
+            Some((status.to_string(), s.exit_code))
+        }
+        Err(e) if is_not_found(&e) => Some(("not_found".to_string(), None)),
+        Err(_) => None,
+    }
+}
+
 /// Extract a user-facing reason string from a Docker API error.
 pub fn create_error_reason(err: &BollardError) -> String {
     match err {

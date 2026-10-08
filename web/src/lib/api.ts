@@ -332,6 +332,8 @@ export const api = {
     }),
   cancel: (id: string) =>
     req<Deployment>(`/api/v1/deployments/${id}/cancel`, { method: "POST" }),
+  reconcile: (id: string) =>
+    req<Deployment>(`/api/v1/deployments/${id}/reconcile`, { method: "POST" }),
   setAvatar: (file: Blob) =>
     fetch(`/api/auth/avatar`, {
       method: "PUT",

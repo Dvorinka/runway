@@ -64,6 +64,10 @@ fn deployment_json(state: &AppState, d: &Deployment, project: &Project) -> Value
         "error": d.error,
         "container_id": d.container_id,
         "container_status": d.container_status,
+        "observed_status": d.observed_status,
+        "observed_exit_code": d.observed_exit_code,
+        "observed_at": d.observed_at,
+        "observed_missing_count": d.observed_missing_count,
         "created_at": d.created_at,
         "concluded_at": d.concluded_at,
     })
@@ -515,6 +519,50 @@ pub async fn stats(
         "pids": s.pids,
     }))
     .into_response())
+}
+
+/// `POST /api/v1/deployments/{id}/reconcile` — probe the container now
+/// instead of waiting for the next monitor tick; returns the fresh
+/// deployment row. Port of project_deployment_reconcile.
+pub async fn reconcile(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Response> {
+    let (dep, project) = accessible_deployment(&state, user.user.id, &id).await?;
+    if let Some(cid) = dep.container_id.clone() {
+        let docker = if let Some(nid) = dep.remote_node_id.as_deref() {
+            runway_core::docker::node_client(&state.db, nid).await
+        } else {
+            state.docker.clone()
+        };
+        if let Some(docker) = docker {
+            if let Some((observed, exit_code)) =
+                runway_core::docker::inspect_observed(&docker, &cid).await
+            {
+                let missing = if observed == "not_found" {
+                    dep.observed_missing_count + 1
+                } else {
+                    0
+                };
+                sqlx::query(
+                    "UPDATE deployment SET observed_status = $1, observed_exit_code = $2,
+                     observed_at = now(), observed_last_seen_at = now(),
+                     observed_missing_count = $3 WHERE id = $4",
+                )
+                .bind(&observed)
+                .bind(exit_code)
+                .bind(missing)
+                .bind(&dep.id)
+                .execute(&state.db)
+                .await?;
+            }
+        }
+    }
+    let dep = deploy::get(&state.db, &id)
+        .await?
+        .ok_or_else(|| ApiError::not_found("deployment"))?;
+    Ok(Json(deployment_json(&state, &dep, &project)).into_response())
 }
 
 /// `GET /api/v1/deployments/{id}/metrics` — last 24h of monitor samples

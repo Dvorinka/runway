@@ -261,36 +261,19 @@ async fn tick(
             }
             None => &ctx.docker,
         };
-        let (observed, exit_code) = match docker
-            .inspect_container(&cid, None::<InspectContainerOptions>)
-            .await
-        {
-            Ok(info) => {
-                let s = info.state.unwrap_or_default();
-                let status = if s.running.unwrap_or(false) {
-                    "running"
-                } else if s.paused.unwrap_or(false) {
-                    "paused"
-                } else if s.dead.unwrap_or(false) {
-                    "dead"
-                } else {
-                    "exited"
-                };
-                (status, s.exit_code)
-            }
-            Err(e) if dkr::is_not_found(&e) => ("not_found", None),
-            Err(_) => continue,
+        let Some((observed, exit_code)) = dkr::inspect_observed(docker, &cid).await else {
+            continue;
         };
         // Notify once on the running → down transition. The previous
         // observed_status gates repeats, so a restart-loop flap can't
         // spam one row per tick.
-        let down = match (observed, exit_code) {
+        let down = match (observed.as_str(), exit_code) {
             ("dead", _) | ("not_found", _) => true,
             ("exited", c) => c != Some(0),
             _ => false,
         };
         if down && matches!(dep.observed_status.as_deref(), None | Some("running")) {
-            notify_crash(ctx, &dep, observed, exit_code.map(|c| c as i32)).await;
+            notify_crash(ctx, &dep, &observed, exit_code.map(|c| c as i32)).await;
         }
         // Reconcile-parity: consecutive 404s accumulate so other
         // consumers can tell "blip" from "gone".
@@ -304,7 +287,7 @@ async fn tick(
              observed_at = now(), observed_last_seen_at = now(),
              observed_missing_count = $4 WHERE id = $3",
         )
-        .bind(observed)
+        .bind(&observed)
         .bind(exit_code)
         .bind(&dep.id)
         .bind(missing_count)
