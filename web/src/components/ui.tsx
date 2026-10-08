@@ -93,7 +93,7 @@ export function statusVariant(status: string, conclusion?: string | null) {
 
 // Observed container states that mean "not serving". `removed` is left
 // out — deliberate teardown keeps the succeeded badge.
-const NOT_SERVING = ["crashed", "dead", "paused", "missing", "orphaned", "stopped"];
+const NOT_SERVING = ["crashed", "dead", "paused", "missing", "orphaned", "stopped", "unhealthy"];
 
 /** What the badge should say once the deploy pipeline finished — the
  *  observed container state wins when it's anything but running. */

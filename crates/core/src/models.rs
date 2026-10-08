@@ -483,7 +483,7 @@ impl Deployment {
                         "crashed".into()
                     }
                 }
-                Some(o @ ("paused" | "dead")) => o.into(),
+                Some(o @ ("paused" | "dead" | "unhealthy")) => o.into(),
                 _ => "running".into(),
             },
             _ => match observed {

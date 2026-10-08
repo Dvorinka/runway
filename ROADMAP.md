@@ -275,10 +275,12 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
       real branch head resolves via the project's connection API before
       deploying (closes devpush's forged-sha hole); optional
       `BITBUCKET_WEBHOOK_SECRET` via `?secret=` on the hook URL
-- [ ] **HTTP health checks** — `config.health_check` path polled by
-      the monitor against running containers; container-up-but-app-
-      dead is invisible to `observed_status` today. Feed into
-      computed_status + crash pipeline
+- [x] **HTTP health checks** — `config.health_check` (path or
+      `{path, interval_seconds, failures}`) probed by the monitor on
+      running containers; consecutive failures set
+      `observed_status=unhealthy` → `computed_status` + badge +
+      crash notification, recovery self-heals. Settings card;
+      `deployment_observed_status_check` widened (migration 0017)
 - [ ] **Deployment protection** — `basicAuth` middleware option for
       preview/non-prod envs (Vercel Deployment Protection equivalent;
       IP allowlist exists, this is the password half)

@@ -22,6 +22,8 @@ use crate::Ctx;
 type ProbeState = HashMap<String, chrono::DateTime<Utc>>;
 /// deployment_id → last metrics sample (stats calls are not free).
 type SampleState = HashMap<String, tokio::time::Instant>;
+/// deployment_id → (last health probe, consecutive failures).
+type HealthState = HashMap<String, (tokio::time::Instant, u32)>;
 
 const SAMPLE_INTERVAL: Duration = Duration::from_secs(30);
 
@@ -30,6 +32,7 @@ pub async fn run(ctx: Ctx) {
     let mut ticker = tokio::time::interval(interval);
     let mut probe_state: ProbeState = HashMap::new();
     let mut sample_state: SampleState = HashMap::new();
+    let mut health_state: HealthState = HashMap::new();
     let mut last_prune = tokio::time::Instant::now();
     let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
@@ -38,7 +41,15 @@ pub async fn run(ctx: Ctx) {
 
     loop {
         ticker.tick().await;
-        if let Err(e) = tick(&ctx, &http, &mut probe_state, &mut sample_state).await {
+        if let Err(e) = tick(
+            &ctx,
+            &http,
+            &mut probe_state,
+            &mut sample_state,
+            &mut health_state,
+        )
+        .await
+        {
             tracing::error!(error = %e, "monitor tick failed");
         }
         // Retention sweep: 24h of 30s metric samples ≈ 2.9k
@@ -62,6 +73,7 @@ async fn tick(
     http: &reqwest::Client,
     probe_state: &mut ProbeState,
     sample_state: &mut SampleState,
+    health_state: &mut HealthState,
 ) -> anyhow::Result<()> {
     // Active deployments being brought up.
     let deploying: Vec<Deployment> = sqlx::query_as(
@@ -261,14 +273,28 @@ async fn tick(
             }
             None => &ctx.docker,
         };
-        let Some((observed, exit_code)) = dkr::inspect_observed(docker, &cid).await else {
+        let Some((docker_observed, exit_code)) = dkr::inspect_observed(docker, &cid).await else {
             continue;
         };
+        let mut observed = docker_observed;
+
+        // HTTP health check — container-up-but-app-dead is invisible to
+        // docker inspect. `config.health_check` = "path" or
+        // {path, interval_seconds, failures}; the probe is throttled and
+        // only fires while docker says running.
+        if observed == "running" {
+            observed = health_probe(ctx, http, docker, &dep, &cid, health_state)
+                .await
+                .unwrap_or(observed);
+        } else {
+            health_state.remove(&dep.id);
+        }
+
         // Notify once on the running → down transition. The previous
         // observed_status gates repeats, so a restart-loop flap can't
         // spam one row per tick.
         let down = match (observed.as_str(), exit_code) {
-            ("dead", _) | ("not_found", _) => true,
+            ("dead", _) | ("not_found", _) | ("unhealthy", _) => true,
             ("exited", c) => c != Some(0),
             _ => false,
         };
@@ -323,6 +349,84 @@ async fn tick(
         }
     }
     Ok(())
+}
+
+/// Ongoing HTTP health check for running deployments. Config:
+/// `config.health_check` = "path" or `{path, interval_seconds, failures}`.
+/// Returns the observed override — "unhealthy" once consecutive probes
+/// reach `failures`, "running" while healthy or inside the throttle
+/// window; None when not configured or the target can't be resolved.
+async fn health_probe(
+    ctx: &Ctx,
+    http: &reqwest::Client,
+    docker: &bollard::Docker,
+    dep: &Deployment,
+    cid: &str,
+    health_state: &mut HealthState,
+) -> Option<String> {
+    let hc = dep.config.get("health_check")?;
+    let (path, interval, threshold) = match hc {
+        serde_json::Value::String(p) => (p.clone(), 30_u64, 3_u32),
+        serde_json::Value::Object(o) => (
+            o.get("path")?.as_str()?.to_string(),
+            o.get("interval_seconds")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(30)
+                .max(5),
+            o.get("failures").and_then(|v| v.as_u64()).unwrap_or(3) as u32,
+        ),
+        _ => return None,
+    };
+    let (last, fails) = health_state
+        .get(&dep.id)
+        .copied()
+        .unwrap_or_else(|| (tokio::time::Instant::now() - Duration::from_secs(3600), 0));
+    if last.elapsed() < Duration::from_secs(interval) {
+        return Some(if fails >= threshold {
+            "unhealthy".into()
+        } else {
+            "running".into()
+        });
+    }
+
+    let url = if let Some(nid) = dep.remote_node_id.as_deref() {
+        let host = node_host(&ctx.db, nid).await?;
+        let port = dep.remote_port?;
+        format!("http://{host}:{port}{path}")
+    } else {
+        let info = docker
+            .inspect_container(cid, None::<InspectContainerOptions>)
+            .await
+            .ok()?;
+        let ip = info
+            .network_settings
+            .as_ref()
+            .and_then(|ns| ns.networks.as_ref())
+            .and_then(|nets| {
+                nets.values()
+                    .filter_map(|ep| ep.ip_address.clone())
+                    .find(|ip| !ip.is_empty())
+            })?;
+        format!("http://{ip}:{}{path}", dep.serve_port())
+    };
+
+    let healthy = http
+        .get(&url)
+        .send()
+        .await
+        .map(|r| r.status().as_u16() < 400)
+        .unwrap_or(false);
+    if healthy {
+        health_state.insert(dep.id.clone(), (tokio::time::Instant::now(), 0));
+        return Some("running".into());
+    }
+    let fails = fails + 1;
+    health_state.insert(dep.id.clone(), (tokio::time::Instant::now(), fails));
+    Some(if fails >= threshold {
+        "unhealthy".into()
+    } else {
+        "running".into()
+    })
 }
 
 async fn enqueue_fail(ctx: &Ctx, deployment_id: &str, status: &str, reason: &str) {
@@ -387,6 +491,7 @@ async fn notify_crash(ctx: &Ctx, dep: &Deployment, observed: &str, exit_code: Op
     let reason = match observed {
         "not_found" => "container is missing".to_string(),
         "dead" => "container is dead".to_string(),
+        "unhealthy" => "health check is failing".to_string(),
         _ => format!("container exited (code {})", exit_code.unwrap_or(-1)),
     };
     runway_core::audit::notify_team(

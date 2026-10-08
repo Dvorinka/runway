@@ -969,6 +969,7 @@ function Settings({ id, project }: { id: string; project: Project | null }) {
       </Card>
       <Environments id={id} project={project} />
       <DockerBuild id={id} project={project} />
+      <HealthCheck id={id} project={project} />
       <Firewall id={id} project={project} />
       <Card className="p-4">
         <h3 className="mb-2 text-sm font-medium">Export / import</h3>
@@ -1223,6 +1224,60 @@ function DockerBuild({ id, project }: { id: string; project: Project | null }) {
             Save
           </Button>
         </div>
+      </div>
+      <Err msg={error} />
+      {msg && <p className="mt-2 text-xs text-muted-foreground">{msg}</p>}
+    </Card>
+  );
+}
+
+function HealthCheck({ id, project }: { id: string; project: Project | null }) {
+  const [path, setPath] = useState("");
+  const [msg, setMsg] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const hc = project?.config?.health_check;
+    setPath(typeof hc === "string" ? hc : ((hc as { path?: string })?.path ?? ""));
+  }, [project?.config]);
+
+  async function save() {
+    setError("");
+    setMsg("");
+    const p = path.trim();
+    if (p && !p.startsWith("/")) {
+      setError("health check path must start with /");
+      return;
+    }
+    try {
+      await api.patchProject(id, {
+        config: { health_check: p || null },
+      });
+      setMsg(p ? "Saved — applies to the next deploy." : "Saved — health checks disabled.");
+      setTimeout(() => setMsg(""), 2500);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "save failed");
+    }
+  }
+
+  return (
+    <Card className="p-4">
+      <h3 className="mb-1 text-sm font-medium">Health check</h3>
+      <p className="mb-3 text-xs text-muted-foreground">
+        HTTP path probed on running containers (e.g. <code className="font-mono">/healthz</code>).
+        Repeated failures mark the deployment <em>unhealthy</em> and notify the team — catches
+        "container up, app dead". Applies to deployments created after saving.
+      </p>
+      <div className="flex gap-2">
+        <Input
+          placeholder="/healthz"
+          value={path}
+          onChange={(e) => setPath(e.target.value)}
+          className="font-mono"
+        />
+        <Button size="sm" onClick={save}>
+          Save
+        </Button>
       </div>
       <Err msg={error} />
       {msg && <p className="mt-2 text-xs text-muted-foreground">{msg}</p>}
