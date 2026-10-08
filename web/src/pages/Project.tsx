@@ -1095,6 +1095,7 @@ function Settings({ id, project }: { id: string; project: Project | null }) {
       <DockerBuild id={id} project={project} />
       <HealthCheck id={id} project={project} />
       <Retention id={id} project={project} />
+      <DeployRules id={id} project={project} />
       <StatusPageCard id={id} project={project} />
       <Firewall id={id} project={project} />
       <Card className="p-4">
@@ -1404,6 +1405,112 @@ function HealthCheck({ id, project }: { id: string; project: Project | null }) {
         <Button size="sm" onClick={save}>
           Save
         </Button>
+      </div>
+      <Err msg={error} />
+      {msg && <p className="mt-2 text-xs text-muted-foreground">{msg}</p>}
+    </Card>
+  );
+}
+
+interface DeployRulesCfg {
+  auto_deploy?: boolean;
+  deploy_branches?: string;
+  ignored_authors?: string;
+  skip_merge_commits?: boolean;
+  preview_comment?: boolean;
+  paths?: string;
+}
+
+function DeployRules({ id, project }: { id: string; project: Project | null }) {
+  const [rules, setRules] = useState<DeployRulesCfg>({});
+  const [msg, setMsg] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setRules((project?.config?.deployment_rules as DeployRulesCfg) ?? {});
+  }, [project?.config]);
+
+  async function save() {
+    setError("");
+    setMsg("");
+    try {
+      await api.patchProject(id, { config: { deployment_rules: rules } });
+      setMsg("Saved — applies to the next push.");
+      setTimeout(() => setMsg(""), 2500);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "save failed");
+    }
+  }
+
+  const set = (patch: Partial<DeployRulesCfg>) => setRules((r) => ({ ...r, ...patch }));
+
+  return (
+    <Card className="p-4">
+      <h3 className="mb-1 text-sm font-medium">Deploy rules</h3>
+      <p className="mb-3 text-xs text-muted-foreground">
+        Filter which pushes deploy. <code className="font-mono">paths</code> limits deploys to
+        pushes touching matching files — glob list like{" "}
+        <code className="font-mono">apps/web/**,packages/shared/**</code> (monorepo filtering).
+      </p>
+      <div className="grid gap-3">
+        <label className="flex items-center gap-2 text-xs">
+          <input
+            type="checkbox"
+            checked={rules.auto_deploy !== false}
+            onChange={(e) => set({ auto_deploy: e.target.checked })}
+          />
+          Auto-deploy on push
+        </label>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="mb-1 block text-xs text-muted-foreground">Branches</label>
+            <Input
+              placeholder="main,master or *"
+              value={rules.deploy_branches ?? ""}
+              onChange={(e) => set({ deploy_branches: e.target.value })}
+              className="font-mono"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs text-muted-foreground">Ignored authors</label>
+            <Input
+              placeholder="bot,dependabot"
+              value={rules.ignored_authors ?? ""}
+              onChange={(e) => set({ ignored_authors: e.target.value })}
+              className="font-mono"
+            />
+          </div>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs text-muted-foreground">Deploy only paths</label>
+          <Input
+            placeholder="apps/web/** — empty deploys on any change"
+            value={rules.paths ?? ""}
+            onChange={(e) => set({ paths: e.target.value })}
+            className="font-mono"
+          />
+        </div>
+        <label className="flex items-center gap-2 text-xs">
+          <input
+            type="checkbox"
+            checked={rules.skip_merge_commits === true}
+            onChange={(e) => set({ skip_merge_commits: e.target.checked })}
+          />
+          Skip merge commits
+        </label>
+        <label className="flex items-center gap-2 text-xs">
+          <input
+            type="checkbox"
+            checked={rules.preview_comment !== false}
+            onChange={(e) => set({ preview_comment: e.target.checked })}
+          />
+          Comment on pull requests with preview URL
+        </label>
+        <div>
+          <Button size="sm" onClick={save}>
+            Save rules
+          </Button>
+        </div>
       </div>
       <Err msg={error} />
       {msg && <p className="mt-2 text-xs text-muted-foreground">{msg}</p>}

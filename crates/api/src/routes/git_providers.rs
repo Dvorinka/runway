@@ -464,9 +464,10 @@ async fn provider_push(
         .unwrap_or("")
         .trim_start_matches("refs/heads/")
         .to_string();
+    let changed = changed_paths(data);
 
     for project in projects {
-        if !rules_allow(&project, &branch, &commit) {
+        if !rules_allow(&project, &branch, &commit, &changed) {
             continue;
         }
         match deploy::create(
@@ -589,7 +590,8 @@ async fn bitbucket_push(state: &AppState, full_name: &str, branch: &str) {
             message: head.message,
             timestamp: head.timestamp,
         };
-        if !rules_allow(&project, branch, &commit) {
+        // Bitbucket push payloads carry no per-commit file lists.
+        if !rules_allow(&project, branch, &commit, &[]) {
             continue;
         }
         match deploy::create(
@@ -620,7 +622,31 @@ async fn bitbucket_push(state: &AppState, full_name: &str, branch: &str) {
 }
 
 /// Deployment-rules filter — same semantics as the github push handler.
-fn rules_allow(project: &Project, branch: &str, commit: &CommitInfo) -> bool {
+/// Flatten `commits[].added|modified|removed` into a unique changed-path
+/// list — the GitHub/Gitea/GitLab push-payload shape. Bitbucket's
+/// `repo:push` carries no file lists, so it always passes `paths` rules.
+pub(crate) fn changed_paths(data: &Value) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(commits) = data["commits"].as_array() {
+        for c in commits {
+            for key in ["added", "modified", "removed"] {
+                if let Some(files) = c[key].as_array() {
+                    out.extend(files.iter().filter_map(|f| f.as_str().map(String::from)));
+                }
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+pub(crate) fn rules_allow(
+    project: &Project,
+    branch: &str,
+    commit: &CommitInfo,
+    changed: &[String],
+) -> bool {
     let rules = project
         .config
         .get("deployment_rules")
@@ -654,6 +680,10 @@ fn rules_allow(project: &Project, branch: &str, commit: &CommitInfo) -> bool {
     if ignored.contains(&commit.author.as_str()) {
         return false;
     }
-    !(rules.get("skip_merge_commits").and_then(|v| v.as_bool()) == Some(true)
-        && commit.message.starts_with("Merge"))
+    if rules.get("skip_merge_commits").and_then(|v| v.as_bool()) == Some(true)
+        && commit.message.starts_with("Merge")
+    {
+        return false;
+    }
+    runway_core::pathmatch::deployable(rules.get("paths").and_then(|v| v.as_str()), changed)
 }

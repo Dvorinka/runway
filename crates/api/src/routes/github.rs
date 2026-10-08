@@ -187,44 +187,10 @@ async fn handle_push(state: &AppState, data: &Value) {
         timestamp: data["head_commit"]["timestamp"].as_str().map(String::from),
     };
 
+    let changed = crate::routes::git_providers::changed_paths(data);
+
     for project in projects {
-        // Deployment rules — port of the webhook filters.
-        let rules = project
-            .config
-            .get("deployment_rules")
-            .cloned()
-            .unwrap_or(json!({}));
-        if rules.get("auto_deploy").and_then(|v| v.as_bool()) == Some(false) {
-            continue;
-        }
-        let deploy_branches = rules
-            .get("deploy_branches")
-            .and_then(|v| v.as_str())
-            .unwrap_or("main,master");
-        if deploy_branches.trim() != "*" {
-            let allowed: Vec<&str> = deploy_branches
-                .split(',')
-                .map(str::trim)
-                .filter(|b| !b.is_empty())
-                .collect();
-            if !allowed.contains(&branch.as_str()) {
-                continue;
-            }
-        }
-        let ignored: Vec<&str> = rules
-            .get("ignored_authors")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .split(',')
-            .map(str::trim)
-            .filter(|a| !a.is_empty())
-            .collect();
-        if ignored.contains(&commit.author.as_str()) {
-            continue;
-        }
-        if rules.get("skip_merge_commits").and_then(|v| v.as_bool()) == Some(true)
-            && commit.message.starts_with("Merge")
-        {
+        if !crate::routes::git_providers::rules_allow(&project, &branch, &commit, &changed) {
             continue;
         }
 

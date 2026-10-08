@@ -327,6 +327,13 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 - [x] **Docs** — `docs/` reference set: self-hosting (incl. mTLS node
       setup), preset matrix, `runway.json` + project `config`
       reference, agent surface (CLI/API keys/MCP/webhooks)
+- [x] **Path-scoped deploys** — `deployment_rules.paths` glob list
+      (`apps/web/**`); push handlers extract `commits[].added/modified/
+      removed` and skip when no changed file matches (monorepo
+      filtering; Bitbucket fails open — its payload carries no file
+      lists). Shared `rules_allow` now also serves github.rs; Settings
+      gains a Deploy rules card (branches, authors, paths, merge-skip,
+      auto-deploy, PR comments)
 
 ## Non-goals
 

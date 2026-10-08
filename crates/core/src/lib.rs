@@ -23,6 +23,7 @@ pub mod mail;
 pub mod models;
 pub mod node_tls;
 pub mod password;
+pub mod pathmatch;
 pub mod presets;
 pub mod rum;
 pub mod slugify;
