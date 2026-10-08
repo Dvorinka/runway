@@ -148,10 +148,10 @@ pub async fn create(
     extra_config: Option<Value>,
 ) -> Result<Deployment> {
     let environment = project
-        .environment_for_branch(branch)
+        .environment_for_deploy(branch)
         .ok_or_else(|| Error::Validation(format!("no environment matches branch '{branch}'")))?;
 
-    let env_vars = project.env_vars_for(crypto, &environment.slug)?;
+    let env_vars = project.env_vars_for(crypto, environment.env_scope_slug())?;
     let env_vars_enc = crypto.encrypt(&serde_json::to_string(&env_vars)?)?;
 
     let mut config = project.config.clone();

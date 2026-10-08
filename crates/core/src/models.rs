@@ -148,6 +148,14 @@ impl Environment {
             extra: Default::default(),
         }
     }
+
+    /// Env-var scope: preview envs inherit their template's scoped vars.
+    pub fn env_scope_slug(&self) -> &str {
+        self.extra
+            .get("template_slug")
+            .and_then(|v| v.as_str())
+            .unwrap_or(&self.slug)
+    }
 }
 
 /// One env var entry inside the encrypted `env_vars` JSON array.
@@ -235,6 +243,43 @@ impl Project {
             }
         }
         None
+    }
+
+    /// Branch → env for deployment creation. Exact/pattern match wins;
+    /// unmatched branches synthesize a preview env cloned from the
+    /// template env (`config.preview_template`, default prod/first),
+    /// unless `config.preview_environments` is false. The synthetic env
+    /// is never persisted — branch aliases carry the preview URL, and
+    /// `environment_id` fits VARCHAR(8) via a branch hash.
+    pub fn environment_for_deploy(&self, branch: &str) -> Option<Environment> {
+        if let Some(env) = self.environment_for_branch(branch) {
+            return Some(env);
+        }
+        if self
+            .config
+            .get("preview_environments")
+            .and_then(Value::as_bool)
+            == Some(false)
+        {
+            return None;
+        }
+        let template_id = self
+            .config
+            .get("preview_template")
+            .and_then(Value::as_str)
+            .unwrap_or("prod");
+        let template = self
+            .environment_by_id(template_id)
+            .or_else(|| self.active_environments().into_iter().next())?;
+        let hash = &crate::crypto::sha256_hex(branch)[..6];
+        let mut env = template.clone();
+        env.extra
+            .insert("template_slug".into(), Value::from(template.slug.as_str()));
+        env.id = format!("pv{hash}");
+        env.slug = format!("pv{hash}");
+        env.name = format!("Preview: {branch}");
+        env.branch = branch.to_string();
+        Some(env)
     }
 
     /// Decrypted env var list.
@@ -829,6 +874,32 @@ mod tests {
         assert_eq!(p.environment_for_branch("dev-feat").unwrap().id, "staging");
         assert_eq!(p.environment_for_branch("x-pr").unwrap().id, "review");
         assert!(p.environment_for_branch("random").is_none());
+    }
+
+    #[test]
+    fn env_for_deploy_preview_fallback() {
+        let p = project_with_envs(json!([env("prod", "main"), env("staging", "dev*")]));
+        let env = p.environment_for_deploy("feat/x").unwrap();
+        assert!(env.id.starts_with("pv") && env.id.len() == 8);
+        assert_eq!(env.name, "Preview: feat/x");
+        assert_eq!(env.env_scope_slug(), "prod");
+        // Matched branches still win over the fallback.
+        assert_eq!(p.environment_for_deploy("main").unwrap().id, "prod");
+    }
+
+    #[test]
+    fn env_for_deploy_preview_disabled() {
+        let mut p = project_with_envs(json!([env("prod", "main")]));
+        p.config = json!({ "preview_environments": false });
+        assert!(p.environment_for_deploy("feat/x").is_none());
+    }
+
+    #[test]
+    fn env_for_deploy_preview_template() {
+        let mut p = project_with_envs(json!([env("prod", "main"), env("staging", "dev*")]));
+        p.config = json!({ "preview_template": "staging" });
+        let env = p.environment_for_deploy("feat/x").unwrap();
+        assert_eq!(env.env_scope_slug(), "staging");
     }
 
     #[test]

@@ -1076,6 +1076,30 @@ function Environments({ id, project }: { id: string; project: Project | null }) 
         Deploy targets matched by branch pattern (<code>*</code> = any). Each gets its own
         environment domain.
       </p>
+      <label className="mb-3 flex items-center gap-2 text-sm">
+        <input
+          type="checkbox"
+          className="accent-primary"
+          checked={(project?.config?.preview_environments as boolean | undefined) !== false}
+          onChange={async (e) => {
+            setError("");
+            try {
+              await api.patchProject(id, {
+                config: { ...(project?.config ?? {}), preview_environments: e.target.checked },
+              });
+              setMsg(e.target.checked ? "Preview environments enabled." : "Preview environments disabled.");
+            } catch (err) {
+              setError(err instanceof Error ? err.message : "failed");
+            }
+          }}
+        />
+        <span>
+          Preview environments
+          <span className="block text-xs text-muted-foreground">
+            Branches matching no environment deploy as previews under their branch URL.
+          </span>
+        </span>
+      </label>
       <div className="mb-3 grid gap-2">
         {envs.map((env) => (
           <div
