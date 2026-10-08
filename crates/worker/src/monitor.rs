@@ -261,6 +261,17 @@ async fn tick(
             Err(e) if dkr::is_not_found(&e) => ("not_found", None),
             Err(_) => continue,
         };
+        // Notify once on the running → down transition. The previous
+        // observed_status gates repeats, so a restart-loop flap can't
+        // spam one row per tick.
+        let down = match (observed, exit_code) {
+            ("dead", _) | ("not_found", _) => true,
+            ("exited", c) => c != Some(0),
+            _ => false,
+        };
+        if down && matches!(dep.observed_status.as_deref(), None | Some("running")) {
+            notify_crash(ctx, &dep, observed, exit_code.map(|c| c as i32)).await;
+        }
         sqlx::query(
             "UPDATE deployment SET observed_status = $1, observed_exit_code = $2,
              observed_at = now(), observed_last_seen_at = now() WHERE id = $3",
@@ -318,6 +329,42 @@ async fn detach_from_unused(ctx: &Ctx, self_id: &str, used: &HashSet<String>) {
             }
         }
     }
+}
+
+/// Team notification when a serving container goes down. Best-effort —
+/// a lookup failure just skips the notification.
+async fn notify_crash(ctx: &Ctx, dep: &Deployment, observed: &str, exit_code: Option<i32>) {
+    let project =
+        sqlx::query_as::<_, (String, String)>("SELECT name, team_id FROM project WHERE id = $1")
+            .bind(&dep.project_id)
+            .fetch_optional(&ctx.db)
+            .await
+            .ok()
+            .flatten();
+    let Some((name, team_id)) = project else {
+        return;
+    };
+    let reason = match observed {
+        "not_found" => "container is missing".to_string(),
+        "dead" => "container is dead".to_string(),
+        _ => format!("container exited (code {})", exit_code.unwrap_or(-1)),
+    };
+    runway_core::audit::notify_team(
+        &ctx.db,
+        &team_id,
+        "deployment.crashed",
+        &format!("App down: {name}"),
+        runway_core::audit::Notify {
+            body: Some(&format!("{} — {}", &dep.id[..7.min(dep.id.len())], reason)),
+            link: Some(&format!(
+                "/projects/{}/deployments/{}",
+                dep.project_id, dep.id
+            )),
+            project_id: Some(&dep.project_id),
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 /// Node `host` (the address Traefik/monitor reach) for a remote node.
