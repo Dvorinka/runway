@@ -282,7 +282,7 @@ pub async fn skip(
 }
 
 /// Shared redeploy: same branch + commit + source archive as `dep`.
-async fn redeploy_dep(
+pub(crate) async fn redeploy_dep(
     state: &AppState,
     user_id: i64,
     dep: &Deployment,

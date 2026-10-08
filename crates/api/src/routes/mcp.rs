@@ -62,6 +62,39 @@ fn tools() -> Value {
             json!({"type": "object", "required": ["deployment_id"],
                    "properties": {"deployment_id": {"type": "string"}}})
         ),
+        tool(
+            "deploy_project",
+            "Trigger a new deployment on a project (latest commit, or the last uploaded archive for remote-less projects)",
+            json!({"type": "object", "required": ["project_id"],
+                   "properties": {"project_id": {"type": "string"},
+                                  "branch": {"type": "string"}}})
+        ),
+        tool(
+            "cancel_deployment",
+            "Cancel a running deployment and stop its container",
+            json!({"type": "object", "required": ["deployment_id"],
+                   "properties": {"deployment_id": {"type": "string"}}})
+        ),
+        tool(
+            "rollback_environment",
+            "Roll an environment back to its previous deployment",
+            json!({"type": "object", "required": ["project_id"],
+                   "properties": {"project_id": {"type": "string"},
+                                  "environment_id": {"type": "string", "default": "prod"}}})
+        ),
+        tool(
+            "list_env",
+            "List a project's env vars (values masked)",
+            json!({"type": "object", "required": ["project_id"],
+                   "properties": {"project_id": {"type": "string"}}})
+        ),
+        tool(
+            "set_env",
+            "Upsert or delete env vars: [{key, value?, environment?, delete?}]",
+            json!({"type": "object", "required": ["project_id", "vars"],
+                   "properties": {"project_id": {"type": "string"},
+                                  "vars": {"type": "array"}}})
+        ),
     ])
 }
 
@@ -246,6 +279,142 @@ async fn call(state: &AppState, user_id: i64, name: &str, args: &Value) -> ApiRe
             )
             .await?;
             Ok(json!({ "deployment_id": new_dep.id, "status": new_dep.status }))
+        }
+        "deploy_project" => {
+            let p = project_for(state, user_id, arg(args, "project_id")?).await?;
+            let branch = args["branch"]
+                .as_str()
+                .filter(|b| !b.is_empty())
+                .unwrap_or(if p.repo_branch.is_empty() {
+                    "main"
+                } else {
+                    &p.repo_branch
+                })
+                .to_string();
+            let has_remote = match p.repo_provider.as_str() {
+                "github" | "github_enterprise" => p.github_installation_id.is_some(),
+                "gitea" => p.gitea_connection_id.is_some(),
+                "gitlab" => p.gitlab_connection_id.is_some(),
+                "bitbucket" => p.bitbucket_connection_id.is_some(),
+                _ => false,
+            };
+            let dep = if has_remote {
+                crate::routes::deployments::trigger_deployment(
+                    state,
+                    &p,
+                    &branch,
+                    "api",
+                    Some(user_id),
+                )
+                .await?
+            } else {
+                let prev: Option<runway_core::models::Deployment> = sqlx::query_as(
+                    "SELECT * FROM deployment WHERE project_id = $1 AND branch = $2 \
+                     AND config->>'source_archive' IS NOT NULL \
+                     ORDER BY created_at DESC LIMIT 1",
+                )
+                .bind(&p.id)
+                .bind(&branch)
+                .fetch_optional(&state.db)
+                .await?;
+                let Some(prev) = prev else {
+                    return Err(ApiError::bad_request(
+                        "project has no git remote — deploy via `runway deploy` first",
+                    ));
+                };
+                crate::routes::deployments::redeploy_dep(state, user_id, &prev, &p).await?
+            };
+            Ok(json!({ "deployment_id": dep.id, "status": dep.status, "branch": dep.branch }))
+        }
+        "cancel_deployment" => {
+            let (d, _p) = deployment_for(state, user_id, arg(args, "deployment_id")?).await?;
+            let docker = state
+                .docker
+                .as_ref()
+                .ok_or_else(|| ApiError::bad_request("docker unavailable"))?;
+            runway_core::deploy::cancel(&state.db, &state.bus, &state.settings, docker, &d)
+                .await
+                .map_err(|e| ApiError::bad_request(e.to_string()))?;
+            Ok(json!({ "deployment_id": d.id, "conclusion": "canceled" }))
+        }
+        "rollback_environment" => {
+            let p = project_for(state, user_id, arg(args, "project_id")?).await?;
+            let env = args["environment_id"].as_str().unwrap_or("prod");
+            let alias = runway_core::deploy::rollback(
+                &state.db,
+                &state.bus,
+                &state.settings,
+                &p,
+                env,
+            )
+            .await
+            .map_err(|e| ApiError::bad_request(e.to_string()))?;
+            Ok(json!({ "environment_id": env, "deployment_id": alias.deployment_id }))
+        }
+        "list_env" => {
+            let p = project_for(state, user_id, arg(args, "project_id")?).await?;
+            let vars = p
+                .env_vars(&state.crypto)
+                .map_err(|e| ApiError::bad_request(e.to_string()))?;
+            Ok(json!(vars
+                .iter()
+                .map(|v| json!({
+                    "key": v.key,
+                    "value": if v.value.len() <= 4 { "****".into() }
+                             else { format!("{}…{}", &v.value[..2], &v.value[v.value.len()-2..]) },
+                    "environment": v.environment,
+                }))
+                .collect::<Vec<_>>()))
+        }
+        "set_env" => {
+            let mut p = project_for(state, user_id, arg(args, "project_id")?).await?;
+            let items = args["vars"]
+                .as_array()
+                .ok_or_else(|| ApiError::bad_request("vars must be an array"))?;
+            let mut vars = p
+                .env_vars(&state.crypto)
+                .map_err(|e| ApiError::bad_request(e.to_string()))?;
+            for it in items {
+                let key = it["key"].as_str().unwrap_or("");
+                if key.is_empty()
+                    || !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                {
+                    return Err(ApiError::bad_request(format!("invalid env key '{key}'")));
+                }
+                let environment = it["environment"].as_str().map(str::to_string);
+                if let Some(env) = &environment {
+                    if p.environments()
+                        .iter()
+                        .all(|e| &e.slug != env && &e.id != env)
+                    {
+                        return Err(ApiError::bad_request(format!(
+                            "unknown environment '{env}'"
+                        )));
+                    }
+                }
+                vars.retain(|v| !(v.key == key && v.environment == environment));
+                if it["delete"].as_bool() != Some(true) {
+                    let value = it["value"]
+                        .as_str()
+                        .ok_or_else(|| {
+                            ApiError::bad_request("value required unless delete=true")
+                        })?
+                        .to_string();
+                    vars.push(runway_core::models::EnvVar {
+                        key: key.to_string(),
+                        value,
+                        environment,
+                    });
+                }
+            }
+            p.set_env_vars(&state.crypto, &vars)
+                .map_err(|e| ApiError::bad_request(e.to_string()))?;
+            sqlx::query("UPDATE project SET env_vars = $1, updated_at = now() WHERE id = $2")
+                .bind(&p.env_vars)
+                .bind(&p.id)
+                .execute(&state.db)
+                .await?;
+            Ok(json!({ "ok": true, "count": vars.len() }))
         }
         _ => Err(ApiError::bad_request(format!("unknown tool '{name}'"))),
     }

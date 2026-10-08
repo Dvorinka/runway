@@ -76,6 +76,18 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// List recent deployments for the linked project.
+    Deployments {
+        /// Max rows to print.
+        #[arg(long, default_value_t = 15)]
+        limit: usize,
+    },
+    /// Roll back an environment to its previous deployment.
+    Rollback {
+        /// Environment slug (default: prod).
+        #[arg(default_value = "prod")]
+        environment: String,
+    },
     /// Open the project's deployment URL in the browser.
     Open {
         /// Print the URL instead of opening a browser.
@@ -160,6 +172,8 @@ async fn main() -> anyhow::Result<()> {
         Command::Logs { deployment, follow } => commands::logs(deployment, follow).await?,
         Command::Env { args, environment } => commands::env(args, environment).await?,
         Command::Domains { args } => commands::domains(args).await?,
+        Command::Deployments { limit } => commands::deployments(limit).await?,
+        Command::Rollback { environment } => commands::rollback(environment).await?,
         Command::Open { print } => commands::open(print).await?,
     }
 

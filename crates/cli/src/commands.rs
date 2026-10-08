@@ -129,6 +129,53 @@ pub async fn logs(deployment: Option<String>, follow: bool) -> anyhow::Result<()
     Ok(())
 }
 
+/// `runway deployments [--limit N]`.
+pub async fn deployments(limit: usize) -> anyhow::Result<()> {
+    let client = Client::from_config()?;
+    let link = client::load_link()?;
+    let res = client
+        .get(&format!(
+            "/api/v1/projects/{}/deployments?limit={limit}",
+            link.project_id
+        ))
+        .await?;
+    let deps = res["deployments"].as_array().cloned().unwrap_or_default();
+    if deps.is_empty() {
+        println!("No deployments yet.");
+        return Ok(());
+    }
+    for d in deps {
+        let sha = d["commit_sha"].as_str().unwrap_or("");
+        let short = &sha[..sha.len().min(7)];
+        let status = d["conclusion"]
+            .as_str()
+            .or_else(|| d["status"].as_str())
+            .unwrap_or("-");
+        let created = d["created_at"].as_str().unwrap_or("");
+        let msg = d["commit_meta"]["message"].as_str().unwrap_or("");
+        println!("{}  {:<10}  {:<19}  {}", short, status, created, msg);
+    }
+    Ok(())
+}
+
+/// `runway rollback [environment]`.
+pub async fn rollback(environment: String) -> anyhow::Result<()> {
+    let client = Client::from_config()?;
+    let link = client::load_link()?;
+    let res = client
+        .post(
+            &format!(
+                "/api/v1/projects/{}/environments/{environment}/rollback",
+                link.project_id
+            ),
+            &serde_json::json!({}),
+        )
+        .await?;
+    let dep = res["deployment_id"].as_str().unwrap_or("?");
+    println!("{environment} rolled back to deployment {dep}");
+    Ok(())
+}
+
 /// `runway env list | set KEY=VAL | unset KEY`.
 pub async fn env(args: Vec<String>, environment: Option<String>) -> anyhow::Result<()> {
     let client = Client::from_config()?;
