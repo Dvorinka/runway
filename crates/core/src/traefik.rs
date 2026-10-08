@@ -53,11 +53,13 @@ pub async fn update_project_config(
         Option<String>,
         Option<i32>,
         Option<String>,
+        Option<String>,
     );
     let aliases: Vec<AliasRow> = if include_deployment_ids.is_empty() {
         sqlx::query_as(
             "SELECT a.subdomain, a.deployment_id, a.type, a.value, a.id,
-                    d.remote_node_id, d.remote_port, n.host
+                    d.remote_node_id, d.remote_port, n.host,
+                    d.config->>'output_directory'
              FROM alias a JOIN deployment d ON a.deployment_id = d.id
              LEFT JOIN remote_node n ON n.id = d.remote_node_id
              WHERE d.project_id = $1 AND d.conclusion = 'succeeded'",
@@ -68,7 +70,8 @@ pub async fn update_project_config(
     } else {
         sqlx::query_as(
             "SELECT a.subdomain, a.deployment_id, a.type, a.value, a.id,
-                    d.remote_node_id, d.remote_port, n.host
+                    d.remote_node_id, d.remote_port, n.host,
+                    d.config->>'output_directory'
              FROM alias a JOIN deployment d ON a.deployment_id = d.id
              LEFT JOIN remote_node n ON n.id = d.remote_node_id
              WHERE d.project_id = $1
@@ -129,11 +132,60 @@ pub async fn update_project_config(
         }
     };
 
+    // Static-output deployments get CDN-grade caching at the edge:
+    // fingerprinted assets immutable for a year (higher-priority router
+    // matching asset extensions), HTML revalidated every load. Opt out
+    // with `config.cdn_cache = false`.
+    let cdn_enabled = project
+        .config
+        .get("cdn_cache")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    let is_static = |outdir: &Option<String>| {
+        cdn_enabled && outdir.as_deref().is_some_and(|s| !s.trim().is_empty())
+    };
+    let asset_rule = "PathRegexp(`\\.(js|mjs|css|map|png|jpe?g|gif|svg|ico|webp|avif|woff2?|ttf|otf|wasm|mp4|webm)$`)";
+    let attach_cache = |routers: &mut serde_json::Map<String, Value>,
+                        middlewares: &mut serde_json::Map<String, Value>,
+                        key: String,
+                        host: &str,
+                        svc: &str,
+                        router: &mut Value| {
+        middlewares
+            .entry(String::from("cdn-assets"))
+            .or_insert_with(|| {
+                json!({"headers": {"customResponseHeaders":
+                    {"Cache-Control": "public, max-age=31536000, immutable"}}})
+            });
+        middlewares
+            .entry(String::from("cdn-html"))
+            .or_insert_with(|| {
+                json!({"headers": {"customResponseHeaders":
+                    {"Cache-Control": "public, max-age=0, must-revalidate"}}})
+            });
+        let mut mws: Vec<Value> = router["middlewares"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        mws.push(json!("cdn-html"));
+        router["middlewares"] = json!(mws);
+        let mut assets = json!({
+            "rule": format!("Host(`{host}`) && {asset_rule}"),
+            "service": svc,
+            "middlewares": ["cdn-assets"],
+            "entryPoints": entry_points,
+        });
+        if https {
+            assets["tls"] = router["tls"].clone();
+        }
+        routers.insert(key, assets);
+    };
+
     // Hosts serving this project — `/_runway-rum` on any of them is
     // routed to the API (speed-insights beacon, same origin as the site).
     let mut rum_hosts: Vec<String> = Vec::new();
 
-    for (subdomain, deployment_id, _ty, _value, alias_id, rnode, rport, rhost) in &aliases {
+    for (subdomain, deployment_id, _ty, _value, alias_id, rnode, rport, rhost, outdir) in &aliases {
         let svc = service_ref(deployment_id, rnode, *rport, rhost, &mut services);
         let host = format!("{subdomain}.{}", settings.deploy_domain);
         rum_hosts.push(host.clone());
@@ -145,15 +197,25 @@ pub async fn update_project_config(
         if https {
             router["tls"] = json!({ "certResolver": "le" });
         }
+        if is_static(outdir) {
+            attach_cache(
+                &mut routers,
+                &mut middlewares,
+                format!("router-assets-{alias_id}"),
+                &host,
+                &svc,
+                &mut router,
+            );
+        }
         routers.insert(format!("router-alias-{alias_id}"), router);
     }
 
     for domain in &domains {
         // Domains route to the current deployment of their environment alias.
-        let env_alias = aliases.iter().find(|(_, _, ty, value, _, _, _, _)| {
+        let env_alias = aliases.iter().find(|(_, _, ty, value, _, _, _, _, _)| {
             ty == "environment_id" && value.as_deref() == domain.environment_id.as_deref()
         });
-        let Some((_, deployment_id, _, _, _, rnode, rport, rhost)) = env_alias else {
+        let Some((_, deployment_id, _, _, _, rnode, rport, rhost, outdir)) = env_alias else {
             continue;
         };
 
@@ -168,6 +230,16 @@ pub async fn update_project_config(
             if https {
                 // lehttp: custom domains use the HTTP-01 resolver.
                 router["tls"] = json!({ "certResolver": "lehttp" });
+            }
+            if is_static(outdir) {
+                attach_cache(
+                    &mut routers,
+                    &mut middlewares,
+                    format!("router-assets-dom-{}", domain.id),
+                    &domain.hostname,
+                    &svc,
+                    &mut router,
+                );
             }
             routers.insert(format!("router-domain-{}", domain.id), router);
         } else {
@@ -281,8 +353,11 @@ pub async fn update_project_config(
                     .unwrap_or_default();
                 // Firewall runs first — an attacker shouldn't hit the app
                 // before the allowlist check.
-                router["middlewares"] =
-                    json!(fw_mws.iter().map(|m| json!(m)).chain(existing).collect::<Vec<_>>());
+                router["middlewares"] = json!(fw_mws
+                    .iter()
+                    .map(|m| json!(m))
+                    .chain(existing)
+                    .collect::<Vec<_>>());
             }
         }
     }

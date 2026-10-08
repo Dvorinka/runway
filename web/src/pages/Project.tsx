@@ -302,6 +302,8 @@ function Speed({ id }: { id: string }) {
 
 const selectCls =
   "h-9 w-full rounded-md border border-border bg-transparent px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring";
+const inputCls =
+  "w-full rounded-md border border-border bg-transparent px-3 py-2 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-ring";
 
 function Err({ msg }: { msg: string }) {
   return msg ? <p className="mt-2 text-xs text-destructive">{msg}</p> : null;
@@ -947,6 +949,7 @@ function Settings({ id, project }: { id: string; project: Project | null }) {
           ))}
         </select>
       </Card>
+      <DockerBuild id={id} project={project} />
       <Firewall id={id} project={project} />
       <Card className="p-4">
         <h3 className="mb-2 text-sm font-medium">Export / import</h3>
@@ -963,6 +966,85 @@ function Settings({ id, project }: { id: string; project: Project | null }) {
       <Err msg={error} />
       {msg && <p className="text-xs text-muted-foreground">{msg}</p>}
     </div>
+  );
+}
+
+function DockerBuild({ id, project }: { id: string; project: Project | null }) {
+  const [df, setDf] = useState("");
+  const [args, setArgs] = useState("");
+  const [msg, setMsg] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setDf((project?.config?.dockerfile_path as string) ?? "");
+    const ba = (project?.config?.build_args ?? {}) as Record<string, string>;
+    setArgs(Object.entries(ba).map(([k, v]) => `${k}=${v}`).join("\n"));
+  }, [project?.config]);
+
+  async function save() {
+    setError("");
+    setMsg("");
+    const path = df.trim();
+    if (path && (path.startsWith("/") || path.split("/").includes(".."))) {
+      setError("dockerfile path must be relative to the repo");
+      return;
+    }
+    const buildArgs: Record<string, string> = {};
+    for (const line of args.split("\n")) {
+      const t = line.trim();
+      if (!t || t.startsWith("#")) continue;
+      const i = t.indexOf("=");
+      if (i < 1) {
+        setError(`invalid build arg: ${t}`);
+        return;
+      }
+      buildArgs[t.slice(0, i).trim()] = t.slice(i + 1).trim();
+    }
+    try {
+      await api.patchProject(id, {
+        config: {
+          dockerfile_path: path || null,
+          build_args: buildArgs,
+        },
+      });
+      setMsg(path ? "Saved — next deploy builds the Dockerfile into an image." : "Saved.");
+      setTimeout(() => setMsg(""), 2500);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "save failed");
+    }
+  }
+
+  return (
+    <Card className="p-4">
+      <h3 className="mb-1 text-sm font-medium">Dockerfile</h3>
+      <p className="mb-3 text-xs text-muted-foreground">
+        Build the repo with <code className="font-mono">docker build</code> instead of a preset —
+        the image's own command serves the app. Path is relative to the repo root (or the root
+        directory if set).
+      </p>
+      <div className="grid gap-3">
+        <Input
+          placeholder="Dockerfile"
+          value={df}
+          onChange={(e) => setDf(e.target.value)}
+          className="font-mono"
+        />
+        <textarea
+          className={inputCls}
+          rows={3}
+          placeholder={"Build args (one per line)\nNODE_ENV=production"}
+          value={args}
+          onChange={(e) => setArgs(e.target.value)}
+        />
+        <div>
+          <Button size="sm" onClick={save}>
+            Save
+          </Button>
+        </div>
+      </div>
+      <Err msg={error} />
+      {msg && <p className="mt-2 text-xs text-muted-foreground">{msg}</p>}
+    </Card>
   );
 }
 

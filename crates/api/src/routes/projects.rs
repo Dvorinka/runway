@@ -269,6 +269,14 @@ pub async fn create(
                 &mut config,
                 runway_core::presets::package_manager(&refs),
             );
+        } else if root_files.iter().any(|f| f == "Dockerfile") {
+            // No framework matched but the repo ships a Dockerfile —
+            // build it directly (docker build, image CMD serves).
+            config
+                .as_object_mut()
+                .unwrap()
+                .entry("dockerfile_path".to_string())
+                .or_insert_with(|| "Dockerfile".into());
         }
     }
 
