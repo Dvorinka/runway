@@ -298,6 +298,7 @@ pub struct ChangePassword {
 pub async fn change_password(
     user: AuthUser,
     State(state): State<AppState>,
+    jar: CookieJar,
     axum::Json(body): axum::Json<ChangePassword>,
 ) -> ApiResult<Response> {
     let Some(hash) = user.user.password_hash.as_deref() else {
@@ -312,12 +313,18 @@ pub async fn change_password(
         ));
     }
     let hash = runway_core::password::hash(&body.new_password)?;
-    sqlx::query("UPDATE \"user\" SET password_hash = $1, updated_at = now() WHERE id = $2")
-        .bind(&hash)
-        .bind(user.user.id)
-        .execute(&state.db)
-        .await?;
-    Ok(axum::Json(json!({ "ok": true })).into_response())
+    // Revoke every pre-existing session (JWTs are checked against this
+    // cutoff), then hand the caller a fresh cookie so they stay signed in.
+    sqlx::query(
+        "UPDATE \"user\" SET password_hash = $1, tokens_invalid_before = now(),
+         updated_at = now() WHERE id = $2",
+    )
+    .bind(&hash)
+    .bind(user.user.id)
+    .execute(&state.db)
+    .await?;
+    let jar = jar.add(session_cookie(&state, user.user.id)?);
+    Ok((jar, axum::Json(json!({ "ok": true }))).into_response())
 }
 
 #[derive(Deserialize)]
@@ -342,10 +349,13 @@ pub async fn delete_me(
     if !ok {
         return Err(ApiError::unauthorized("password is wrong"));
     }
-    sqlx::query("UPDATE \"user\" SET status = 'deleted', updated_at = now() WHERE id = $1")
-        .bind(user.user.id)
-        .execute(&state.db)
-        .await?;
+    sqlx::query(
+        "UPDATE \"user\" SET status = 'deleted', tokens_invalid_before = now(),
+         updated_at = now() WHERE id = $1",
+    )
+    .bind(user.user.id)
+    .execute(&state.db)
+    .await?;
     let jar = jar.remove(
         Cookie::build((state.settings.session_cookie.clone(), String::new()))
             .path("/")
