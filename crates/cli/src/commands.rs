@@ -103,9 +103,17 @@ pub async fn deploy(follow: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `runway logs [deployment-id] [--follow]`.
-pub async fn logs(deployment: Option<String>, follow: bool) -> anyhow::Result<()> {
+/// `runway logs [deployment-id] [--follow] [--project]`.
+pub async fn logs(deployment: Option<String>, follow: bool, project: bool) -> anyhow::Result<()> {
     let client = Client::from_config()?;
+    if project {
+        let link = client::load_link()?;
+        let text = client
+            .get_text(&format!("/api/v1/projects/{}/logs", link.project_id))
+            .await?;
+        print!("{text}");
+        return Ok(());
+    }
     let dep_id = match deployment {
         Some(d) => d,
         None => latest_deployment(&client).await?,

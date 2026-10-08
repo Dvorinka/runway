@@ -47,6 +47,9 @@ enum Command {
         /// Keep tailing until the deployment concludes.
         #[arg(long)]
         follow: bool,
+        /// Merged logs across the linked project's recent deployments.
+        #[arg(long)]
+        project: bool,
     },
     /// Authenticate this machine against an instance.
     Login {
@@ -174,7 +177,11 @@ async fn main() -> anyhow::Result<()> {
         Command::Login { server, key } => commands::login(server, key).await?,
         Command::Link { project } => commands::link(project).await?,
         Command::Deploy { follow } => commands::deploy(follow).await?,
-        Command::Logs { deployment, follow } => commands::logs(deployment, follow).await?,
+        Command::Logs {
+            deployment,
+            follow,
+            project,
+        } => commands::logs(deployment, follow, project).await?,
         Command::Env { args, environment } => commands::env(args, environment).await?,
         Command::Domains { args } => commands::domains(args).await?,
         Command::Stats { deployment } => commands::stats(deployment).await?,
