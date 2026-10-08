@@ -22,6 +22,7 @@ pub mod mail;
 pub mod models;
 pub mod password;
 pub mod presets;
+pub mod rum;
 pub mod slugify;
 pub mod traefik;
 pub mod tunnel;
