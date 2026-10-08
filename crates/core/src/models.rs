@@ -29,6 +29,9 @@ pub struct User {
     pub tokens_invalid_before: Option<DateTime<Utc>>,
     pub default_team_id: Option<String>,
     pub password_hash: Option<String>,
+    pub totp_secret_enc: Option<String>,
+    pub totp_enabled: bool,
+    pub totp_recovery: Value,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

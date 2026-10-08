@@ -292,8 +292,12 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
       metrics, logs, and artifacts after each deploy; alias-referenced
       deployments (incl. `previous_deployment_id` rollback targets)
       always spared. Settings card added
-- [ ] **TOTP 2FA** — `otpauth://` enrollment + recovery codes on the
-      account surface
+- [x] **TOTP 2FA** — `otpauth://` enrollment (QR + manual secret) with
+      `totp-rs`; password-valid login returns a 5-min `runway:pre2fa`
+      pending token (wrong audience — never a session); challenge
+      accepts authenticator codes or single-use recovery codes stored
+      as sha256 hashes; disable re-auths by password. Settings card,
+      login 2FA step, migration 0019
 - [x] **First-party web analytics** — `web_analytics.enabled` gates
       `pageview`/`custom` beacons on the same `/_runway-rum` endpoint;
       snippet fires pv on load + SPA navs and exposes

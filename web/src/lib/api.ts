@@ -44,6 +44,7 @@ export interface Me {
   username: string;
   name: string | null;
   has_avatar: boolean;
+  totp_enabled?: boolean;
 }
 
 export interface EnvVar {
@@ -220,9 +221,28 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   me: () => req<Me>("/api/auth/me"),
   login: (email: string, password: string) =>
-    req<{ ok: boolean }>("/api/auth/login", {
+    req<{ ok?: boolean; two_factor?: boolean; pending?: string }>("/api/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, password }),
+    }),
+  totpChallenge: (pending: string, code: string) =>
+    req<{ ok: boolean }>("/api/auth/totp/challenge", {
+      method: "POST",
+      body: JSON.stringify({ pending, code }),
+    }),
+  totpEnroll: () =>
+    req<{ secret: string; otpauth_url: string }>("/api/auth/totp/enroll", {
+      method: "POST",
+    }),
+  totpVerify: (code: string) =>
+    req<{ ok: boolean; recovery_codes: string[] }>("/api/auth/totp/verify", {
+      method: "POST",
+      body: JSON.stringify({ code }),
+    }),
+  totpDisable: (password: string) =>
+    req<{ ok: boolean }>("/api/auth/totp/disable", {
+      method: "POST",
+      body: JSON.stringify({ password }),
     }),
   register: (email: string, password: string, username?: string) =>
     req<{ ok: boolean }>("/api/auth/register", {

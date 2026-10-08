@@ -429,6 +429,7 @@ function Account({ me }: { me: Me }) {
           </div>
         </form>
       </Card>
+      <TwoFactor enabled={!!me.totp_enabled} />
       <Card className="border-destructive/40 p-5">
         <h2 className="mb-1 text-sm font-medium text-destructive">Delete account</h2>
         <p className="mb-4 text-xs text-muted-foreground">
@@ -459,6 +460,151 @@ function Account({ me }: { me: Me }) {
         )}
       </Card>
     </>
+  );
+}
+
+function TwoFactor({ enabled: initiallyEnabled }: { enabled: boolean }) {
+  const [enabled, setEnabled] = useState(initiallyEnabled);
+  const [phase, setPhase] = useState<"idle" | "enroll" | "codes" | "disable">("idle");
+  const [secret, setSecret] = useState("");
+  const [qrUrl, setQrUrl] = useState("");
+  const [code, setCode] = useState("");
+  const [codes, setCodes] = useState<string[]>([]);
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+
+  async function enroll() {
+    setError("");
+    try {
+      const res = await api.totpEnroll();
+      setSecret(res.secret);
+      const qrcode = await import("qrcode");
+      setQrUrl(await qrcode.toDataURL(res.otpauth_url, { margin: 1, width: 180 }));
+      setPhase("enroll");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "enroll failed");
+    }
+  }
+
+  async function verify(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    try {
+      const res = await api.totpVerify(code);
+      setCodes(res.recovery_codes);
+      setCode("");
+      setPhase("codes");
+      setEnabled(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "invalid code");
+    }
+  }
+
+  async function disable(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    try {
+      await api.totpDisable(password);
+      setPassword("");
+      setPhase("idle");
+      setEnabled(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "invalid password");
+    }
+  }
+
+  return (
+    <Card className="p-5">
+      <div className="mb-1 flex items-center justify-between">
+        <h2 className="text-sm font-medium">Two-factor authentication</h2>
+        {enabled && <Badge variant="success">on</Badge>}
+      </div>
+      <p className="mb-4 text-xs text-muted-foreground">
+        TOTP via any authenticator app — sign-in asks for a 6-digit code after
+        your password. Recovery codes are shown once at setup.
+      </p>
+
+      {phase === "idle" &&
+        (enabled ? (
+          <Button variant="outline" size="sm" onClick={() => setPhase("disable")}>
+            Disable…
+          </Button>
+        ) : (
+          <Button size="sm" onClick={enroll}>
+            Set up two-factor
+          </Button>
+        ))}
+
+      {phase === "enroll" && (
+        <form onSubmit={verify} className="grid gap-3">
+          <div className="flex items-start gap-4">
+            {qrUrl && (
+              <img src={qrUrl} alt="TOTP QR code" className="rounded-md border border-border" />
+            )}
+            <div className="text-xs text-muted-foreground">
+              <p className="mb-2">Scan with your authenticator app, or enter manually:</p>
+              <code className="block break-all rounded-md border border-border bg-black/40 p-2 font-mono">
+                {secret}
+              </code>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Input
+              placeholder="6-digit code"
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+              required
+              className="w-36 font-mono"
+            />
+            <Button type="submit" size="sm">
+              Enable
+            </Button>
+            <Button type="button" variant="ghost" size="sm" onClick={() => setPhase("idle")}>
+              Cancel
+            </Button>
+          </div>
+        </form>
+      )}
+
+      {phase === "codes" && (
+        <div className="grid gap-3">
+          <p className="text-xs text-amber-400">
+            Save these recovery codes — each works once in place of an
+            authenticator code. They are shown only now.
+          </p>
+          <div className="grid grid-cols-2 gap-1 rounded-md border border-border bg-black/40 p-3 font-mono text-xs sm:grid-cols-4">
+            {codes.map((c) => (
+              <span key={c}>{c}</span>
+            ))}
+          </div>
+          <div>
+            <Button size="sm" onClick={() => setPhase("idle")}>
+              Done
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {phase === "disable" && (
+        <form onSubmit={disable} className="flex items-center gap-2">
+          <Input
+            type="password"
+            placeholder="confirm with your password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            className="max-w-xs"
+          />
+          <Button type="submit" variant="destructive" size="sm">
+            Disable 2FA
+          </Button>
+          <Button type="button" variant="ghost" size="sm" onClick={() => setPhase("idle")}>
+            Cancel
+          </Button>
+        </form>
+      )}
+      {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
+    </Card>
   );
 }
 

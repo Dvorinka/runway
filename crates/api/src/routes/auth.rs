@@ -14,7 +14,7 @@ use runway_core::slugify::{slugify, token_hex};
 
 use runway_core::access::is_email_allowed;
 
-use crate::auth::{mint_session, AuthUser};
+use crate::auth::{mint_pending, mint_session, AuthUser};
 use crate::error::{ApiError, ApiResult};
 use crate::state::AppState;
 
@@ -79,7 +79,20 @@ pub async fn login(
     if !valid {
         return Err(ApiError::unauthorized("invalid email or password"));
     }
-    let user = ensure_personal_team(&state, user.unwrap()).await?;
+    let user = user.unwrap();
+    if user.totp_enabled {
+        // Password verified — second factor required. The pending
+        // token is a short-lived JWT with a distinct audience; it can
+        // never pass as a session (decode_session pins runway:auth).
+        let pending =
+            mint_pending(&state.settings.secret_key, user.id).map_err(ApiError::internal)?;
+        return Ok(axum::Json(json!({
+            "two_factor": true,
+            "pending": pending,
+        }))
+        .into_response());
+    }
+    let user = ensure_personal_team(&state, user).await?;
     let jar = jar.add(session_cookie(&state, user.id)?);
     Ok((jar, axum::Json(json!({ "ok": true }))).into_response())
 }
@@ -198,6 +211,7 @@ pub async fn me(user: AuthUser) -> ApiResult<Response> {
         "username": user.user.username,
         "name": user.user.name,
         "has_avatar": user.user.has_avatar,
+        "totp_enabled": user.user.totp_enabled,
         "default_team_id": user.user.default_team_id,
     }))
     .into_response())
@@ -397,4 +411,180 @@ pub(crate) async fn unique_username(state: &AppState, login: &str) -> ApiResult<
         n += 1;
         candidate = format!("{base}-{n}");
     }
+}
+
+// ---- TOTP two-factor ------------------------------------------------
+
+fn totp_for(secret_b32: &str, email: &str) -> ApiResult<totp_rs::TOTP> {
+    use totp_rs::{Algorithm, Secret};
+    let secret = Secret::Encoded(secret_b32.to_string());
+    totp_rs::TOTP::new(
+        Algorithm::SHA1,
+        6,
+        1,
+        30,
+        secret
+            .to_bytes()
+            .map_err(|_| ApiError::bad_request("invalid totp secret"))?,
+        Some("Runway".into()),
+        email.to_string(),
+    )
+    .map_err(ApiError::internal)
+}
+
+fn check_totp(user: &User, code: &str, secret_b32: &str) -> bool {
+    let code: String = code.chars().filter(|c| c.is_ascii_digit()).collect();
+    code.len() == 6
+        && totp_for(secret_b32, &user.email)
+            .map(|t| t.check_current(&code).unwrap_or(false))
+            .unwrap_or(false)
+}
+
+fn recovery_codes() -> Vec<String> {
+    (0..8)
+        .map(|_| format!("{}-{}", token_hex(2), token_hex(2)))
+        .collect()
+}
+
+/// `POST /api/auth/totp/enroll` — generate a pending secret. The raw
+/// base32 goes back once for the authenticator app; the encrypted copy
+/// stays pending until `verify` confirms a code.
+pub async fn totp_enroll(user: AuthUser, State(state): State<AppState>) -> ApiResult<Response> {
+    use totp_rs::Secret;
+    if user.user.totp_enabled {
+        return Err(ApiError::bad_request("two-factor already enabled"));
+    }
+    let secret = Secret::generate_secret().to_encoded().to_string();
+    let enc = state.crypto.encrypt(&secret).map_err(ApiError::internal)?;
+    sqlx::query("UPDATE \"user\" SET totp_secret_enc = $1, updated_at = now() WHERE id = $2")
+        .bind(&enc)
+        .bind(user.user.id)
+        .execute(&state.db)
+        .await?;
+    let totp = totp_for(&secret, &user.user.email)?;
+    Ok(axum::Json(json!({
+        "secret": secret,
+        "otpauth_url": totp.get_url(),
+    }))
+    .into_response())
+}
+
+#[derive(Deserialize)]
+pub struct TotpCode {
+    code: String,
+}
+
+/// `POST /api/auth/totp/verify` — first valid code activates 2FA and
+/// returns one-time recovery codes (stored as sha256 hashes).
+pub async fn totp_verify(
+    user: AuthUser,
+    State(state): State<AppState>,
+    axum::Json(body): axum::Json<TotpCode>,
+) -> ApiResult<Response> {
+    let enc = user
+        .user
+        .totp_secret_enc
+        .as_deref()
+        .ok_or_else(|| ApiError::bad_request("enroll first"))?;
+    let secret = state.crypto.decrypt(enc).map_err(ApiError::internal)?;
+    if !check_totp(&user.user, &body.code, &secret) {
+        return Err(ApiError::unauthorized("invalid code"));
+    }
+    let codes = recovery_codes();
+    let hashes: Vec<String> = codes
+        .iter()
+        .map(|c| runway_core::crypto::sha256_hex(c))
+        .collect();
+    sqlx::query(
+        "UPDATE \"user\" SET totp_enabled = true, totp_recovery = $1,
+                updated_at = now() WHERE id = $2",
+    )
+    .bind(json!(hashes))
+    .bind(user.user.id)
+    .execute(&state.db)
+    .await?;
+    Ok(axum::Json(json!({ "ok": true, "recovery_codes": codes })).into_response())
+}
+
+#[derive(Deserialize)]
+pub struct TotpChallenge {
+    pending: String,
+    code: String,
+}
+
+/// `POST /api/auth/totp/challenge` — pending token + TOTP or recovery
+/// code → session cookie. Recovery codes are single-use and consumed.
+pub async fn totp_challenge(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    axum::Json(body): axum::Json<TotpChallenge>,
+) -> ApiResult<Response> {
+    let Some(uid) = crate::auth::decode_pending(&state.settings.secret_key, &body.pending) else {
+        return Err(ApiError::unauthorized("invalid or expired challenge"));
+    };
+    let user = crate::auth::user_by_id(&state, uid).await?;
+    if !user.totp_enabled {
+        return Err(ApiError::bad_request("two-factor not enabled"));
+    }
+    let enc = user
+        .totp_secret_enc
+        .as_deref()
+        .ok_or_else(|| ApiError::bad_request("enroll first"))?;
+    let secret = state.crypto.decrypt(enc).map_err(ApiError::internal)?;
+
+    let code: String = body.code.trim().to_lowercase();
+    let mut ok = check_totp(&user, &code, &secret);
+    if !ok {
+        // Recovery path — compare against stored hashes, consume on hit.
+        let hashes: Vec<String> =
+            serde_json::from_value(user.totp_recovery.clone()).unwrap_or_default();
+        let hash = runway_core::crypto::sha256_hex(&code);
+        if let Some(pos) = hashes.iter().position(|h| h == &hash) {
+            let mut rest = hashes;
+            rest.remove(pos);
+            sqlx::query("UPDATE \"user\" SET totp_recovery = $1 WHERE id = $2")
+                .bind(json!(rest))
+                .bind(user.id)
+                .execute(&state.db)
+                .await?;
+            ok = true;
+        }
+    }
+    if !ok {
+        return Err(ApiError::unauthorized("invalid code"));
+    }
+    let user = ensure_personal_team(&state, user).await?;
+    let jar = jar.add(session_cookie(&state, user.id)?);
+    Ok((jar, axum::Json(json!({ "ok": true }))).into_response())
+}
+
+#[derive(Deserialize)]
+pub struct TotpDisable {
+    password: String,
+}
+
+/// `POST /api/auth/totp/disable` — password re-auth required, then all
+/// TOTP state is cleared.
+pub async fn totp_disable(
+    user: AuthUser,
+    State(state): State<AppState>,
+    axum::Json(body): axum::Json<TotpDisable>,
+) -> ApiResult<Response> {
+    let valid = user
+        .user
+        .password_hash
+        .as_deref()
+        .map(|h| runway_core::password::verify(h, &body.password))
+        .unwrap_or(false);
+    if !valid {
+        return Err(ApiError::unauthorized("invalid password"));
+    }
+    sqlx::query(
+        "UPDATE \"user\" SET totp_enabled = false, totp_secret_enc = NULL,
+                totp_recovery = '[]'::jsonb, updated_at = now() WHERE id = $1",
+    )
+    .bind(user.user.id)
+    .execute(&state.db)
+    .await?;
+    Ok(axum::Json(json!({ "ok": true })).into_response())
 }

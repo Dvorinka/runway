@@ -30,6 +30,13 @@ pub fn router(state: AppState) -> Router {
                 .delete(routes::auth::delete_me),
         )
         .route("/api/auth/password", post(routes::auth::change_password))
+        .route("/api/auth/totp/enroll", post(routes::auth::totp_enroll))
+        .route("/api/auth/totp/verify", post(routes::auth::totp_verify))
+        .route(
+            "/api/auth/totp/challenge",
+            post(routes::auth::totp_challenge),
+        )
+        .route("/api/auth/totp/disable", post(routes::auth::totp_disable))
         .route(
             "/api/auth/avatar",
             put(routes::avatars::put_user).delete(routes::avatars::delete_user),
