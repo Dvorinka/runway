@@ -8,6 +8,7 @@
 //! - `jobs`:    claim queued jobs -> deploy pipeline handlers.
 //! - `monitor`: probe containers in `deploy`, sweep observed state.
 
+pub mod cleanup;
 pub mod cron;
 pub mod deploy;
 pub mod jobs;

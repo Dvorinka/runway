@@ -982,9 +982,56 @@ function Settings({ id, project }: { id: string; project: Project | null }) {
           <input ref={importRef} type="file" accept=".json" hidden onChange={doImport} />
         </div>
       </Card>
+      {project && <DangerZone project={project} />}
       <Err msg={error} />
       {msg && <p className="text-xs text-muted-foreground">{msg}</p>}
     </div>
+  );
+}
+
+function DangerZone({ project }: { project: Project }) {
+  const nav = useNavigate();
+  const [confirm, setConfirm] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  async function destroy() {
+    setBusy(true);
+    setErr("");
+    try {
+      await api.deleteProject(project.id, confirm);
+      nav("/projects");
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "failed");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card className="border-destructive/40 p-4">
+      <h3 className="mb-1 text-sm font-medium text-destructive">Delete project</h3>
+      <p className="mb-3 text-xs text-muted-foreground">
+        Removes all deployments, containers, domains and edge config. Type{" "}
+        <span className="font-mono text-foreground">{project.name}</span> to confirm.
+      </p>
+      <div className="flex gap-2">
+        <Input
+          value={confirm}
+          onChange={(e) => setConfirm(e.target.value)}
+          placeholder={project.name}
+          className="max-w-56"
+        />
+        <Button
+          variant="destructive"
+          size="sm"
+          disabled={busy || confirm !== project.name}
+          onClick={destroy}
+        >
+          Delete
+        </Button>
+      </div>
+      {err && <p className="mt-2 text-xs text-destructive">{err}</p>}
+    </Card>
   );
 }
 

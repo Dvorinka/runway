@@ -443,6 +443,43 @@ pub async fn patch(
     Ok(Json(project_json(&state, &updated)).into_response())
 }
 
+#[derive(Deserialize)]
+pub struct DeleteProject {
+    /// Must match the project name — devpush types-the-name confirm.
+    pub confirm: String,
+}
+
+/// `DELETE /api/v1/projects/{id}` — marks deleted and enqueues the
+/// `delete_project` job (containers, aliases, domains, edge config).
+pub async fn delete(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<DeleteProject>,
+) -> ApiResult<Response> {
+    let project = accessible_project_writer(&state, user.user.id, &id).await?;
+    if body.confirm != project.name {
+        return Err(ApiError::bad_request("type the project name to confirm"));
+    }
+    sqlx::query("UPDATE project SET status = 'deleted', updated_at = now() WHERE id = $1")
+        .bind(&project.id)
+        .execute(&state.db)
+        .await?;
+    runway_core::deploy::enqueue(
+        &state.db,
+        "delete_project",
+        json!({ "project_id": project.id }),
+        0,
+    )
+    .await?;
+    let mut a = runway_core::audit::Audit::new("project.delete");
+    a.user_id = Some(user.user.id);
+    a.team_id = Some(project.team_id.clone());
+    a.project_id = Some(project.id.clone());
+    runway_core::audit::log(&state.db, a).await;
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
 fn project_json(state: &AppState, p: &Project) -> Value {
     json!({
         "id": p.id,

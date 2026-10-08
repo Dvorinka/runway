@@ -116,7 +116,9 @@ pub fn router(state: AppState) -> Router {
         )
         .route(
             "/api/v1/projects/{id}",
-            get(routes::projects::get).patch(routes::projects::patch),
+            get(routes::projects::get)
+                .patch(routes::projects::patch)
+                .delete(routes::projects::delete),
         )
         .route(
             "/api/v1/projects/{id}/avatar",

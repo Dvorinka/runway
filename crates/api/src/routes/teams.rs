@@ -285,6 +285,16 @@ pub async fn delete(
         .bind(&team_id)
         .execute(&state.db)
         .await?;
+    // Cascade — projects, containers, storage, memberships. Port of
+    // devpush enqueueing delete_team.
+    runway_core::deploy::enqueue(
+        &state.db,
+        "delete_team",
+        serde_json::json!({ "team_id": team_id }),
+        0,
+    )
+    .await
+    .map_err(ApiError::internal)?;
     let mut a = runway_core::audit::Audit::new("team.delete");
     a.user_id = Some(user.user.id);
     a.team_id = Some(team_id);

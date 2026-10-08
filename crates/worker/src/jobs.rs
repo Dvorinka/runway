@@ -116,6 +116,20 @@ async fn dispatch(ctx: &Ctx, kind: &str, payload: &Value) -> anyhow::Result<()> 
         "cleanup_inactive_containers" => {
             deploy::cleanup_inactive(ctx, str_payload(payload, "project_id")?).await
         }
+        "delete_project" => {
+            crate::cleanup::delete_project(ctx, str_payload(payload, "project_id")?).await
+        }
+        "delete_team" => crate::cleanup::delete_team(ctx, str_payload(payload, "team_id")?).await,
+        "delete_user" => {
+            crate::cleanup::delete_user(
+                ctx,
+                payload
+                    .get("user_id")
+                    .and_then(|v| v.as_i64())
+                    .ok_or_else(|| anyhow::anyhow!("job payload missing 'user_id'"))?,
+            )
+            .await
+        }
         "reconcile_edge_network" => {
             deploy::reconcile_edge_network(ctx, str_payload_opt(payload, "deployment_id")).await
         }

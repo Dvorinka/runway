@@ -357,6 +357,16 @@ pub async fn delete_me(
     .bind(user.user.id)
     .execute(&state.db)
     .await?;
+    // Cascade — sole-owner teams die with the account. Port of devpush
+    // enqueueing delete_user.
+    runway_core::deploy::enqueue(
+        &state.db,
+        "delete_user",
+        serde_json::json!({ "user_id": user.user.id }),
+        0,
+    )
+    .await
+    .map_err(ApiError::internal)?;
     let jar = jar.remove(
         Cookie::build((state.settings.session_cookie.clone(), String::new()))
             .path("/")

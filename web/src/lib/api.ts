@@ -245,6 +245,11 @@ export const api = {
   project: (id: string) => req<Project>(`/api/v1/projects/${id}`),
   createProject: (body: CreateProjectInput) =>
     req<Project>("/api/v1/projects", { method: "POST", body: JSON.stringify(body) }),
+  deleteProject: (id: string, confirm: string) =>
+    req<void>(`/api/v1/projects/${id}`, {
+      method: "DELETE",
+      body: JSON.stringify({ confirm }),
+    }),
   patchProject: (id: string, body: Record<string, unknown>) =>
     req<Project>(`/api/v1/projects/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   exportProject: (id: string) => req<Record<string, unknown>>(`/api/v1/projects/${id}/export`),
