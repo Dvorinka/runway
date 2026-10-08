@@ -184,8 +184,11 @@ pub async fn update_project_config(
     // Hosts serving this project — `/_runway-rum` on any of them is
     // routed to the API (speed-insights beacon, same origin as the site).
     let mut rum_hosts: Vec<String> = Vec::new();
+    // Router keys exempt from deployment protection — the prod
+    // environment alias and prod-bound custom domains stay public.
+    let mut unprotected: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-    for (subdomain, deployment_id, _ty, _value, alias_id, rnode, rport, rhost, outdir) in &aliases {
+    for (subdomain, deployment_id, ty, value, alias_id, rnode, rport, rhost, outdir) in &aliases {
         let svc = service_ref(deployment_id, rnode, *rport, rhost, &mut services);
         let host = format!("{subdomain}.{}", settings.deploy_domain);
         rum_hosts.push(host.clone());
@@ -207,7 +210,12 @@ pub async fn update_project_config(
                 &mut router,
             );
         }
-        routers.insert(format!("router-alias-{alias_id}"), router);
+        let key = format!("router-alias-{alias_id}");
+        if ty == "environment" && value.as_deref() == Some("prod") {
+            unprotected.insert(key.clone());
+            unprotected.insert(format!("router-assets-{alias_id}"));
+        }
+        routers.insert(key, router);
     }
 
     for domain in &domains {
@@ -241,7 +249,12 @@ pub async fn update_project_config(
                     &mut router,
                 );
             }
-            routers.insert(format!("router-domain-{}", domain.id), router);
+            let key = format!("router-domain-{}", domain.id);
+            if domain.environment_id.as_deref() == Some("prod") {
+                unprotected.insert(key.clone());
+                unprotected.insert(format!("router-assets-dom-{}", domain.id));
+            }
+            routers.insert(key, router);
         } else {
             // 301/302/307/308 → redirect middleware to the env hostname.
             let mw = format!("redirect-{}", domain.id);
@@ -359,6 +372,48 @@ pub async fn update_project_config(
                     .chain(existing)
                     .collect::<Vec<_>>());
             }
+        }
+    }
+
+    // Deployment protection — `config.protection.users` (htpasswd-format,
+    // bcrypt at PATCH time) gates every router except the prod
+    // environment alias and prod-bound domains: Vercel's Deployment
+    // Protection, self-hosted.
+    if let Some(users) = project
+        .config
+        .get("protection")
+        .and_then(|p| p.get("users"))
+        .and_then(|u| u.as_array())
+        .filter(|u| !u.is_empty())
+    {
+        middlewares.insert("protect".into(), json!({ "basicAuth": { "users": users } }));
+        for (key, router) in routers.iter_mut() {
+            if unprotected.contains(key) {
+                continue;
+            }
+            if !router["service"]
+                .as_str()
+                .is_some_and(|s| s.starts_with("deployment-"))
+            {
+                continue;
+            }
+            // Order: firewall (deny early) → protect (auth) → cdn headers
+            // — `immutable` must not reach a 401.
+            let existing: Vec<String> = router["middlewares"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|m| m.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let (fw, rest): (Vec<String>, Vec<String>) =
+                existing.into_iter().partition(|m| m.starts_with("fw-"));
+            router["middlewares"] = json!(fw
+                .into_iter()
+                .chain(std::iter::once("protect".to_string()))
+                .chain(rest)
+                .collect::<Vec<_>>());
         }
     }
 

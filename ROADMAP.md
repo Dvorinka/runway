@@ -281,9 +281,11 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
       `observed_status=unhealthy` → `computed_status` + badge +
       crash notification, recovery self-heals. Settings card;
       `deployment_observed_status_check` widened (migration 0017)
-- [ ] **Deployment protection** — `basicAuth` middleware option for
-      preview/non-prod envs (Vercel Deployment Protection equivalent;
-      IP allowlist exists, this is the password half)
+- [x] **Deployment protection** — `basicAuth` on every non-prod router
+      (branch, env-id, preview aliases + non-prod domains); write-only
+      `protection_password` PATCH field → bcrypt `protection.users`;
+      prod env alias + prod domains stay public; edge rewrite on
+      PATCH; middleware order firewall → protect → cdn
 - [ ] **Deployment retention policy** — keep N per environment; prune
       old immutable aliases/containers/artifacts (log retention done,
       deployment pruning is the remaining half)

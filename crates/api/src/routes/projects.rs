@@ -395,7 +395,27 @@ pub async fn patch(
     if let Some(patch) = body.config {
         if let (Some(obj), Some(patch)) = (project.config.as_object_mut(), patch.as_object()) {
             edge_dirty = patch.contains_key("firewall");
-            for (k, v) in patch {
+            let mut patch = patch.clone();
+            // `protection_password` is write-only — bcrypt'd into
+            // `protection.users` (Traefik basicAuth on non-prod
+            // routers); the raw value is never stored.
+            if let Some(pw) = patch.remove("protection_password") {
+                edge_dirty = true;
+                match pw.as_str().filter(|s| !s.is_empty()) {
+                    Some(raw) => {
+                        let hash =
+                            bcrypt::hash(raw, bcrypt::DEFAULT_COST).map_err(ApiError::internal)?;
+                        obj.insert(
+                            "protection".into(),
+                            serde_json::json!({ "users": [format!("runway:{hash}")] }),
+                        );
+                    }
+                    None => {
+                        obj.remove("protection");
+                    }
+                }
+            }
+            for (k, v) in &patch {
                 obj.insert(k.clone(), v.clone());
             }
         }

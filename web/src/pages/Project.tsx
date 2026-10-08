@@ -1358,6 +1358,7 @@ function Firewall({ id, project }: { id: string; project: Project | null }) {
           />
           <span className="text-xs text-muted-foreground">requests/sec per client IP</span>
         </div>
+        <Protection id={id} project={project} />
         <div className="flex items-center gap-3">
           <Button size="sm" onClick={save}>Save</Button>
           {msg && <span className="text-xs text-muted-foreground">{msg}</span>}
@@ -1365,6 +1366,73 @@ function Firewall({ id, project }: { id: string; project: Project | null }) {
         <Err msg={error} />
       </div>
     </Card>
+  );
+}
+
+function Protection({ id, project }: { id: string; project: Project | null }) {
+  const [pw, setPw] = useState("");
+  const [enabled, setEnabled] = useState(false);
+  const [error, setError] = useState("");
+  const [msg, setMsg] = useState("");
+
+  useEffect(() => {
+    const users = (project?.config?.protection as { users?: string[] } | undefined)?.users;
+    setEnabled(!!users?.length);
+  }, [project?.config]);
+
+  async function apply(enable: boolean) {
+    setError("");
+    setMsg("");
+    if (enable && !pw) {
+      setError("set a password first");
+      return;
+    }
+    try {
+      await api.patchProject(id, {
+        config: { protection_password: enable ? pw : "" },
+      });
+      setEnabled(enable);
+      setPw("");
+      setMsg(enable ? "Protected — preview URLs now ask for a password." : "Protection removed.");
+      setTimeout(() => setMsg(""), 2500);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "failed");
+    }
+  }
+
+  return (
+    <div className="grid gap-2 border-t border-border pt-3">
+      <div className="flex items-center justify-between">
+        <span className="text-sm">Deployment protection</span>
+        {enabled && <Badge variant="success">on</Badge>}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        HTTP password on every URL except production — previews, branch, and
+        environment-id deployments ask for <code className="font-mono">runway</code> + this
+        password at the edge.
+      </p>
+      {enabled ? (
+        <div>
+          <Button variant="outline" size="sm" onClick={() => apply(false)}>
+            Disable protection
+          </Button>
+        </div>
+      ) : (
+        <div className="flex gap-2">
+          <Input
+            type="password"
+            placeholder="preview password"
+            value={pw}
+            onChange={(e) => setPw(e.target.value)}
+          />
+          <Button size="sm" onClick={() => apply(true)}>
+            Protect
+          </Button>
+        </div>
+      )}
+      <Err msg={error} />
+      {msg && <span className="text-xs text-muted-foreground">{msg}</span>}
+    </div>
   );
 }
 
