@@ -90,6 +90,30 @@ export function statusVariant(status: string, conclusion?: string | null) {
   return "secondary" as const;
 }
 
+// Observed container states that mean "not serving". `removed` is left
+// out — deliberate teardown keeps the succeeded badge.
+const NOT_SERVING = ["crashed", "dead", "paused", "missing", "orphaned", "stopped"];
+
+/** What the badge should say once the deploy pipeline finished — the
+ *  observed container state wins when it's anything but running. */
+export function displayStatus(d: {
+  status: string;
+  conclusion?: string | null;
+  computed_status?: string | null;
+}): { label: string; variant: "success" | "destructive" | "warning" | "secondary" } {
+  const c = d.computed_status;
+  if (d.conclusion === "succeeded" && c && NOT_SERVING.includes(c)) {
+    return {
+      label: c,
+      variant: c === "crashed" || c === "dead" ? "destructive" : "warning",
+    };
+  }
+  return {
+    label: d.conclusion ?? d.status,
+    variant: statusVariant(d.status, d.conclusion),
+  };
+}
+
 const RUNNING = ["pending", "prepare", "deploy", "finalize", "queued"];
 
 export function isRunning(status: string, conclusion?: string | null) {
@@ -99,17 +123,26 @@ export function isRunning(status: string, conclusion?: string | null) {
 export function StatusDot({
   status,
   conclusion,
+  computed,
   className,
 }: {
   status: string;
   conclusion?: string | null;
+  computed?: string | null;
   className?: string;
 }) {
-  const bad = conclusion === "failed" || conclusion === "canceled";
-  const ok = conclusion === "succeeded" || status === "active" || status === "running";
+  const unhealthy =
+    conclusion === "succeeded" && computed && NOT_SERVING.includes(computed);
+  const bad =
+    conclusion === "failed" ||
+    conclusion === "canceled" ||
+    unhealthy === true && (computed === "crashed" || computed === "dead");
+  const ok =
+    (conclusion === "succeeded" || status === "active" || status === "running") &&
+    !unhealthy;
   const color = bad
     ? "bg-red-500"
-    : isRunning(status, conclusion)
+    : isRunning(status, conclusion) || unhealthy
       ? "bg-amber-400"
       : ok
         ? "bg-emerald-500"

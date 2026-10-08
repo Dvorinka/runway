@@ -1,5 +1,5 @@
 import { api, deploymentLogsStream, type Deployment } from "@/lib/api";
-import { Badge, Button, StatusDot, statusVariant, isRunning } from "@/components/ui";
+import { Badge, Button, StatusDot, displayStatus, isRunning } from "@/components/ui";
 import { Ansi } from "@/lib/ansi";
 import { cn, duration, elapsed, firstLine, timeAgo } from "@/lib/utils";
 import { useEffect, useRef, useState } from "react";
@@ -178,13 +178,13 @@ export default function DeploymentPage() {
     <div className="page-enter mx-auto flex h-[calc(100vh-3.5rem)] max-w-5xl flex-col px-4 py-6 sm:px-8">
       <div className="mb-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          {dep && <StatusDot status={dep.status} conclusion={dep.conclusion} />}
+          {dep && <StatusDot status={dep.status} conclusion={dep.conclusion} computed={dep.computed_status} />}
           <h1 className="font-mono text-lg">
             {dep?.commit_sha.slice(0, 7) ?? id.slice(0, 7)}
           </h1>
           {dep && (
-            <Badge variant={statusVariant(dep.status, dep.conclusion)}>
-              {dep.conclusion ?? dep.status}
+            <Badge variant={displayStatus(dep).variant}>
+              {displayStatus(dep).label}
             </Badge>
           )}
           {dep && (

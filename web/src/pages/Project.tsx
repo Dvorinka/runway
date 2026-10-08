@@ -10,7 +10,7 @@ import {
   type RemoteNode,
   type Webhook,
 } from "@/lib/api";
-import { Badge, Button, Card, Input, Skeleton, StatusDot, statusVariant } from "@/components/ui";
+import { Badge, Button, Card, Input, Skeleton, StatusDot, displayStatus } from "@/components/ui";
 import { filesToTarGz } from "@/lib/tarball";
 import { duration, firstLine, timeAgo } from "@/lib/utils";
 import { useEffect, useRef, useState } from "react";
@@ -398,7 +398,7 @@ function Deployments({ id }: { id: string }) {
           <Link key={d.id} to={`/deployments/${d.id}`}>
             <Card className="flex items-center justify-between p-4 transition-colors hover:border-muted-foreground/25 hover:bg-accent/50">
               <div className="flex min-w-0 items-center gap-4">
-                <StatusDot status={d.status} conclusion={d.conclusion} />
+                <StatusDot status={d.status} conclusion={d.conclusion} computed={d.computed_status} />
                 <div className="min-w-0">
                   <div className="truncate text-sm">
                     <span className="font-mono">{d.commit_sha.slice(0, 7)}</span>
@@ -413,8 +413,8 @@ function Deployments({ id }: { id: string }) {
                     {d.commit_meta?.author && ` · ${d.commit_meta.author}`}
                   </div>
                 </div>
-                <Badge variant={statusVariant(d.status, d.conclusion)} className="shrink-0">
-                  {d.conclusion ?? d.status}
+                <Badge variant={displayStatus(d).variant} className="shrink-0">
+                  {displayStatus(d).label}
                 </Badge>
               </div>
               <div className="shrink-0 text-right text-xs text-muted-foreground">

@@ -284,7 +284,7 @@ export function ProjectCard({ p }: { p: Project }) {
               </span>
             )}
           </div>
-          {dep && <StatusDot status={dep.status} conclusion={dep.conclusion} />}
+          {dep && <StatusDot status={dep.status} conclusion={dep.conclusion} computed={dep.computed_status} />}
         </div>
         {p.url ? (
           <div className="truncate font-mono text-xs text-muted-foreground">
@@ -417,7 +417,7 @@ export default function Projects() {
                 <Card className="flex items-center justify-between gap-4 p-3 transition-colors hover:border-muted-foreground/25 hover:bg-accent/50">
                   <div className="flex min-w-0 items-center gap-3">
                     {dep ? (
-                      <StatusDot status={dep.status} conclusion={dep.conclusion} />
+                      <StatusDot status={dep.status} conclusion={dep.conclusion} computed={dep.computed_status} />
                     ) : (
                       <StatusDot status="idle" />
                     )}

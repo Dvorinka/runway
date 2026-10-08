@@ -26,6 +26,7 @@ export interface Deployment {
   commit_meta?: { message?: string; author?: string; author_name?: string };
   status: string;
   conclusion: string | null;
+  computed_status?: string | null;
   container_status: string | null;
   trigger?: string;
   error?: string | { message?: string; status?: string } | null;

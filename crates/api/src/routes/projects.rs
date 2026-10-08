@@ -90,6 +90,7 @@ pub async fn list(user: AuthUser, State(state): State<AppState>) -> ApiResult<Re
                 "latest_deployment": latest_by_project.get(p.id.as_str()).map(|d| json!({
                     "id": d.id,
                     "status": d.status,
+                    "computed_status": d.computed_status(),
                     "conclusion": d.conclusion,
                     "commit_sha": d.commit_sha,
                     "commit_meta": d.commit_meta,
