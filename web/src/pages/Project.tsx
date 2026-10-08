@@ -1633,17 +1633,34 @@ function StatusPageCard({ id, project }: { id: string; project: Project | null }
         )}
       </div>
       {enabled && (
-        <p className="mt-3 text-xs">
-          Live at{" "}
-          <a href={url} target="_blank" rel="noreferrer" className="font-mono text-primary underline">
-            {url}
-          </a>
-          {slug !== "" && (
-            <Button variant="outline" size="sm" className="ml-2" onClick={() => save(true, slug)}>
-              Save slug
-            </Button>
-          )}
-        </p>
+        <div className="mt-3 space-y-2 text-xs">
+          <p>
+            Live at{" "}
+            <a href={url} target="_blank" rel="noreferrer" className="font-mono text-primary underline">
+              {url}
+            </a>
+            {slug !== "" && (
+              <Button variant="outline" size="sm" className="ml-2" onClick={() => save(true, slug)}>
+                Save slug
+              </Button>
+            )}
+          </p>
+          <p className="flex items-center gap-2">
+            <img src={`${window.location.origin}/api/v1/status/${slug || id}/badge`} alt="status badge" className="h-5" />
+            <button
+              type="button"
+              className="font-mono text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+              onClick={() =>
+                navigator.clipboard.writeText(
+                  `[![status](${window.location.origin}/api/v1/status/${slug || id}/badge)](${url})`,
+                )
+              }
+              title="Copy README markdown"
+            >
+              copy README badge
+            </button>
+          </p>
+        </div>
       )}
       <Err msg={error} />
     </Card>

@@ -357,6 +357,11 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
       buttons. Fixed a latent schema bug: the `user_identity` provider
       CHECK rejected `'oidc'` rows the OIDC callback writes (migration
       0021)
+- [x] **Status badge** — `GET /api/v1/status/{slug}/badge` renders a
+      shields-style SVG (name | worst env level) behind the same
+      status-page opt-in; 60s cache; Settings card shows a live preview
+      + one-click README markdown. `env pull` added to the CLI —
+      dotenv via the export endpoint (0600, `--force`, `--environment`)
 
 ## Non-goals
 

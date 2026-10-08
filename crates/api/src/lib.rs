@@ -211,8 +211,13 @@ pub fn router(state: AppState) -> Router {
             axum::routing::patch(routes::projects::patch_redirect)
                 .delete(routes::projects::delete_redirect),
         )
-        // Speed insights — beacon (public, host-routed) + aggregates.
+        // Public status pages + README badge — opt-in per project.
         .route("/api/v1/status/{slug}", get(routes::status::status_page))
+        .route(
+            "/api/v1/status/{slug}/badge",
+            get(routes::status::status_badge),
+        )
+        // Speed insights — beacon (public, host-routed) + aggregates.
         .route("/_runway-rum", post(routes::rum::beacon))
         .route("/api/v1/rum", post(routes::rum::beacon))
         .route(
