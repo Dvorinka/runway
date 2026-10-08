@@ -454,6 +454,59 @@ impl GithubService {
         Ok(())
     }
 
+    /// Upsert a `<!-- marker -->` comment on an issue/PR — finds an
+    /// existing marked comment and patches it, else posts a new one.
+    /// Keeps PR noise at one comment no matter how many pushes.
+    pub async fn upsert_issue_comment(
+        &self,
+        installation_token: &str,
+        repo_full_name: &str,
+        issue_number: i64,
+        marker: &str,
+        body: &str,
+    ) -> Result<()> {
+        let base = format!("{}/repos/{}", self.api_base, repo_full_name);
+        let comments: Vec<serde_json::Value> = self
+            .http
+            .get(format!(
+                "{base}/issues/{issue_number}/comments?per_page=100"
+            ))
+            .bearer_auth(installation_token)
+            .header("Accept", "application/vnd.github+json")
+            .header("User-Agent", "runway")
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        let existing = comments.iter().find_map(|c| {
+            let b = c["body"].as_str().unwrap_or("");
+            if b.contains(marker) {
+                c["id"].as_i64()
+            } else {
+                None
+            }
+        });
+        let full_body = format!("{marker}\n{body}");
+        let req = match existing {
+            Some(id) => self
+                .http
+                .patch(format!("{base}/issues/comments/{id}"))
+                .bearer_auth(installation_token),
+            None => self
+                .http
+                .post(format!("{base}/issues/{issue_number}/comments"))
+                .bearer_auth(installation_token),
+        };
+        req.header("Accept", "application/vnd.github+json")
+            .header("User-Agent", "runway")
+            .json(&serde_json::json!({ "body": full_body }))
+            .send()
+            .await?
+            .error_for_status()?;
+        Ok(())
+    }
+
     // -- App manifest registration -------------------------------------------
 
     /// POST /app-manifests/{code}/conversions — exchange the code GitHub

@@ -1376,6 +1376,43 @@ async fn post_commit_status(
     {
         tracing::warn!(deployment_id = deployment.id, error = %e, "commit status post failed");
     }
+
+    // PR preview deployments carry `pr_number` — update the upserted
+    // comment with the final state and live URL.
+    let Some(pr_number) = deployment.config.get("pr_number").and_then(|v| v.as_i64()) else {
+        return;
+    };
+    let preview_url = format!(
+        "{}://{}-branch-{}.{}",
+        ctx.settings.url_scheme,
+        project_slug,
+        runway_core::slugify::branch_slug(&deployment.branch),
+        ctx.settings.deploy_domain
+    );
+    let status_line = if state == "success" {
+        format!(
+            "**Runway preview** — [{preview_url}]({preview_url})\n\nDeployment `{:.7}` is ready.",
+            deployment.commit_sha
+        )
+    } else {
+        format!(
+            "**Runway preview** — [{preview_url}]({preview_url})\n\nDeployment `{:.7}` {state}.",
+            deployment.commit_sha
+        )
+    };
+    let marker = format!("<!-- runway-preview:{} -->", project.id);
+    if let Err(e) = gh
+        .upsert_issue_comment(
+            &token,
+            &deployment.repo_full_name,
+            pr_number,
+            &marker,
+            &status_line,
+        )
+        .await
+    {
+        tracing::warn!(deployment_id = deployment.id, error = %e, "preview comment update failed");
+    }
 }
 
 /// Resolve the daemon a deployment's container lives on.

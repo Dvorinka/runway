@@ -254,11 +254,12 @@ async fn handle_push(state: &AppState, data: &Value) {
 }
 
 /// pull_request opened/synchronize/reopened → preview deployment on the
-/// PR head branch. Branch allowlists don't apply — previews are the
-/// point. `auto_deploy=false` still opts the project out.
+/// PR head branch; closed → teardown the preview's aliases + containers.
+/// Branch allowlists don't apply — previews are the point.
+/// `auto_deploy=false` still opts the project out.
 async fn handle_pull_request(state: &AppState, data: &Value) {
     let action = data["action"].as_str().unwrap_or("");
-    if !matches!(action, "opened" | "synchronize" | "reopened") {
+    if !matches!(action, "opened" | "synchronize" | "reopened" | "closed") {
         return;
     }
     let repo_id = data["repository"]["id"].as_i64().unwrap_or(0);
@@ -269,12 +270,6 @@ async fn handle_pull_request(state: &AppState, data: &Value) {
         return;
     }
     let number = pr["number"].as_i64().unwrap_or(0);
-    let commit = CommitInfo {
-        sha,
-        author: pr["user"]["login"].as_str().unwrap_or("").to_string(),
-        message: format!("{} (PR #{number})", pr["title"].as_str().unwrap_or("")),
-        timestamp: pr["updated_at"].as_str().map(String::from),
-    };
 
     let projects: Vec<Project> = match sqlx::query_as(
         "SELECT * FROM project
@@ -289,6 +284,20 @@ async fn handle_pull_request(state: &AppState, data: &Value) {
             tracing::error!(error = %e, "pull_request webhook: project lookup failed");
             return;
         }
+    };
+
+    if action == "closed" {
+        for project in &projects {
+            teardown_preview(state, project, &branch).await;
+        }
+        return;
+    }
+
+    let commit = CommitInfo {
+        sha,
+        author: pr["user"]["login"].as_str().unwrap_or("").to_string(),
+        message: format!("{} (PR #{number})", pr["title"].as_str().unwrap_or("")),
+        timestamp: pr["updated_at"].as_str().map(String::from),
     };
 
     for project in projects {
@@ -313,19 +322,102 @@ async fn handle_pull_request(state: &AppState, data: &Value) {
             &commit,
             "webhook",
             None,
-            None,
+            Some(json!({ "pr_number": number })),
         )
         .await
         {
-            Ok(dep) => tracing::info!(
-                deployment_id = dep.id,
-                project_id = project.id,
-                "preview deployment created from pull_request"
-            ),
+            Ok(dep) => {
+                tracing::info!(
+                    deployment_id = dep.id,
+                    project_id = project.id,
+                    "preview deployment created from pull_request"
+                );
+                if rules.get("preview_comment").and_then(|v| v.as_bool()) != Some(false) {
+                    post_preview_comment(state, &project, &branch, number).await;
+                }
+            }
             Err(e) => {
                 tracing::warn!(project_id = project.id, error = %e, "pull_request: deployment create failed")
             }
         }
+    }
+}
+
+/// Upserted PR comment with the deterministic branch preview URL.
+async fn post_preview_comment(state: &AppState, project: &Project, branch: &str, number: i64) {
+    let (Some(gh), Some(installation_id)) =
+        (state.github.if_configured(), project.github_installation_id)
+    else {
+        return;
+    };
+    let Ok(token) = gh
+        .installation_token(&state.db, &state.crypto, installation_id)
+        .await
+    else {
+        return;
+    };
+    let slug = project.slug.clone().unwrap_or_else(|| project.id.clone());
+    let host = format!(
+        "{slug}-branch-{}.{}",
+        runway_core::slugify::branch_slug(branch),
+        state.settings.deploy_domain
+    );
+    let body = format!(
+        "**Runway preview** — [{}://{}]({}://{})\n\n\
+         Latest deployment on `{branch}` is building; the URL goes live \
+         when it finishes.",
+        state.settings.url_scheme, host, state.settings.url_scheme, host,
+    );
+    let marker = format!("<!-- runway-preview:{} -->", project.id);
+    if let Err(e) = gh
+        .upsert_issue_comment(&token, &project.repo_full_name, number, &marker, &body)
+        .await
+    {
+        tracing::warn!(project_id = project.id, error = %e, "preview comment post failed");
+    }
+}
+
+/// PR closed/merged: drop the branch + preview-env aliases (removes
+/// routing) and enqueue container teardown for the branch's deployments.
+async fn teardown_preview(state: &AppState, project: &Project, branch: &str) {
+    if let Err(e) = sqlx::query(
+        "DELETE FROM alias a USING deployment d
+         WHERE a.deployment_id = d.id AND d.project_id = $1
+           AND ((a.type = 'branch' AND a.value = $2)
+             OR (a.type = 'environment_id' AND a.value IN
+                 (SELECT DISTINCT environment_id FROM deployment
+                  WHERE project_id = $1 AND branch = $2)))",
+    )
+    .bind(&project.id)
+    .bind(branch)
+    .execute(&state.db)
+    .await
+    {
+        tracing::warn!(project_id = project.id, error = %e, "preview alias teardown failed");
+        return;
+    }
+    if let Err(e) =
+        runway_core::traefik::update_project_config(&state.db, project, &state.settings, &[]).await
+    {
+        tracing::warn!(project_id = project.id, error = %e, "preview traefik rewrite failed");
+    }
+    let dep_ids: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM deployment WHERE project_id = $1 AND branch = $2
+         AND container_id IS NOT NULL AND container_status != 'removed'",
+    )
+    .bind(&project.id)
+    .bind(branch)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+    for dep_id in dep_ids {
+        let _ = deploy::enqueue(
+            &state.db,
+            "delete_container",
+            json!({ "deployment_id": dep_id }),
+            0,
+        )
+        .await;
     }
 }
 
@@ -471,6 +563,7 @@ pub async fn app_register(
             "metadata": "read",
             "pull_requests": "read",
             "statuses": "write",
+            "issues": "write",
         },
     });
     if is_public_hostname(host) {
