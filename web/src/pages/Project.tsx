@@ -104,12 +104,14 @@ function Analytics({ id }: { id: string }) {
   if (!loaded) return <Skeleton className="h-40" />;
 
   return (
-    <Card className="max-w-2xl p-5">
-      <h2 className="mb-1 text-sm font-medium">Web analytics</h2>
-      <p className="mb-4 text-xs text-muted-foreground">
-        Injects a tracking snippet into every HTML page on the next static deploy.
-        Works with Umami, Rybbit, Plausible, or any provider's script tag.
-      </p>
+    <div className="max-w-2xl space-y-4">
+      <WebAnalytics id={id} />
+      <Card className="p-5">
+        <h2 className="mb-1 text-sm font-medium">Third-party snippet</h2>
+        <p className="mb-4 text-xs text-muted-foreground">
+          Injects a tracking snippet into every HTML page on the next static deploy.
+          Works with Umami, Rybbit, Plausible, or any provider's script tag.
+        </p>
       <div className="grid gap-3">
         <select
           className={selectCls}
@@ -174,6 +176,128 @@ function Analytics({ id }: { id: string }) {
           {saved && <span className="text-xs text-muted-foreground">Saved — applies to the next deploy.</span>}
         </div>
       </div>
+      </Card>
+    </div>
+  );
+}
+
+function WebAnalytics({ id }: { id: string }) {
+  const [enabled, setEnabled] = useState(false);
+  const [data, setData] = useState<Awaited<ReturnType<typeof api.webAnalytics>> | null>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    api
+      .project(id)
+      .then((p) => {
+        const a = (p.config?.web_analytics ?? {}) as { enabled?: boolean };
+        setEnabled(!!a.enabled);
+      })
+      .catch(() => {});
+    api
+      .webAnalytics(id)
+      .then(setData)
+      .catch((e) => setError(e instanceof Error ? e.message : "failed to load"));
+  }, [id]);
+
+  async function toggle() {
+    const next = !enabled;
+    setEnabled(next);
+    setError("");
+    try {
+      await api.patchProject(id, { config: { web_analytics: { enabled: next } } });
+    } catch (e) {
+      setEnabled(!next);
+      setError(e instanceof Error ? e.message : "save failed");
+    }
+  }
+
+  const toggleCls = (on: boolean) =>
+    `relative h-5 w-9 shrink-0 rounded-full transition-colors ${on ? "bg-emerald-500" : "bg-muted"}`;
+  const knob = (on: boolean) =>
+    `absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${on ? "left-[18px]" : "left-0.5"}`;
+
+  return (
+    <Card className="p-5">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="mb-1 text-sm font-medium">Web analytics</h2>
+          <p className="text-xs text-muted-foreground">
+            Built-in, privacy-preserving analytics — pageviews, visitors, referrers, and
+            custom events via <code className="font-mono">window.rw.event()</code>. Visitors
+            are counted with a daily-rotating hash; no IPs or cookies are stored. Active on
+            the next deploy.
+          </p>
+        </div>
+        <button onClick={toggle} className={toggleCls(enabled)}>
+          <span className={knob(enabled)} />
+        </button>
+      </div>
+      {data && data.views > 0 && (
+        <div className="mt-4 grid gap-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="rounded-md border border-border p-3">
+              <div className="text-2xl font-semibold">{data.views.toLocaleString()}</div>
+              <div className="text-xs text-muted-foreground">Pageviews · {data.days}d</div>
+            </div>
+            <div className="rounded-md border border-border p-3">
+              <div className="text-2xl font-semibold">{data.visitors.toLocaleString()}</div>
+              <div className="text-xs text-muted-foreground">Visitors · {data.days}d</div>
+            </div>
+          </div>
+          {data.pages.length > 0 && (
+            <div>
+              <h3 className="mb-2 text-xs font-medium text-muted-foreground">Top pages</h3>
+              <table className="w-full text-sm">
+                <tbody>
+                  {data.pages.map((p) => (
+                    <tr key={p.path} className="border-b border-border/50 last:border-0">
+                      <td className="py-1 font-mono text-xs">{p.path}</td>
+                      <td className="py-1 text-right text-xs">{p.views}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {data.referrers.length > 0 && (
+            <div>
+              <h3 className="mb-2 text-xs font-medium text-muted-foreground">Referrers</h3>
+              <table className="w-full text-sm">
+                <tbody>
+                  {data.referrers.map((r) => (
+                    <tr key={r.host} className="border-b border-border/50 last:border-0">
+                      <td className="py-1 font-mono text-xs">{r.host}</td>
+                      <td className="py-1 text-right text-xs">{r.views}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {data.events.length > 0 && (
+            <div>
+              <h3 className="mb-2 text-xs font-medium text-muted-foreground">Custom events</h3>
+              <table className="w-full text-sm">
+                <tbody>
+                  {data.events.map((e) => (
+                    <tr key={e.name} className="border-b border-border/50 last:border-0">
+                      <td className="py-1 font-mono text-xs">{e.name}</td>
+                      <td className="py-1 text-right text-xs">{e.count}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+      {data && data.views === 0 && enabled && (
+        <p className="mt-3 text-xs text-muted-foreground">
+          No pageviews yet — the beacon activates on the next deploy.
+        </p>
+      )}
+      <Err msg={error} />
     </Card>
   );
 }

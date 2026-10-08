@@ -268,6 +268,17 @@ export const api = {
       series: { day: string; views: number; lcp?: number }[];
     }>(`/api/v1/projects/${id}/speed?days=${days}`),
 
+  webAnalytics: (id: string, days = 7) =>
+    req<{
+      days: number;
+      views: number;
+      visitors: number;
+      series: { day: string; views: number; visitors: number }[];
+      pages: { path: string; views: number; visitors: number }[];
+      referrers: { host: string; views: number }[];
+      events: { name: string; count: number }[];
+    }>(`/api/v1/projects/${id}/analytics?days=${days}`),
+
   getEnv: (id: string) => req<{ env: EnvVar[] }>(`/api/v1/projects/${id}/env`),
   patchEnv: (id: string, vars: { key: string; value?: string; delete?: boolean }[]) =>
     req<{ ok: boolean }>(`/api/v1/projects/${id}/env`, {

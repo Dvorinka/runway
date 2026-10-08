@@ -393,12 +393,14 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
                 snippets.push(s);
             }
             let speed_snippet;
-            if config
-                .get("speed_insights")
-                .and_then(|v| v.get("enabled"))
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-            {
+            let beacon_on = ["speed_insights", "web_analytics"].iter().any(|k| {
+                config
+                    .get(k)
+                    .and_then(|v| v.get("enabled"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+            });
+            if beacon_on {
                 speed_snippet = runway_core::rum::beacon_snippet();
                 snippets.push(speed_snippet);
             }

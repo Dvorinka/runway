@@ -294,9 +294,12 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
       always spared. Settings card added
 - [ ] **TOTP 2FA** — `otpauth://` enrollment + recovery codes on the
       account surface
-- [ ] **First-party web analytics** — extend the `/_runway-rum` beacon
-      with `pageview`/`custom` events → privacy-preserving built-in
-      analytics (Umami-free tier of Umami's value, zero deps)
+- [x] **First-party web analytics** — `web_analytics.enabled` gates
+      `pageview`/`custom` beacons on the same `/_runway-rum` endpoint;
+      snippet fires pv on load + SPA navs and exposes
+      `window.rw.event()`; visitors are a daily-rotating HMAC (no IPs,
+      no cookies), referrers stored as hostname only. Aggregates
+      endpoint + dashboard card (migration 0018)
 - [ ] **Public status pages** — per-project uptime view from
       `deployment.observed_*` + metric samples; opt-in public route
 - [ ] **Remote-node mTLS** — columns exist; needs cert provisioning

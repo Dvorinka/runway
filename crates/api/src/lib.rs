@@ -198,6 +198,10 @@ pub fn router(state: AppState) -> Router {
             get(routes::deployments::project_logs),
         )
         .route("/api/v1/projects/{id}/speed", get(routes::rum::speed))
+        .route(
+            "/api/v1/projects/{id}/analytics",
+            get(routes::rum::analytics),
+        )
         // Project export / import
         .route(
             "/api/v1/projects/{id}/export",

@@ -25,6 +25,12 @@ use crate::state::AppState;
 
 #[derive(Deserialize)]
 pub struct Beacon {
+    /// Event kind: absent = vitals, "pv" = pageview, "ev" = custom.
+    t: Option<String>,
+    /// Custom event name (ev).
+    n: Option<String>,
+    /// Referrer URL (pv) — only the hostname is stored.
+    r: Option<String>,
     /// Page path (m.p).
     p: Option<String>,
     lcp: Option<f64>,
@@ -90,17 +96,88 @@ pub async fn beacon(
     let Ok(Some(project)) = project_for_host(&state, &host).await else {
         return StatusCode::NO_CONTENT.into_response();
     };
-    let enabled = project
-        .config
-        .get("speed_insights")
-        .and_then(|v| v.get("enabled"))
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    if !enabled {
-        return StatusCode::NO_CONTENT.into_response();
+    let flag = |key: &str| {
+        project
+            .config
+            .get(key)
+            .and_then(|v| v.get("enabled"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    };
+    let path = rum::sanitize_path(body.p.as_deref().unwrap_or("/"));
+
+    match body.t.as_deref() {
+        // First-party analytics — pageview or custom event.
+        Some("pv") | Some("ev") => {
+            if !flag("web_analytics") {
+                return StatusCode::NO_CONTENT.into_response();
+            }
+            let (kind, name) = if body.t.as_deref() == Some("ev") {
+                let n: String = body
+                    .n
+                    .as_deref()
+                    .unwrap_or("")
+                    .chars()
+                    .filter(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | ':'))
+                    .take(64)
+                    .collect();
+                if n.is_empty() {
+                    return StatusCode::NO_CONTENT.into_response();
+                }
+                ("custom", Some(n))
+            } else {
+                ("pageview", None)
+            };
+            // Privacy model: referrer hostname only, and the visitor
+            // token is an HMAC over ip+ua keyed on the day — no raw IP
+            // is stored and cross-day tracking isn't possible.
+            let referrer = body
+                .r
+                .as_deref()
+                .and_then(|r| r.split("://").nth(1).or(Some(r)))
+                .and_then(|r| r.split(['/', '?', '#', ':']).next())
+                .map(|h| h.chars().take(253).collect::<String>())
+                .unwrap_or_default();
+            let ip = headers
+                .get("x-forwarded-for")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.split(',').next())
+                .map(str::trim)
+                .or_else(|| {
+                    headers
+                        .get("x-real-ip")
+                        .and_then(|v| v.to_str().ok())
+                        .map(str::trim)
+                })
+                .unwrap_or("");
+            let day = chrono::Utc::now().format("%Y-%m-%d").to_string();
+            let visitor = runway_core::crypto::hmac_sha256_hex(
+                state.settings.secret_key.as_bytes(),
+                format!("{day}|{ip}|{ua}|{}", project.id).as_bytes(),
+            );
+            let _ = sqlx::query(
+                "INSERT INTO analytics_event
+                     (project_id, host, path, kind, name, referrer, visitor, ua)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+            )
+            .bind(&project.id)
+            .bind(host)
+            .bind(path)
+            .bind(kind)
+            .bind(name)
+            .bind(referrer)
+            .bind(&visitor[..16])
+            .bind(ua)
+            .execute(&state.db)
+            .await;
+            return StatusCode::NO_CONTENT.into_response();
+        }
+        _ => {}
     }
 
-    let path = rum::sanitize_path(body.p.as_deref().unwrap_or("/"));
+    if !flag("speed_insights") {
+        return StatusCode::NO_CONTENT.into_response();
+    }
     let _ = sqlx::query(
         "INSERT INTO rum_event (project_id, host, path, lcp, fcp, inp, cls, ttfb, ua)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
@@ -197,6 +274,100 @@ pub async fn speed(
         "p75": { "lcp": lcp, "fcp": fcp, "inp": inp, "cls": cls, "ttfb": ttfb },
         "paths": paths,
         "series": series,
+    }))
+    .into_response())
+}
+
+/// `GET /api/v1/projects/{id}/analytics` — first-party analytics
+/// aggregates: pageviews, unique visitors (daily tokens), top pages,
+/// referrer hosts, custom events.
+pub async fn analytics(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<SpeedQuery>,
+) -> ApiResult<Response> {
+    let project: Option<Project> = sqlx::query_as(
+        "SELECT p.* FROM project p
+         JOIN team_member tm ON tm.team_id = p.team_id
+         WHERE tm.user_id = $1 AND p.id = $2 AND p.status != 'deleted'",
+    )
+    .bind(user.user.id)
+    .bind(&id)
+    .fetch_optional(&state.db)
+    .await?;
+    let project = project.ok_or_else(|| ApiError::not_found("project"))?;
+    let days = q.days.unwrap_or(7).clamp(1, 90);
+
+    let (views, visitors): (i64, i64) = sqlx::query_as(
+        "SELECT count(*), count(DISTINCT visitor) FROM analytics_event
+         WHERE project_id = $1 AND kind = 'pageview'
+           AND ts > now() - make_interval(days => $2)",
+    )
+    .bind(&project.id)
+    .bind(days as i32)
+    .fetch_one(&state.db)
+    .await?;
+
+    let series: Vec<Value> = sqlx::query_scalar(
+        "SELECT json_build_object('day', d, 'views', count(*),
+           'visitors', count(DISTINCT visitor))
+         FROM (SELECT date_trunc('day', ts)::date AS d, visitor
+               FROM analytics_event
+               WHERE project_id = $1 AND kind = 'pageview'
+                 AND ts > now() - make_interval(days => $2)) e
+         GROUP BY d ORDER BY d",
+    )
+    .bind(&project.id)
+    .bind(days as i32)
+    .fetch_all(&state.db)
+    .await?;
+
+    let pages: Vec<Value> = sqlx::query_scalar(
+        "SELECT json_build_object('path', path, 'views', count(*),
+           'visitors', count(DISTINCT visitor))
+         FROM analytics_event
+         WHERE project_id = $1 AND kind = 'pageview'
+           AND ts > now() - make_interval(days => $2)
+         GROUP BY path ORDER BY count(*) DESC LIMIT 10",
+    )
+    .bind(&project.id)
+    .bind(days as i32)
+    .fetch_all(&state.db)
+    .await?;
+
+    let referrers: Vec<Value> = sqlx::query_scalar(
+        "SELECT json_build_object('host', referrer, 'views', count(*))
+         FROM analytics_event
+         WHERE project_id = $1 AND kind = 'pageview' AND referrer != ''
+           AND ts > now() - make_interval(days => $2)
+         GROUP BY referrer ORDER BY count(*) DESC LIMIT 10",
+    )
+    .bind(&project.id)
+    .bind(days as i32)
+    .fetch_all(&state.db)
+    .await?;
+
+    let events: Vec<Value> = sqlx::query_scalar(
+        "SELECT json_build_object('name', name, 'count', count(*))
+         FROM analytics_event
+         WHERE project_id = $1 AND kind = 'custom'
+           AND ts > now() - make_interval(days => $2)
+         GROUP BY name ORDER BY count(*) DESC LIMIT 10",
+    )
+    .bind(&project.id)
+    .bind(days as i32)
+    .fetch_all(&state.db)
+    .await?;
+
+    Ok(Json(json!({
+        "days": days,
+        "views": views,
+        "visitors": visitors,
+        "series": series,
+        "pages": pages,
+        "referrers": referrers,
+        "events": events,
     }))
     .into_response())
 }

@@ -6,13 +6,29 @@
 //! routes that path to the API (see `traefik::update_project_config`),
 //! so no CORS and no dependence on the dashboard hostname being public.
 
-/// Inline script injected into deployed HTML. Posts once per
-/// visibility-hide (re-arms when the page becomes visible again, so SPA
-/// sessions emit one event per "view").
+/// Inline script injected into deployed HTML. Fires a `pageview`
+/// beacon on load and on SPA navigations (pushState/replaceState/
+/// popstate), exposes `window.rw.event(name)` for custom events, and
+/// posts Core Web Vitals once per visibility-hide (re-armed when the
+/// page becomes visible again). The server decides which kinds to
+/// store based on the project's enabled flags.
 pub fn beacon_snippet() -> &'static str {
     concat!(
         "<script>(function(){try{",
         "var m={},sent=false;",
+        "function post(o){",
+        "var b=new Blob([JSON.stringify(o)],{type:'application/json'});",
+        "navigator.sendBeacon('/_runway-rum',b)}",
+        "function pv(){post({t:'pv',p:location.pathname,r:document.referrer||''})}",
+        "window.rw={event:function(n){",
+        "post({t:'ev',n:String(n).slice(0,64),p:location.pathname})}};",
+        "var P=history.pushState,R=history.replaceState;",
+        "function nav(){setTimeout(pv,0)}",
+        "if(P)history.pushState=function(){",
+        "var r=P.apply(this,arguments);nav();return r};",
+        "if(R)history.replaceState=function(){",
+        "var r=R.apply(this,arguments);nav();return r};",
+        "addEventListener('popstate',nav);pv();",
         "function send(){",
         "if(sent)return;sent=true;",
         "m.p=location.pathname;",
@@ -20,8 +36,7 @@ pub fn beacon_snippet() -> &'static str {
         "if(n)m.ttfb=Math.round(n.responseStart);",
         "if(m.cls)m.cls=Math.round(m.cls*1000)/1000;",
         "if(!m.lcp&&!m.fcp)return;",
-        "var b=new Blob([JSON.stringify(m)],{type:'application/json'});",
-        "navigator.sendBeacon('/_runway-rum',b)}",
+        "post(m)}",
         "try{new PerformanceObserver(function(l){",
         "var e=l.getEntries();m.lcp=Math.round(e[e.length-1].startTime)}",
         ").observe({type:'largest-contentful-paint',buffered:true})}catch(_){}",
