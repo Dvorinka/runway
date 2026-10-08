@@ -274,6 +274,15 @@ export const api = {
       body: JSON.stringify(body),
     }),
   deployment: (id: string) => req<Deployment>(`/api/v1/deployments/${id}`),
+  updateMe: (body: { name?: string; username?: string; email?: string }) =>
+    req<Me>("/api/auth/me", { method: "PATCH", body: JSON.stringify(body) }),
+  changePassword: (current_password: string, new_password: string) =>
+    req<{ ok: boolean }>("/api/auth/password", {
+      method: "POST",
+      body: JSON.stringify({ current_password, new_password }),
+    }),
+  deleteMe: (password: string) =>
+    req<void>("/api/auth/me", { method: "DELETE", body: JSON.stringify({ password }) }),
   deploymentStats: (id: string) =>
     req<{
       running: boolean;

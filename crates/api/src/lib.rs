@@ -23,7 +23,13 @@ pub fn router(state: AppState) -> Router {
         .route("/api/auth/login", post(routes::auth::login))
         .route("/api/auth/register", post(routes::auth::register))
         .route("/api/auth/logout", post(routes::auth::logout))
-        .route("/api/auth/me", get(routes::auth::me))
+        .route(
+            "/api/auth/me",
+            get(routes::auth::me)
+                .patch(routes::auth::update_me)
+                .delete(routes::auth::delete_me),
+        )
+        .route("/api/auth/password", post(routes::auth::change_password))
         // OIDC / SSO
         .route("/api/auth/oidc", get(routes::oidc::authorize))
         .route("/api/auth/oidc/callback", get(routes::oidc::callback))

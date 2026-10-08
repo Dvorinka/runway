@@ -311,11 +311,156 @@ function Nodes() {
   );
 }
 
+function Account({ me }: { me: Me }) {
+  const [name, setName] = useState(me.name ?? "");
+  const [username, setUsername] = useState(me.username);
+  const [email, setEmail] = useState(me.email);
+  const [profileMsg, setProfileMsg] = useState("");
+  const [profileErr, setProfileErr] = useState("");
+  const [cur, setCur] = useState("");
+  const [next, setNext] = useState("");
+  const [pwMsg, setPwMsg] = useState("");
+  const [pwErr, setPwErr] = useState("");
+  const [delPw, setDelPw] = useState("");
+  const [delErr, setDelErr] = useState("");
+  const [confirming, setConfirming] = useState(false);
+
+  async function saveProfile(e: React.FormEvent) {
+    e.preventDefault();
+    setProfileMsg("");
+    setProfileErr("");
+    try {
+      await api.updateMe({ name, username, email });
+      setProfileMsg("saved");
+    } catch (err) {
+      setProfileErr(err instanceof Error ? err.message : "failed");
+    }
+  }
+
+  async function savePassword(e: React.FormEvent) {
+    e.preventDefault();
+    setPwMsg("");
+    setPwErr("");
+    try {
+      await api.changePassword(cur, next);
+      setPwMsg("password changed");
+      setCur("");
+      setNext("");
+    } catch (err) {
+      setPwErr(err instanceof Error ? err.message : "failed");
+    }
+  }
+
+  async function deleteAccount(e: React.FormEvent) {
+    e.preventDefault();
+    setDelErr("");
+    try {
+      await api.deleteMe(delPw);
+      location.href = "/login";
+    } catch (err) {
+      setDelErr(err instanceof Error ? err.message : "failed");
+    }
+  }
+
+  return (
+    <>
+      <Card className="p-5">
+        <h2 className="mb-1 text-sm font-medium">Account</h2>
+        <p className="mb-4 text-xs text-muted-foreground">Profile and sign-in details.</p>
+        <form onSubmit={saveProfile} className="grid gap-3 sm:grid-cols-3">
+          <Input
+            placeholder="Display name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+          <Input
+            placeholder="username"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            required
+          />
+          <Input
+            type="email"
+            placeholder="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+          />
+          <div className="flex items-center gap-3 sm:col-span-3">
+            <Button type="submit" size="sm">
+              Save
+            </Button>
+            {profileMsg && <span className="text-xs text-emerald-500">{profileMsg}</span>}
+            {profileErr && <span className="text-xs text-destructive">{profileErr}</span>}
+          </div>
+        </form>
+      </Card>
+      <Card className="p-5">
+        <h2 className="mb-1 text-sm font-medium">Change password</h2>
+        <form onSubmit={savePassword} className="mt-3 grid gap-3 sm:grid-cols-3">
+          <Input
+            type="password"
+            placeholder="current password"
+            value={cur}
+            onChange={(e) => setCur(e.target.value)}
+            required
+          />
+          <Input
+            type="password"
+            placeholder="new password (min 8)"
+            value={next}
+            onChange={(e) => setNext(e.target.value)}
+            required
+            minLength={8}
+          />
+          <div className="flex items-center gap-3">
+            <Button type="submit" size="sm">
+              Change
+            </Button>
+            {pwMsg && <span className="text-xs text-emerald-500">{pwMsg}</span>}
+            {pwErr && <span className="text-xs text-destructive">{pwErr}</span>}
+          </div>
+        </form>
+      </Card>
+      <Card className="border-destructive/40 p-5">
+        <h2 className="mb-1 text-sm font-medium text-destructive">Delete account</h2>
+        <p className="mb-4 text-xs text-muted-foreground">
+          Marks the account deleted and signs you out. Projects and teams are retained.
+        </p>
+        {confirming ? (
+          <form onSubmit={deleteAccount} className="flex items-center gap-2">
+            <Input
+              type="password"
+              placeholder="confirm with your password"
+              value={delPw}
+              onChange={(e) => setDelPw(e.target.value)}
+              required
+              className="max-w-xs"
+            />
+            <Button type="submit" variant="destructive" size="sm">
+              Delete
+            </Button>
+            <Button type="button" variant="ghost" size="sm" onClick={() => setConfirming(false)}>
+              Cancel
+            </Button>
+            {delErr && <span className="text-xs text-destructive">{delErr}</span>}
+          </form>
+        ) : (
+          <Button variant="outline" size="sm" onClick={() => setConfirming(true)}>
+            Delete account…
+          </Button>
+        )}
+      </Card>
+    </>
+  );
+}
+
 export default function SettingsPage({ me }: { me: Me }) {
   return (
     <div className="page-enter mx-auto max-w-5xl p-4 sm:p-8">
       <h1 className="mb-6 text-xl font-semibold">Settings</h1>
       <div className="grid gap-4">
+        <Account me={me} />
         <GitProviders />
         {me.id === 1 && (
           <>

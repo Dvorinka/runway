@@ -202,6 +202,158 @@ pub async fn me(user: AuthUser) -> ApiResult<Response> {
     .into_response())
 }
 
+#[derive(Deserialize)]
+pub struct UpdateMe {
+    name: Option<String>,
+    username: Option<String>,
+    email: Option<String>,
+}
+
+/// `PATCH /api/auth/me` — profile fields. Username is slugified and must
+/// be unique; a new email drops `email_verified` (devpush semantics).
+pub async fn update_me(
+    user: AuthUser,
+    State(state): State<AppState>,
+    axum::Json(body): axum::Json<UpdateMe>,
+) -> ApiResult<Response> {
+    let uid = user.user.id;
+    if let Some(name) = &body.name {
+        let name = name.trim().chars().take(256).collect::<String>();
+        sqlx::query("UPDATE \"user\" SET name = $1, updated_at = now() WHERE id = $2")
+            .bind(&name)
+            .bind(uid)
+            .execute(&state.db)
+            .await?;
+    }
+    if let Some(username) = &body.username {
+        let username = username.trim();
+        if !username.is_empty() {
+            let slug = slugify(username, 50);
+            if slug.is_empty() {
+                return Err(ApiError::bad_request("invalid username"));
+            }
+            let taken: Option<(i64,)> =
+                sqlx::query_as("SELECT id FROM \"user\" WHERE username = $1 AND id <> $2")
+                    .bind(&slug)
+                    .bind(uid)
+                    .fetch_optional(&state.db)
+                    .await?;
+            if taken.is_some() {
+                return Err(ApiError::bad_request("username already taken"));
+            }
+            sqlx::query("UPDATE \"user\" SET username = $1, updated_at = now() WHERE id = $2")
+                .bind(&slug)
+                .bind(uid)
+                .execute(&state.db)
+                .await?;
+        }
+    }
+    if let Some(email) = &body.email {
+        let email = email.trim().to_lowercase();
+        if !email.is_empty() && email != user.user.email {
+            if !email.contains('@') || email.len() > 320 {
+                return Err(ApiError::bad_request("invalid email"));
+            }
+            let taken: Option<(i64,)> =
+                sqlx::query_as("SELECT id FROM \"user\" WHERE email = $1 AND id <> $2")
+                    .bind(&email)
+                    .bind(uid)
+                    .fetch_optional(&state.db)
+                    .await?;
+            if taken.is_some() {
+                return Err(ApiError::bad_request("email already in use"));
+            }
+            sqlx::query(
+                "UPDATE \"user\" SET email = $1, email_verified = false, updated_at = now() \
+                 WHERE id = $2",
+            )
+            .bind(&email)
+            .bind(uid)
+            .execute(&state.db)
+            .await?;
+        }
+    }
+    let u: User = sqlx::query_as("SELECT * FROM \"user\" WHERE id = $1")
+        .bind(uid)
+        .fetch_one(&state.db)
+        .await?;
+    Ok(axum::Json(json!({
+        "id": u.id,
+        "email": u.email,
+        "username": u.username,
+        "name": u.name,
+        "default_team_id": u.default_team_id,
+    }))
+    .into_response())
+}
+
+#[derive(Deserialize)]
+pub struct ChangePassword {
+    current_password: String,
+    new_password: String,
+}
+
+/// `POST /api/auth/password` — change the account password. OIDC-only
+/// accounts (no hash) can't use this.
+pub async fn change_password(
+    user: AuthUser,
+    State(state): State<AppState>,
+    axum::Json(body): axum::Json<ChangePassword>,
+) -> ApiResult<Response> {
+    let Some(hash) = user.user.password_hash.as_deref() else {
+        return Err(ApiError::bad_request("account has no password"));
+    };
+    if !runway_core::password::verify(hash, &body.current_password) {
+        return Err(ApiError::unauthorized("current password is wrong"));
+    }
+    if body.new_password.len() < 8 {
+        return Err(ApiError::bad_request(
+            "password must be at least 8 characters",
+        ));
+    }
+    let hash = runway_core::password::hash(&body.new_password)?;
+    sqlx::query("UPDATE \"user\" SET password_hash = $1, updated_at = now() WHERE id = $2")
+        .bind(&hash)
+        .bind(user.user.id)
+        .execute(&state.db)
+        .await?;
+    Ok(axum::Json(json!({ "ok": true })).into_response())
+}
+
+#[derive(Deserialize)]
+pub struct DeleteMe {
+    password: String,
+}
+
+/// `DELETE /api/auth/me` — password-confirmed account deletion. Marks the
+/// row `deleted` (devpush semantics; a cleanup job owns real removal).
+pub async fn delete_me(
+    user: AuthUser,
+    State(state): State<AppState>,
+    jar: CookieJar,
+    axum::Json(body): axum::Json<DeleteMe>,
+) -> ApiResult<Response> {
+    let ok = user
+        .user
+        .password_hash
+        .as_deref()
+        .map(|h| runway_core::password::verify(h, &body.password))
+        .unwrap_or(false);
+    if !ok {
+        return Err(ApiError::unauthorized("password is wrong"));
+    }
+    sqlx::query("UPDATE \"user\" SET status = 'deleted', updated_at = now() WHERE id = $1")
+        .bind(user.user.id)
+        .execute(&state.db)
+        .await?;
+    let jar = jar.remove(
+        Cookie::build((state.settings.session_cookie.clone(), String::new()))
+            .path("/")
+            .build(),
+    );
+    Ok((jar, StatusCode::NO_CONTENT).into_response())
+}
+
 pub(crate) async fn unique_username(state: &AppState, login: &str) -> ApiResult<String> {
     let base = {
         let s = slugify(login, 50);
