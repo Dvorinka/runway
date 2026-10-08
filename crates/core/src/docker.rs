@@ -317,7 +317,51 @@ pub async fn node_client(db: &sqlx::PgPool, node_id: &str) -> Option<Docker> {
     if node.status != "online" || node.is_local() {
         return None;
     }
-    docker_client(&node.docker_url).ok()
+    node_docker_client(&node).ok()
+}
+
+/// Client for one node honoring its stored mTLS material: all three PEMs
+/// present → `connect_with_ssl`, otherwise plain `docker_client`.
+pub fn node_docker_client(node: &crate::models::RemoteNode) -> Result<Docker> {
+    let (Some(ca), Some(cert), Some(key)) = (&node.tls_ca, &node.tls_cert, &node.tls_key) else {
+        return docker_client(&node.docker_url);
+    };
+    // bollard's ssl feature is providerless: install ring once or
+    // `ClientConfig::builder()` panics on first connect.
+    static CRYPTO: std::sync::Once = std::sync::Once::new();
+    CRYPTO.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+    let dir = std::env::temp_dir().join(format!("runway-node-tls-{}", node.id));
+    std::fs::create_dir_all(&dir)?;
+    write_pem(&dir.join("ca.pem"), ca)?;
+    write_pem(&dir.join("cert.pem"), cert)?;
+    write_pem(&dir.join("key.pem"), key)?;
+    Docker::connect_with_ssl(
+        &node.docker_url,
+        &dir.join("key.pem"),
+        &dir.join("cert.pem"),
+        &dir.join("ca.pem"),
+        120,
+        bollard::API_DEFAULT_VERSION,
+    )
+    .map_err(Into::into)
+}
+
+/// Write PEM material with owner-only permissions (key files are
+/// regenerated from the DB on each call, so contents stay in sync).
+#[cfg(unix)]
+fn write_pem(path: &std::path::Path, pem: &str) -> Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?
+        .write_all(pem.as_bytes())?;
+    Ok(())
 }
 
 /// First host port in `REMOTE_PORT_START..=REMOTE_PORT_END` not

@@ -123,6 +123,7 @@ fn node_json(n: &runway_core::models::RemoteNode) -> Value {
         "labels": n.labels,
         "status": n.status,
         "max_deployments": n.max_deployments,
+        "tls": n.tls_cert.is_some(),
         "created_at": n.created_at,
     })
 }
@@ -196,7 +197,7 @@ pub async fn check_node(
     let Some(node) = node else {
         return Err(ApiError::not_found("node"));
     };
-    let healthy = match runway_core::docker::docker_client(&node.docker_url) {
+    let healthy = match runway_core::docker::node_docker_client(&node) {
         Ok(client) => client.ping().await.is_ok(),
         Err(_) => false,
     };
@@ -224,6 +225,72 @@ pub async fn delete_node(
         .bind(&id)
         .execute(&state.db)
         .await?;
+    if res.rows_affected() == 0 {
+        return Err(ApiError::not_found("node"));
+    }
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+/// `POST /api/v1/admin/nodes/{id}/tls` — generate a dedicated CA plus
+/// server/client certs. Client material is stored on the node row; the
+/// server bundle is returned once for the operator to install on dockerd.
+pub async fn provision_node_tls(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Response> {
+    require_superadmin(&user)?;
+    let node: Option<runway_core::models::RemoteNode> =
+        sqlx::query_as("SELECT * FROM remote_node WHERE id = $1")
+            .bind(&id)
+            .fetch_optional(&state.db)
+            .await?;
+    let Some(node) = node else {
+        return Err(ApiError::not_found("node"));
+    };
+    let bundle = runway_core::node_tls::generate_node_tls(&node.host)
+        .map_err(|e| ApiError::internal(e.to_string()))?;
+    let node: runway_core::models::RemoteNode = sqlx::query_as(
+        "UPDATE remote_node SET tls_ca = $2, tls_cert = $3, tls_key = $4,
+         updated_at = now() WHERE id = $1 RETURNING *",
+    )
+    .bind(&id)
+    .bind(&bundle.ca_pem)
+    .bind(&bundle.client_cert_pem)
+    .bind(&bundle.client_key_pem)
+    .fetch_one(&state.db)
+    .await?;
+    Ok(Json(json!({
+        "node": node_json(&node),
+        "ca_pem": bundle.ca_pem,
+        "server_cert_pem": bundle.server_cert_pem,
+        "server_key_pem": bundle.server_key_pem,
+        "dockerd": {
+            "tlsverify": true,
+            "tlscacert": "/etc/docker/runway/ca.pem",
+            "tlscert": "/etc/docker/runway/server.pem",
+            "tlskey": "/etc/docker/runway/server-key.pem",
+            "host": "tcp://0.0.0.0:2376",
+        },
+    }))
+    .into_response())
+}
+
+/// `DELETE /api/v1/admin/nodes/{id}/tls` — drop the stored client
+/// material; the node falls back to its plain `docker_url`.
+pub async fn clear_node_tls(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Response> {
+    require_superadmin(&user)?;
+    let res = sqlx::query(
+        "UPDATE remote_node SET tls_ca = NULL, tls_cert = NULL, tls_key = NULL,
+         updated_at = now() WHERE id = $1",
+    )
+    .bind(&id)
+    .execute(&state.db)
+    .await?;
     if res.rows_affected() == 0 {
         return Err(ApiError::not_found("node"));
     }

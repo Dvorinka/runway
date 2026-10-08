@@ -167,9 +167,9 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
       route `http://{node.host}:{port}` — no extra infra on the node.
       Monitor/cleanup/teardown use the node's own daemon; local
       bind-mounted storage is skipped on remote (artifacts/uploads
-      stay local). **Caveats**: upload + static deployments are
-      rejected on remote (local artifacts), TLS/mTLS columns exist
-      for parity but are unused
+      stay local). **Caveat**: upload + static deployments are
+      rejected on remote (local artifacts); mTLS support landed in
+      Phase 8
 - [x] Runner image overrides: `data_dir/runner-overrides.json` maps
       runner slugs to replacement images (or `enabled:false` to block
       one) — decouples self-hosted instances from ghcr.io/devpushhq
@@ -309,8 +309,12 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
       per-environment `computed_status` + 30d uptime from metric-sample
       coverage; standalone `/status/:slug` SPA route renders outside
       the auth shell; disabled projects 404
-- [ ] **Remote-node mTLS** — columns exist; needs cert provisioning
-      flow
+- [x] **Remote-node mTLS** — per-node CA + server/client cert bundles
+      (`POST /admin/nodes/{id}/tls` returns the server material once,
+      `DELETE` clears); `node_docker_client` honors stored PEMs via
+      bollard `connect_with_ssl` (rustls/ring), health checks exercise
+      the same path; Settings node list gains an mTLS badge + provision
+      flow with install instructions
 - [ ] **Bitbucket deploys tested against a real workspace**
 - [ ] **Release packaging** — `runway` npm wrapper/brew formula,
       published container images, versioned releases

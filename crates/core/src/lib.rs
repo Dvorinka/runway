@@ -21,6 +21,7 @@ pub mod github;
 pub mod logs;
 pub mod mail;
 pub mod models;
+pub mod node_tls;
 pub mod password;
 pub mod presets;
 pub mod rum;

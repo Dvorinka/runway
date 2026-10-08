@@ -114,6 +114,15 @@ export interface RemoteNode {
   docker_url: string;
   status: string;
   max_deployments: number | null;
+  tls: boolean;
+}
+
+export interface NodeTlsProvision {
+  node: RemoteNode;
+  ca_pem: string;
+  server_cert_pem: string;
+  server_key_pem: string;
+  dockerd: Record<string, unknown>;
 }
 
 export interface Team {
@@ -504,6 +513,10 @@ export const api = {
   deleteNode: (id: string) => req<void>(`/api/v1/admin/nodes/${id}`, { method: "DELETE" }),
   checkNode: (id: string) =>
     req<RemoteNode>(`/api/v1/admin/nodes/${id}/health`, { method: "POST" }),
+  provisionNodeTls: (id: string) =>
+    req<NodeTlsProvision>(`/api/v1/admin/nodes/${id}/tls`, { method: "POST" }),
+  clearNodeTls: (id: string) =>
+    req<void>(`/api/v1/admin/nodes/${id}/tls`, { method: "DELETE" }),
 
   teams: () => req<{ teams: Team[] }>("/api/v1/teams"),
   createTeam: (name: string) =>

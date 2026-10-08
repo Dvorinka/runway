@@ -3,6 +3,7 @@ import {
   type AllowlistRule,
   type GitConnection,
   type Me,
+  type NodeTlsProvision,
   type RemoteNode,
 } from "@/lib/api";
 import { AvatarRow, Badge, Button, Card, Input } from "@/components/ui";
@@ -229,11 +230,22 @@ function Nodes() {
   const [host, setHost] = useState("");
   const [url, setUrl] = useState("");
   const [error, setError] = useState("");
+  const [bundle, setBundle] = useState<NodeTlsProvision | null>(null);
 
   const load = () => api.nodes().then((r) => setNodes(r.nodes)).catch((e) => setError(e.message));
   useEffect(() => {
     load();
   }, []);
+
+  async function provision(id: string) {
+    setError("");
+    try {
+      setBundle(await api.provisionNodeTls(id));
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "failed");
+    }
+  }
 
   async function add(e: React.FormEvent) {
     e.preventDefault();
@@ -288,6 +300,7 @@ function Nodes() {
               </span>
             </div>
             <div className="flex items-center gap-2">
+              {n.tls && <Badge variant="success">mTLS</Badge>}
               <Badge variant={n.status === "online" ? "success" : "warning"}>{n.status}</Badge>
               <Button
                 variant="ghost"
@@ -296,6 +309,19 @@ function Nodes() {
               >
                 Check
               </Button>
+              {n.tls ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => api.clearNodeTls(n.id).then(load).catch(() => {})}
+                >
+                  Clear TLS
+                </Button>
+              ) : (
+                <Button variant="ghost" size="sm" onClick={() => provision(n.id)}>
+                  mTLS
+                </Button>
+              )}
               <Button
                 variant="ghost"
                 size="sm"
@@ -307,6 +333,27 @@ function Nodes() {
           </div>
         ))}
       </div>
+      {bundle && (
+        <div className="mt-4 rounded-md border border-border bg-muted/30 p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <p className="text-xs font-medium">
+              Server material for {bundle.node.name} — shown once
+            </p>
+            <Button variant="ghost" size="sm" onClick={() => setBundle(null)}>
+              Dismiss
+            </Button>
+          </div>
+          <p className="mb-2 text-xs text-muted-foreground">
+            Install on the remote host, restart dockerd with the flags below, then run Check.
+          </p>
+          <pre className="max-h-64 overflow-auto rounded bg-background p-3 font-mono text-[11px] whitespace-pre-wrap">
+            {`# /etc/docker/runway/ca.pem\n${bundle.ca_pem}\n# /etc/docker/runway/server.pem\n${bundle.server_cert_pem}\n# /etc/docker/runway/server-key.pem\n${bundle.server_key_pem}\n# dockerd flags\n--tlsverify ${Object.entries(bundle.dockerd)
+              .filter(([k]) => k !== "tlsverify")
+              .map(([k, v]) => `--${k}=${v}`)
+              .join(" ")}`}
+          </pre>
+        </div>
+      )}
     </Card>
   );
 }

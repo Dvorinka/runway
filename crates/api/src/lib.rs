@@ -68,6 +68,10 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/admin/nodes/{id}/health",
             post(routes::admin::check_node),
         )
+        .route(
+            "/api/v1/admin/nodes/{id}/tls",
+            post(routes::admin::provision_node_tls).delete(routes::admin::clear_node_tls),
+        )
         // GitHub integration — webhook + app-manifest registration
         .route("/api/github/webhook", post(routes::github::webhook))
         .route("/api/v1/github/app/status", get(routes::github::app_status))
