@@ -52,7 +52,9 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
       SvelteKit, Nuxt, Remix, Vite/SPA, Hugo (+ backend presets ported)
 - [x] Node version matrix (20/22), package-manager detection
       (npm/pnpm/yarn/bun lockfiles → command rewrite)
-- [~] Per-PR preview deployments + commit status with URL
+- [x] Per-PR preview deployments + commit status with URL
+      (`pull_request` webhook → deploy on head branch, `runway/deploy`
+      commit status with target URL, `preview_prs` config opt-out)
       (PR comment deferred — commit status carries the link)
 - [x] Build-output caching (`.next/cache`, `.turbo` volumes, per project)
 - [x] SPA rewrites/redirects/headers via `runway.json`

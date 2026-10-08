@@ -388,17 +388,17 @@ async fn detach_from_unused(ctx: &Ctx, self_id: &str, used: &HashSet<String>) {
     }
 }
 
-/// Team notification when a serving container goes down. Best-effort —
-/// a lookup failure just skips the notification.
+/// Team notification + `deployment.crashed` webhook when a serving
+/// container goes down. Best-effort — a lookup failure just skips it.
 async fn notify_crash(ctx: &Ctx, dep: &Deployment, observed: &str, exit_code: Option<i32>) {
-    let project =
-        sqlx::query_as::<_, (String, String)>("SELECT name, team_id FROM project WHERE id = $1")
+    let project: Option<runway_core::models::Project> =
+        sqlx::query_as("SELECT * FROM project WHERE id = $1")
             .bind(&dep.project_id)
             .fetch_optional(&ctx.db)
             .await
             .ok()
             .flatten();
-    let Some((name, team_id)) = project else {
+    let Some(project) = project else {
         return;
     };
     let reason = match observed {
@@ -408,9 +408,9 @@ async fn notify_crash(ctx: &Ctx, dep: &Deployment, observed: &str, exit_code: Op
     };
     runway_core::audit::notify_team(
         &ctx.db,
-        &team_id,
+        &project.team_id,
         "deployment.crashed",
-        &format!("App down: {name}"),
+        &format!("App down: {}", project.name),
         runway_core::audit::Notify {
             body: Some(&format!("{} — {}", &dep.id[..7.min(dep.id.len())], reason)),
             link: Some(&format!(
@@ -420,6 +420,15 @@ async fn notify_crash(ctx: &Ctx, dep: &Deployment, observed: &str, exit_code: Op
             project_id: Some(&dep.project_id),
             ..Default::default()
         },
+    )
+    .await;
+    runway_core::webhook::send_deployment_webhooks(
+        &ctx.db,
+        &ctx.crypto,
+        &ctx.settings,
+        &project,
+        dep,
+        "crashed",
     )
     .await;
 }
