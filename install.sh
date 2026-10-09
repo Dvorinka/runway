@@ -382,17 +382,27 @@ EOF
   fi
 
   BOOTSTRAP_EMAIL="${BOOTSTRAP_EMAIL:-}"
-  BOOTSTRAP_PASSWORD=""
+  BOOTSTRAP_PASSWORD="${BOOTSTRAP_PASSWORD:-}"
   if [ "$interactive" = 1 ]; then
     printf '\n'
     ask "Owner account email (empty to create it later in the dashboard)" "$BOOTSTRAP_EMAIL"
     BOOTSTRAP_EMAIL="$REPLY"
     if [ -n "$BOOTSTRAP_EMAIL" ]; then
       case "$BOOTSTRAP_EMAIL" in *@*) : ;; *) die "invalid email: $BOOTSTRAP_EMAIL" ;; esac
-      ask_secret "Owner password (empty to set it in the dashboard later)"
+      ask_secret "Owner password (empty for no password login)"
       BOOTSTRAP_PASSWORD="$REPLY"
       if [ -n "$BOOTSTRAP_PASSWORD" ] && [ ${#BOOTSTRAP_PASSWORD} -lt 8 ]; then
         die "password must be at least 8 characters"
+      fi
+      if [ -z "$BOOTSTRAP_PASSWORD" ] && [ -z "$SMTP_HOST" ]; then
+        warn "No password and no SMTP — dashboard sign-in won't work until a password is set."
+        if confirm "Set the owner password now?" y; then
+          ask_secret "Owner password"
+          BOOTSTRAP_PASSWORD="$REPLY"
+          if [ -n "$BOOTSTRAP_PASSWORD" ] && [ ${#BOOTSTRAP_PASSWORD} -lt 8 ]; then
+            die "password must be at least 8 characters"
+          fi
+        fi
       fi
     fi
   fi
@@ -406,7 +416,7 @@ EOF
     info "tls:            ${TLS_LABEL:-http}"
     info "ports:          http=$HTTP_PORT https=$HTTPS_PORT"
     [ -n "$SMTP_HOST" ] && info "smtp:           $SMTP_HOST:$SMTP_PORT"
-    [ -n "$BOOTSTRAP_EMAIL" ] && info "owner:          $BOOTSTRAP_EMAIL"
+    [ -n "$BOOTSTRAP_EMAIL" ] && info "owner:          $BOOTSTRAP_EMAIL$([ -n "$BOOTSTRAP_PASSWORD" ] || echo ' (no password)')"
     printf '\n'
     confirm "Install with these settings?" y || die "aborted"
   fi
@@ -477,6 +487,11 @@ COMPOSE_CD="cd $DIR_ABS && docker compose --env-file .env -f compose/production.
 
 # Optional first-run bootstrap.
 if [ -n "${BOOTSTRAP_EMAIL:-}" ]; then
+  if [ -z "${BOOTSTRAP_PASSWORD:-}" ] && [ -z "$(grep -E '^SMTP_HOST=' "$ENV_FILE" | cut -d= -f2-)" ]; then
+    warn "Owner account without password and no SMTP — dashboard sign-in"
+    warn "won't work until a password is set:"
+    warn "  $COMPOSE_CD exec runway runway bootstrap --email $BOOTSTRAP_EMAIL --password '<min-8-chars>'"
+  fi
   say "Waiting for the runway container"
   for _ in $(seq 1 45); do
     (cd "$DIR" && docker compose --env-file .env -f compose/production.yml exec -T runway true) >/dev/null 2>&1 && break
