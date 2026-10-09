@@ -97,7 +97,7 @@ never overwrite `.env`.
 Then create the first user — sign-in password plus a CLI API key:
 
 ```bash
-docker compose --project-directory ./runway -f ./runway/compose/production.yml \
+cd ./runway && docker compose --env-file .env -f compose/production.yml \
   exec runway runway bootstrap --email you@example.com --password 'change-me'
 ```
 

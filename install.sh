@@ -445,8 +445,13 @@ fi
 # ---------------------------------------------------------------------------
 
 say "Building and starting the stack"
-docker compose --project-directory "$DIR" --env-file "$ENV_FILE" \
-  -f "$DIR/compose/production.yml" up -d --build
+# NOTE: run compose from inside $DIR. Using
+# `--project-directory "$DIR"` from outside re-bases the relative
+# `build: ..` context in compose/production.yml to the parent of $DIR,
+# so the build looks for ./Dockerfile in the wrong place and fails with
+# "failed to read dockerfile: open Dockerfile: no such file or directory".
+(cd "$DIR" && docker compose --env-file .env \
+  -f compose/production.yml up -d --build)
 
 HOST="$(grep -E '^APP_HOSTNAME=' "$ENV_FILE" | cut -d= -f2-)"
 PORT="$(grep -E '^HTTP_PORT=' "$ENV_FILE" | cut -d= -f2-)"
@@ -459,22 +464,23 @@ fi
 SHOW_PORT="$PORT"
 { [ "$SCHEME" = http ] && [ "$PORT" = 80 ]; } || [ "$PORT" = 443 ] && SHOW_PORT=""
 
-COMPOSE="docker compose --project-directory $DIR -f $DIR/compose/production.yml"
+DIR_ABS="$(cd "$DIR" && pwd)"
+COMPOSE_CD="cd $DIR_ABS && docker compose --env-file .env -f compose/production.yml"
 
 # Optional first-run bootstrap.
 if [ -n "${BOOTSTRAP_EMAIL:-}" ]; then
   say "Waiting for the runway container"
   for _ in $(seq 1 45); do
-    $COMPOSE exec -T runway true >/dev/null 2>&1 && break
+    (cd "$DIR" && docker compose --env-file .env -f compose/production.yml exec -T runway true) >/dev/null 2>&1 && break
     sleep 2
   done
   say "Creating owner account ($BOOTSTRAP_EMAIL)"
   if [ -n "${BOOTSTRAP_PASSWORD:-}" ]; then
-    $COMPOSE exec -T runway runway bootstrap --email "$BOOTSTRAP_EMAIL" --password "$BOOTSTRAP_PASSWORD" || \
-      warn "bootstrap failed — retry later: $COMPOSE exec runway runway bootstrap --email $BOOTSTRAP_EMAIL"
+    (cd "$DIR" && docker compose --env-file .env -f compose/production.yml exec -T runway runway bootstrap --email "$BOOTSTRAP_EMAIL" --password "$BOOTSTRAP_PASSWORD") || \
+      warn "bootstrap failed — retry later: $COMPOSE_CD exec runway runway bootstrap --email $BOOTSTRAP_EMAIL"
   else
-    $COMPOSE exec -T runway runway bootstrap --email "$BOOTSTRAP_EMAIL" || \
-      warn "bootstrap failed — retry later: $COMPOSE exec runway runway bootstrap --email $BOOTSTRAP_EMAIL"
+    (cd "$DIR" && docker compose --env-file .env -f compose/production.yml exec -T runway runway bootstrap --email "$BOOTSTRAP_EMAIL") || \
+      warn "bootstrap failed — retry later: $COMPOSE_CD exec runway runway bootstrap --email $BOOTSTRAP_EMAIL"
   fi
 fi
 
@@ -483,8 +489,8 @@ cat <<EOF
 Runway is up.
 
   Dashboard:  $SCHEME://${HOST}${SHOW_PORT:+:$SHOW_PORT}
-  Bootstrap:  $COMPOSE exec runway runway bootstrap --email you@example.com
-  Logs:       $COMPOSE logs -f
+  Bootstrap:  $COMPOSE_CD exec runway runway bootstrap --email you@example.com
+  Logs:       $COMPOSE_CD logs -f
 EOF
 
 DEPLOY="$(grep -E '^DEPLOY_DOMAIN=' "$ENV_FILE" | cut -d= -f2-)"
@@ -507,7 +513,7 @@ The Cloudflare tunnel is pre-configured — on first start Runway creates
 the tunnel, points $HOST and *.$DEPLOY at it, and launches
 the cloudflared-instance container. Watch it connect with:
 
-  $COMPOSE logs -f runway
+  $COMPOSE_CD logs -f runway
   docker logs -f cloudflared-instance
 EOF
     else

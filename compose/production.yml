@@ -1,7 +1,11 @@
 # Production stack: runway + postgres + traefik on 80/443.
 # Installed by install.sh; configuration lives in .env next to the repo root.
 #
+# Run compose from the repo root:
 #   docker compose --env-file .env -f compose/production.yml up -d --build
+# Do NOT add `--project-directory <root>` while invoking from outside the
+# checkout — it re-bases the relative `build: ..` context to the parent of
+# the project directory and the build fails with "open Dockerfile".
 #   docker compose --env-file .env -f compose/production.yml \
 #     exec runway runway bootstrap --email you@example.com
 #
