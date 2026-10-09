@@ -28,6 +28,25 @@ services:
       timeout: 3s
       retries: 12
 
+  # Privilege boundary for the Docker API (parity with devpush): this is
+  # the only service that mounts the raw socket. Runway talks to it over
+  # TCP as an unprivileged user instead of needing socket group access.
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      CONTAINERS: 1
+      IMAGES: 1
+      INFO: 1
+      SYSTEM: 1
+      POST: 1
+      EXEC: 1
+      NETWORKS: 1
+      VOLUMES: 1
+      DISABLE_IPV6: 1
+
   traefik:
     image: traefik:v3.3
     restart: unless-stopped
@@ -57,6 +76,8 @@ services:
     depends_on:
       pgsql:
         condition: service_healthy
+      docker-proxy:
+        condition: service_started
     environment:
       APP_HOSTNAME: ${APP_HOSTNAME:?set APP_HOSTNAME in .env}
       DEPLOY_DOMAIN: ${DEPLOY_DOMAIN:?set DEPLOY_DOMAIN in .env}
@@ -68,7 +89,8 @@ services:
       DATA_DIR: /home/runway/data
       HOST_DATA_DIR: ${HOST_DATA_DIR:-}
       RUNWAY_LISTEN: 0.0.0.0:8000
-      DOCKER_HOST: unix:///var/run/docker.sock
+      # Via the socket proxy — the container user has no socket access.
+      DOCKER_HOST: tcp://docker-proxy:2375
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
       GITHUB_APP_ID: ${GITHUB_APP_ID:-}
@@ -85,7 +107,6 @@ services:
       SMTP_FROM: ${SMTP_FROM:-}
       SMTP_TLS: ${SMTP_TLS:-true}
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
       - runway-data:/home/runway/data
     labels:
       - traefik.enable=true
