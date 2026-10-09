@@ -280,6 +280,25 @@ impl CloudflareClient {
         }))
     }
 
+    /// List remotely-managed tunnels, optionally filtered by name.
+    pub async fn list_tunnels(&self, account_id: &str, name: Option<&str>) -> Result<Vec<Value>> {
+        let mut q = vec![("per_page", "100".to_string())];
+        if let Some(n) = name {
+            q.push(("name", n.to_string()));
+        }
+        let res: Value = self
+            .http
+            .get(format!("{API_BASE}/accounts/{account_id}/cfd_tunnel"))
+            .bearer_auth(&self.token)
+            .query(&q)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        Ok(res["result"].as_array().cloned().unwrap_or_default())
+    }
+
     pub async fn get_tunnel(&self, account_id: &str, tunnel_id: &str) -> Result<Option<Value>> {
         let res = self
             .http

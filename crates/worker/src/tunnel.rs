@@ -37,6 +37,27 @@ pub async fn ensure_instance(ctx: &Ctx) -> anyhow::Result<()> {
         }
     }
     if state.is_none() {
+        // Reclaim a same-name tunnel left behind (e.g. reinstall with a
+        // fresh volume): without its creation token it is unusable to us,
+        // and keeping it makes create fail with 409. Delete + recreate.
+        match cf.list_tunnels(&account_id, Some(TUNNEL_NAME)).await {
+            Ok(existing) => {
+                for t in &existing {
+                    if t["name"].as_str() == Some(TUNNEL_NAME) {
+                        if let Some(id) = t["id"].as_str() {
+                            tracing::warn!(
+                                tunnel_id = id,
+                                "reclaiming stale same-name instance tunnel"
+                            );
+                            if let Err(e) = cf.delete_tunnel(&account_id, id).await {
+                                tracing::warn!(error = %e, "stale tunnel delete failed");
+                            }
+                        }
+                    }
+                }
+            }
+            Err(e) => tracing::warn!(error = %e, "tunnel list failed — create may 409"),
+        }
         let t = cf
             .create_tunnel(&account_id, TUNNEL_NAME)
             .await?
