@@ -102,6 +102,19 @@ enum Command {
         #[arg(long)]
         print: bool,
     },
+    /// Restrict sign-up: allowlist-add [--email E | --domain D | --pattern P].
+    /// Empty allowlist means open registration; adding any rule restricts it.
+    AllowlistAdd {
+        /// Exact email address to allow.
+        #[arg(long)]
+        email: Option<String>,
+        /// Email domain to allow (e.g. example.com).
+        #[arg(long)]
+        domain: Option<String>,
+        /// Regex pattern to allow (case-insensitive).
+        #[arg(long)]
+        pattern: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -173,6 +186,16 @@ async fn main() -> anyhow::Result<()> {
             runway_core::db::migrate(&db).await?;
             let crypto = runway_core::crypto::Crypto::new(&settings.encryption_key)?;
             bootstrap(&db, &crypto, &email, username.as_deref(), password).await?;
+        }
+        Command::AllowlistAdd {
+            email,
+            domain,
+            pattern,
+        } => {
+            let settings = runway_core::Settings::from_env()?;
+            let db = runway_core::db::connect(&settings).await?;
+            runway_core::db::migrate(&db).await?;
+            allowlist_add(&db, email, domain, pattern).await?;
         }
         Command::Login { server, key } => commands::login(server, key).await?,
         Command::Link { project } => commands::link(project).await?,
@@ -277,5 +300,49 @@ async fn bootstrap(
     println!("user_id:  {user_id}");
     println!("api_key:  {raw}");
     println!("(shown once — store it safely)");
+    Ok(())
+}
+
+/// Restrict sign-up by adding an allowlist rule. Idempotent: an identical
+/// rule is reported, not duplicated. An empty allowlist means open
+/// registration, so the first rule added closes it to matches only.
+async fn allowlist_add(
+    db: &sqlx::PgPool,
+    email: Option<String>,
+    domain: Option<String>,
+    pattern: Option<String>,
+) -> anyhow::Result<()> {
+    let rules: Vec<(String, String)> = [("email", email), ("domain", domain), ("pattern", pattern)]
+        .into_iter()
+        .filter_map(|(ty, v)| v.map(|v| (ty.to_string(), v)))
+        .collect();
+    anyhow::ensure!(
+        !rules.is_empty(),
+        "pass one of --email, --domain, or --pattern"
+    );
+    for (ty, value) in rules {
+        let value = value.trim().to_string();
+        anyhow::ensure!(!value.is_empty(), "{ty} rule must not be empty");
+        if ty == "email" {
+            anyhow::ensure!(value.contains('@'), "invalid email: {value}");
+        }
+        let existing: Option<(i64,)> =
+            sqlx::query_as("SELECT id FROM allowlist WHERE type = $1 AND value = $2")
+                .bind(&ty)
+                .bind(&value)
+                .fetch_optional(db)
+                .await?;
+        if let Some((id,)) = existing {
+            println!("{ty}:{value} already allowed (rule {id})");
+            continue;
+        }
+        let id: (i64,) =
+            sqlx::query_as("INSERT INTO allowlist (type, value) VALUES ($1, $2) RETURNING id")
+                .bind(&ty)
+                .bind(&value)
+                .fetch_one(db)
+                .await?;
+        println!("allowlist rule {}: {ty}:{value}", id.0);
+    }
     Ok(())
 }

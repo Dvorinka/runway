@@ -23,7 +23,12 @@
 #   HTTP_PORT        published http port         (default 80)
 #   HTTPS_PORT       published https port        (default 443)
 #   SMTP_*           optional mail (magic links, invites)
-#   BOOTSTRAP_EMAIL  create the owner account after start
+#   BOOTSTRAP_EMAIL  create the owner account after start (password required)
+#   BOOTSTRAP_PASSWORD  owner password, min 8 chars (required with email)
+#   ALLOW_REGISTRATION  open | restricted (default restricted; open with
+#                      no owner account is refused — first registrant is admin)
+#   ALLOWLIST_SEED_EMAIL  address allowed to register when skipping owner
+#                      creation (default: the owner email)
 #
 # From a git checkout, ./install.sh installs in place (no download).
 
@@ -383,27 +388,76 @@ EOF
 
   BOOTSTRAP_EMAIL="${BOOTSTRAP_EMAIL:-}"
   BOOTSTRAP_PASSWORD="${BOOTSTRAP_PASSWORD:-}"
+  ALLOWLIST_SEED_EMAIL="${ALLOWLIST_SEED_EMAIL:-}"
+  REGISTRATION_POLICY="${ALLOW_REGISTRATION:-restricted}"
   if [ "$interactive" = 1 ]; then
     printf '\n'
-    ask "Owner account email (empty to create it later in the dashboard)" "$BOOTSTRAP_EMAIL"
-    BOOTSTRAP_EMAIL="$REPLY"
+    require_email=0
+    while true; do
+      if [ "$require_email" = 1 ]; then
+        ask "Owner account email (required)" "$BOOTSTRAP_EMAIL"
+      else
+        ask "Owner account email (empty to skip — first registered user becomes admin)" "$BOOTSTRAP_EMAIL"
+      fi
+      BOOTSTRAP_EMAIL="$REPLY"
+      if [ -z "$BOOTSTRAP_EMAIL" ]; then
+        if [ "$require_email" = 1 ]; then
+          warn "an owner account is required here"
+          continue
+        fi
+        # No account: the first registrant becomes superadmin (id 1), so
+        # registration must be restricted to an address they control —
+        # unless they go back and create the owner account.
+        printf '\n'
+        say "No owner account — the first user to register becomes the instance admin."
+        printf '    1) Restricted  only an address you name can register (recommended)\n'
+        printf '    2) Open        anyone can register (requires an owner account)\n'
+        ask "Choose" "1"
+        case "$REPLY" in
+          1|restricted) REGISTRATION_POLICY=restricted ;;
+          2|open) REGISTRATION_POLICY=open ;;
+          *) warn "invalid choice: $REPLY"; continue ;;
+        esac
+        if [ "$REGISTRATION_POLICY" = restricted ]; then
+          ask "Owner email (only this address will be able to register)" "$ALLOWLIST_SEED_EMAIL"
+          ALLOWLIST_SEED_EMAIL="$REPLY"
+          case "$ALLOWLIST_SEED_EMAIL" in *@*) : ;; *)
+            warn "invalid email: $ALLOWLIST_SEED_EMAIL"; continue ;; esac
+          break
+        fi
+        warn "Open registration needs an owner so you keep the admin seat."
+        require_email=1
+        continue
+      fi
+      case "$BOOTSTRAP_EMAIL" in *@*) : ;; *)
+        warn "invalid email: $BOOTSTRAP_EMAIL"; continue ;; esac
+      # Password is mandatory with an account — a passwordless owner
+      # cannot sign in (no SMTP magic link) and blocks later signup.
+      while true; do
+        ask_secret "Owner password (required, min 8 characters)"
+        BOOTSTRAP_PASSWORD="$REPLY"
+        if [ ${#BOOTSTRAP_PASSWORD} -ge 8 ]; then break; fi
+        warn "password must be at least 8 characters"
+      done
+      break
+    done
+  else
+    # Unattended: same rules, no prompts.
     if [ -n "$BOOTSTRAP_EMAIL" ]; then
       case "$BOOTSTRAP_EMAIL" in *@*) : ;; *) die "invalid email: $BOOTSTRAP_EMAIL" ;; esac
-      ask_secret "Owner password (empty for no password login)"
-      BOOTSTRAP_PASSWORD="$REPLY"
-      if [ -n "$BOOTSTRAP_PASSWORD" ] && [ ${#BOOTSTRAP_PASSWORD} -lt 8 ]; then
-        die "password must be at least 8 characters"
+      if [ ${#BOOTSTRAP_PASSWORD} -lt 8 ]; then
+        die "BOOTSTRAP_PASSWORD (min 8 chars) is required with BOOTSTRAP_EMAIL"
       fi
-      if [ -z "$BOOTSTRAP_PASSWORD" ] && [ -z "$SMTP_HOST" ]; then
-        warn "No password and no SMTP — dashboard sign-in won't work until a password is set."
-        if confirm "Set the owner password now?" y; then
-          ask_secret "Owner password"
-          BOOTSTRAP_PASSWORD="$REPLY"
-          if [ -n "$BOOTSTRAP_PASSWORD" ] && [ ${#BOOTSTRAP_PASSWORD} -lt 8 ]; then
-            die "password must be at least 8 characters"
-          fi
-        fi
+      # Restricted (the default) also closes sign-up to the owner.
+      ALLOWLIST_SEED_EMAIL="${ALLOWLIST_SEED_EMAIL:-$BOOTSTRAP_EMAIL}"
+    else
+      case "$REGISTRATION_POLICY" in restricted|open) : ;; *)
+        die "invalid ALLOW_REGISTRATION: $REGISTRATION_POLICY (open|restricted)" ;; esac
+      if [ "$REGISTRATION_POLICY" = open ]; then
+        die "ALLOW_REGISTRATION=open with no BOOTSTRAP_EMAIL hands admin to the first stranger — set both, or use restricted"
       fi
+      case "$ALLOWLIST_SEED_EMAIL" in *@*) : ;; *)
+        die "ALLOWLIST_SEED_EMAIL is required when skipping BOOTSTRAP_EMAIL (nobody could register otherwise)" ;; esac
     fi
   fi
 
@@ -416,7 +470,12 @@ EOF
     info "tls:            ${TLS_LABEL:-http}"
     info "ports:          http=$HTTP_PORT https=$HTTPS_PORT"
     [ -n "$SMTP_HOST" ] && info "smtp:           $SMTP_HOST:$SMTP_PORT"
-    [ -n "$BOOTSTRAP_EMAIL" ] && info "owner:          $BOOTSTRAP_EMAIL$([ -n "$BOOTSTRAP_PASSWORD" ] || echo ' (no password)')"
+    if [ -n "$BOOTSTRAP_EMAIL" ]; then
+      info "owner:          $BOOTSTRAP_EMAIL"
+    else
+      info "owner:          (skipped — first registrant becomes admin)"
+    fi
+    info "registration:   $REGISTRATION_POLICY$([ "$REGISTRATION_POLICY" = restricted ] && [ -n "$ALLOWLIST_SEED_EMAIL" ] && echo " ($ALLOWLIST_SEED_EMAIL)")"
     printf '\n'
     confirm "Install with these settings?" y || die "aborted"
   fi
@@ -485,26 +544,33 @@ SHOW_PORT="$PORT"
 DIR_ABS="$(cd "$DIR" && pwd)"
 COMPOSE_CD="cd $DIR_ABS && docker compose --env-file .env -f compose/production.yml"
 
-# Optional first-run bootstrap.
+# Optional first-run bootstrap. The password is always set when an
+# account is created (enforced above); a restricted policy seeds the
+# sign-up allowlist so registration stays closed (manage in Settings).
 if [ -n "${BOOTSTRAP_EMAIL:-}" ]; then
-  if [ -z "${BOOTSTRAP_PASSWORD:-}" ] && [ -z "$(grep -E '^SMTP_HOST=' "$ENV_FILE" | cut -d= -f2-)" ]; then
-    warn "Owner account without password and no SMTP — dashboard sign-in"
-    warn "won't work until a password is set:"
-    warn "  $COMPOSE_CD exec runway runway bootstrap --email $BOOTSTRAP_EMAIL --password '<min-8-chars>'"
-  fi
   say "Waiting for the runway container"
   for _ in $(seq 1 45); do
     (cd "$DIR" && docker compose --env-file .env -f compose/production.yml exec -T runway true) >/dev/null 2>&1 && break
     sleep 2
   done
   say "Creating owner account ($BOOTSTRAP_EMAIL)"
-  if [ -n "${BOOTSTRAP_PASSWORD:-}" ]; then
-    (cd "$DIR" && docker compose --env-file .env -f compose/production.yml exec -T runway runway bootstrap --email "$BOOTSTRAP_EMAIL" --password "$BOOTSTRAP_PASSWORD") || \
-      warn "bootstrap failed — retry later: $COMPOSE_CD exec runway runway bootstrap --email $BOOTSTRAP_EMAIL"
-  else
-    (cd "$DIR" && docker compose --env-file .env -f compose/production.yml exec -T runway runway bootstrap --email "$BOOTSTRAP_EMAIL") || \
-      warn "bootstrap failed — retry later: $COMPOSE_CD exec runway runway bootstrap --email $BOOTSTRAP_EMAIL"
-  fi
+  (cd "$DIR" && docker compose --env-file .env -f compose/production.yml exec -T runway runway bootstrap --email "$BOOTSTRAP_EMAIL" --password "$BOOTSTRAP_PASSWORD") || \
+    warn "bootstrap failed — retry later: $COMPOSE_CD exec runway runway bootstrap --email $BOOTSTRAP_EMAIL --password '<min-8-chars>'"
+fi
+# A created account under a restricted policy also closes sign-up to
+# the owner (manage the allowlist in Settings to open up later).
+if [ -n "${BOOTSTRAP_EMAIL:-}" ] && [ "$REGISTRATION_POLICY" = restricted ] && [ -z "${ALLOWLIST_SEED_EMAIL:-}" ]; then
+  ALLOWLIST_SEED_EMAIL="$BOOTSTRAP_EMAIL"
+fi
+if [ "$REGISTRATION_POLICY" = restricted ] && [ -n "${ALLOWLIST_SEED_EMAIL:-}" ]; then
+  say "Waiting for the runway container"
+  for _ in $(seq 1 45); do
+    (cd "$DIR" && docker compose --env-file .env -f compose/production.yml exec -T runway true) >/dev/null 2>&1 && break
+    sleep 2
+  done
+  say "Restricting registration to $ALLOWLIST_SEED_EMAIL"
+  (cd "$DIR" && docker compose --env-file .env -f compose/production.yml exec -T runway runway allowlist-add --email "$ALLOWLIST_SEED_EMAIL") || \
+    warn "allowlist seed failed — retry later: $COMPOSE_CD exec runway runway allowlist-add --email $ALLOWLIST_SEED_EMAIL"
 fi
 
 cat <<EOF
