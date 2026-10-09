@@ -6,13 +6,18 @@
 curl -fsSL https://raw.githubusercontent.com/Dvorinka/runway/main/install.sh | bash
 ```
 
-Fetches the release, generates secrets into `.env`, and brings up
-`compose/production.yml` (runway + postgres + traefik). Overrides:
+Interactive setup: chooses local vs. domain install, asks for the
+domain, TLS mode (Let's Encrypt / Cloudflare Tunnel / external proxy),
+ports, and optional SMTP + owner account; then writes `.env` and brings
+up `compose/production.yml` (runway + postgres + traefik). Re-runs offer
+to keep an existing `.env`. For unattended installs, `-y` reads the env
+vars instead of prompting:
 
 ```bash
-RUNWAY_DIR=/opt/runway HTTP_PORT=8080 \
+RUNWAY_DIR=/opt/runway RUNWAY_MODE=domain \
 APP_HOSTNAME=apps.example.com DEPLOY_DOMAIN=deploy.example.com \
-  bash install.sh
+TLS_MODE=le ACME_EMAIL=you@example.com \
+  bash install.sh -y
 ```
 
 `RUNWAY_VERSION` pins a release tag; `RUNWAY_REF` selects a git ref.
@@ -50,9 +55,16 @@ reports which are on):
 Two ways to get traffic in:
 
 - **Direct IP + ACME** — point DNS at the host; Traefik terminates TLS.
-- **Cloudflare tunnel** — set `CF_API_TOKEN` + `CF_ACCOUNT_ID`; the
-  platform provisions the instance tunnel and DNS for `APP_HOSTNAME`
-  and `*.DEPLOY_DOMAIN`. Works behind CGNAT.
+- **Cloudflare tunnel** — set `CF_API_TOKEN` + `CF_ACCOUNT_ID` (the
+  installer asks for them); the platform provisions the instance tunnel
+  and DNS for `APP_HOSTNAME` and `*.DEPLOY_DOMAIN`. Works behind CGNAT —
+  cloudflared dials out, so no open ports or public IP needed. Create
+  the token at dash.cloudflare.com → My Profile → API Tokens → Custom
+  token with `Account — Cloudflare Tunnel: Edit`,
+  `Account — Account Settings: Read`, `Zone — DNS: Edit`,
+  `Zone — Zone: Read`; resources: your account and the zone covering
+  `DEPLOY_DOMAIN`. The account ID is on the zone Overview page sidebar.
+  The domain's DNS must already live on Cloudflare.
 
 ## Remote Docker nodes
 
