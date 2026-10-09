@@ -121,7 +121,7 @@ From a git checkout, `./install.sh` installs in place.
 
 Release tags build the container image (`ghcr.io/dvorinka/runway`) and
 per-platform CLI binaries; the CLI also ships as an npm wrapper
-(`npm i -g @runway-deploy/cli`) and a Homebrew formula (`homebrew/runway.rb`).
+(`npm i -g @tdvorakdev/runway`) and a Homebrew formula (`homebrew/runway.rb`).
 
 To go fully online without a public IP, set `CF_API_TOKEN` +
 `CF_ACCOUNT_ID` in `.env` and restart — the platform provisions the

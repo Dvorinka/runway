@@ -21,7 +21,7 @@ runway open                       # current deployment URL
 ```
 
 Auth config: `~/.config/runway`. Install via release tarball, the npm
-wrapper (`npm i -g @runway-deploy/cli`), or Homebrew
+wrapper (`npm i -g @tdvorakdev/runway`), or Homebrew
 (`homebrew/runway.rb`).
 
 ## API keys
