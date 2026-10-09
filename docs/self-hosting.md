@@ -7,8 +7,10 @@ curl -fsSL https://raw.githubusercontent.com/Dvorinka/runway/main/install.sh | b
 ```
 
 Interactive setup: chooses local vs. domain install, asks for the
-domain, TLS mode (Let's Encrypt / Cloudflare Tunnel / external proxy),
-ports, and optional SMTP + owner account; then writes `.env` and brings
+dashboard hostname (deployments default to `<name>.<that-host>`; extra
+domains attach per project later), TLS mode (Let's Encrypt /
+Cloudflare Tunnel / external proxy), ports, and optional SMTP + owner
+account; then writes `.env` and brings
 up `compose/production.yml` (runway + postgres + traefik). Re-runs offer
 to keep an existing `.env`. For unattended installs, `-y` reads the env
 vars instead of prompting:

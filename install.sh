@@ -15,7 +15,7 @@
 #   RUNWAY_VERSION   release tag alias for RUNWAY_REF
 #   RUNWAY_MODE      local | domain              (skips the mode prompt)
 #   APP_HOSTNAME     dashboard hostname          (default runway.localhost)
-#   DEPLOY_DOMAIN    wildcard deploy domain      (default deploy.localhost)
+#   DEPLOY_DOMAIN    wildcard deploy domain      (default: APP_HOSTNAME)
 #   DISABLE_TLS      "true" when a tunnel/proxy terminates TLS upstream
 #   ACME_EMAIL       Let's Encrypt email (direct-IP TLS)
 #   CF_API_TOKEN     Cloudflare API token (managed tunnel)
@@ -222,18 +222,14 @@ if [ "$write_env" = 1 ]; then
     # Domain mode
     if [ "$interactive" = 1 ]; then
       printf '\n'
-      ask "Base domain (e.g. example.com)" "${BASE_DOMAIN:-}"
-      BASE_DOMAIN="$(sanitize_domain "$REPLY")"
-      valid_domain "$BASE_DOMAIN" || die "invalid domain: $REPLY"
-
-      ask "Dashboard hostname" "${APP_HOSTNAME:-runway.$BASE_DOMAIN}"
+      ask "Dashboard hostname (e.g. runway.example.com)" "${APP_HOSTNAME:-}"
       APP_HOSTNAME="$(sanitize_domain "$REPLY")"
-      valid_domain "$APP_HOSTNAME" || die "invalid hostname: $APP_HOSTNAME"
-
-      info "Deployments get <name>.<deploy-domain> URLs."
-      ask "Deploy domain" "${DEPLOY_DOMAIN:-$BASE_DOMAIN}"
-      DEPLOY_DOMAIN="$(sanitize_domain "$REPLY")"
+      valid_domain "$APP_HOSTNAME" || die "invalid hostname: $REPLY"
+      # Default wildcard base for deployment URLs. Extra domains can be
+      # attached per project later (dashboard + API), so no prompt here.
+      DEPLOY_DOMAIN="$(sanitize_domain "${DEPLOY_DOMAIN:-$APP_HOSTNAME}")"
       valid_domain "$DEPLOY_DOMAIN" || die "invalid domain: $DEPLOY_DOMAIN"
+      info "Deployments get <name>.$DEPLOY_DOMAIN URLs."
 
       printf '\n'
       say "How does traffic reach this server?"
@@ -247,7 +243,7 @@ if [ "$write_env" = 1 ]; then
       TLS_MODE="$REPLY"
     else
       APP_HOSTNAME="${APP_HOSTNAME:?set APP_HOSTNAME for a domain install}"
-      DEPLOY_DOMAIN="${DEPLOY_DOMAIN:?set DEPLOY_DOMAIN for a domain install}"
+      DEPLOY_DOMAIN="${DEPLOY_DOMAIN:-$APP_HOSTNAME}"
       TLS_MODE="${TLS_MODE:-}"
       if [ -z "$TLS_MODE" ]; then
         if [ "${DISABLE_TLS:-}" = false ]; then TLS_MODE=le
@@ -517,13 +513,13 @@ the cloudflared-instance container. Watch it connect with:
   docker logs -f cloudflared-instance
 EOF
     else
-      cat <<EOF
-
-DNS — point these at this server${SERVER_IP:+ ($SERVER_IP)}:
-  A      $HOST
-  A      $DEPLOY
-  A      *.$DEPLOY
-EOF
+      {
+        echo ""
+        echo "DNS — point these at this server${SERVER_IP:+ ($SERVER_IP)}:"
+        echo "  A      $HOST"
+        [ "$DEPLOY" != "$HOST" ] && echo "  A      $DEPLOY"
+        echo "  A      *.$DEPLOY"
+      }
     fi
     ;;
 esac
