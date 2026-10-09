@@ -51,4 +51,4 @@ redesign from memory.
 - No commits of secrets or `.env`.
 - No new top-level dependencies without checking the workspace first.
 - Don't rename existing types/functions without asking.
-- Git: conventional commits (`feat(api): …`, `fix(worker): …`), PRs to `development`.
+- Git: conventional commits (`feat(api): …`, `fix(worker): …`), PRs to `main`.

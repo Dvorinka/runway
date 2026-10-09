@@ -200,7 +200,7 @@ cargo fmt && cargo clippy --workspace -- -D warnings && cargo test
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) — fork, branch from `development`,
+See [CONTRIBUTING.md](CONTRIBUTING.md) — fork, branch from `main`,
 conventional commits, gates before push. Good first issues are labeled.
 
 ## Security

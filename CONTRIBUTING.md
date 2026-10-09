@@ -21,9 +21,9 @@ cd web && pnpm install && pnpm dev
 
 ## Workflow
 
-1. Fork, branch from `development` (`feature/name` or `issue/123-name`).
+1. Fork, branch from `main` (`feature/name` or `issue/123-name`).
 2. Make the change. Small, focused PRs merge fastest.
-3. Open the PR against `development` — not `main`.
+3. Open the PR against `main`.
 
 ## Before you push
 
