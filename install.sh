@@ -80,10 +80,20 @@ ask() { # ask <prompt> [default] -> REPLY
   REPLY="${REPLY:-$def}"
 }
 
-ask_secret() { # ask_secret <prompt> -> REPLY (no echo)
+ask_secret() { # ask_secret <prompt> -> REPLY (dots, value never echoed)
   printf '\033[1;36m?\033[0m %s: ' "$1"
-  IFS= read -rs REPLY </dev/tty || REPLY=""
+  REPLY=""
+  local ch
+  while IFS= read -rsn1 ch </dev/tty 2>/dev/null; do
+    if [ -z "$ch" ]; then break; fi # Enter
+    case "$ch" in
+      $'\177'|$'\b') # backspace
+        if [ -n "$REPLY" ]; then REPLY="${REPLY%?}"; printf '\b \b'; fi ;;
+      *) REPLY+="$ch"; printf '•' ;;
+    esac
+  done
   printf '\n'
+  if [ -n "$REPLY" ]; then info "(${#REPLY} characters entered)"; fi
 }
 
 confirm() { # confirm <prompt> [y|n]
@@ -262,13 +272,15 @@ if [ "$write_env" = 1 ]; then
 
     The domain's DNS must be managed by Cloudflare. Create the token:
 
-      1. dash.cloudflare.com → profile icon → My Profile → API Tokens
-      2. Create Token → Custom token, permissions:
+      https://dash.cloudflare.com/profile/api-tokens
+      → Create Token → Custom token, with these permissions:
+
            Account — Cloudflare Tunnel — Edit
            Account — Account Settings  — Read
            Zone    — DNS               — Edit
            Zone    — Zone              — Read
-      3. Resources: your account + the zone covering $DEPLOY_DOMAIN.
+
+      Resources: your account + the zone covering $DEPLOY_DOMAIN.
 
     On first start Runway creates the "runway-instance" tunnel, points
     $APP_HOSTNAME and *.$DEPLOY_DOMAIN at it, and launches a
