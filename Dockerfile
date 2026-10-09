@@ -28,11 +28,17 @@ RUN mkdir -p crates/cli/src crates/api/src crates/core/src crates/worker/src \
 
 COPY crates crates
 COPY migrations migrations
-# COPY preserves checkout mtimes (older than the stub build) — clean the
-# workspace members so they rebuild; third-party deps stay cached.
-RUN cargo clean -p runway -p runway-api -p runway-core -p runway-worker \
+# COPY preserves checkout mtimes (often older than the stub build above),
+# and `cargo clean -p` no longer invalidates the workspace units (verified:
+# clean reports "Removed 0 files" and the next build is a silent no-op that
+# keeps the stub binary). `touch` the real sources so mtime comparison
+# forces a rebuild; third-party deps stay cached. The size + --version
+# gates fail the build instead of shipping a stub that exits 0 silently.
+RUN find crates migrations -type f -exec touch {} + \
     && cargo build --release -p runway \
-    && strip target/release/runway
+    && strip target/release/runway \
+    && test "$(stat -c%s target/release/runway)" -gt 5000000 \
+    && ./target/release/runway --version
 
 FROM debian:bookworm-slim
 RUN apt-get update \
