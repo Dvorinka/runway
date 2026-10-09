@@ -73,7 +73,9 @@ function GitProviders() {
         )}
         <Input
           type="password"
-          placeholder={provider === "bitbucket" ? "app password" : "access token"}
+          placeholder={
+            provider === "bitbucket" ? "OAuth key:secret or access token" : "access token"
+          }
           value={token}
           onChange={(e) => setToken(e.target.value)}
           required

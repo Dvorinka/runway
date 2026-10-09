@@ -5,9 +5,17 @@
 
 use serde_json::Value;
 use sqlx::PgPool;
+use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, Instant};
 
 use crate::crypto::Crypto;
 use crate::error::{Error, Result};
+
+/// Minted Bitbucket Bearer tokens, keyed by consumer key. Client
+/// credentials last ~2h; we refresh at 90% of `expires_in`.
+static BB_TOKENS: LazyLock<Mutex<HashMap<String, (String, Instant)>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// One user's stored connection to a self-hosted/provider account.
 #[derive(Debug, Clone)]
@@ -93,18 +101,57 @@ impl Client {
         }
     }
 
-    fn auth(&self, req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        match self.provider.as_str() {
+    /// Bitbucket accepts two credential shapes: a bare token (repo
+    /// access token) used as Bearer, or an OAuth consumer `key:secret`
+    /// which we exchange for a short-lived Bearer on demand and cache.
+    async fn bitbucket_bearer(&self) -> Result<String> {
+        let Some((key, secret)) = self.conn.token.split_once(':') else {
+            return Ok(self.conn.token.clone());
+        };
+        if let Some((tok, exp)) = BB_TOKENS.lock().unwrap().get(key) {
+            if Instant::now() < *exp {
+                return Ok(tok.clone());
+            }
+        }
+        let res: Value = self
+            .http
+            .post("https://bitbucket.org/site/oauth2/access_token")
+            .basic_auth(key, Some(secret))
+            .form(&[("grant_type", "client_credentials")])
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        let tok = res["access_token"]
+            .as_str()
+            .ok_or_else(|| Error::BadRequest("bitbucket oauth: no access_token".into()))?
+            .to_string();
+        let ttl = res["expires_in"].as_u64().unwrap_or(7200);
+        BB_TOKENS.lock().unwrap().insert(
+            key.to_string(),
+            (
+                tok.clone(),
+                Instant::now() + Duration::from_secs(ttl * 9 / 10),
+            ),
+        );
+        Ok(tok)
+    }
+
+    async fn auth(&self, req: reqwest::RequestBuilder) -> Result<reqwest::RequestBuilder> {
+        Ok(match self.provider.as_str() {
             "gitea" => req.header("Authorization", format!("token {}", self.conn.token)),
             "gitlab" => req.header("PRIVATE-TOKEN", &self.conn.token),
+            "bitbucket" => req.bearer_auth(self.bitbucket_bearer().await?),
             _ => req.bearer_auth(&self.conn.token),
-        }
+        })
     }
 
     async fn get(&self, path: &str) -> Result<Value> {
         let url = format!("{}{path}", self.api_base());
         let res = self
             .auth(self.http.get(&url))
+            .await?
             .send()
             .await?
             .error_for_status()?;
@@ -290,9 +337,12 @@ impl Client {
                     "{}/projects/{proj}/repository/files/{enc}/raw?ref={branch}",
                     self.api_base()
                 );
-                match self.auth(self.http.get(&url)).send().await {
-                    Ok(r) if r.status().is_success() => r.text().await.ok(),
-                    _ => None,
+                match self.auth(self.http.get(&url)).await {
+                    Ok(req) => match req.send().await {
+                        Ok(r) if r.status().is_success() => r.text().await.ok(),
+                        _ => None,
+                    },
+                    Err(_) => None,
                 }
             }
             "bitbucket" => {
@@ -300,9 +350,12 @@ impl Client {
                     "{}/repositories/{owner}/{repo}/src/{branch}/{path}",
                     self.api_base()
                 );
-                match self.auth(self.http.get(&url)).send().await {
-                    Ok(r) if r.status().is_success() => r.text().await.ok(),
-                    _ => None,
+                match self.auth(self.http.get(&url)).await {
+                    Ok(req) => match req.send().await {
+                        Ok(r) if r.status().is_success() => r.text().await.ok(),
+                        _ => None,
+                    },
+                    Err(_) => None,
                 }
             }
             _ => None,
