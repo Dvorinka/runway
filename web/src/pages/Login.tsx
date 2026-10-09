@@ -56,7 +56,7 @@ export default function Login() {
           return;
         }
       }
-      window.location.href = "/projects";
+      window.location.href = "/";
     } catch (err) {
       setError(err instanceof Error ? err.message : "failed");
       setBusy(false);
