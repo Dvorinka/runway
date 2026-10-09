@@ -137,7 +137,8 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
       Bitbucket = full project linkage beyond devpush parity —
       `bitbucket_connection_id` on project, create verifies repo access
       and resolves repo uuid, commit resolution + clone via
-      workspace-username app password against `bitbucket.org`;
+      workspace slug + OAuth consumer `key:secret` (Bearer minted on
+      demand) or a repo access token against `bitbucket.org`;
       GitHub Enterprise via `GITHUB_API_URL` + `repo_base_url` clone URL
 - [x] OIDC/SSO + allowlist: `allowlist` table (email/domain/pattern
       rules, empty = open signup, `user.id==1` superadmin CRUD under
@@ -315,9 +316,11 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
       bollard `connect_with_ssl` (rustls/ring), health checks exercise
       the same path; Settings node list gains an mTLS badge + provision
       flow with install instructions
-- [ ] **Bitbucket deploys tested against a real workspace** — needs a
-      live Bitbucket connection; implementation complete and the
-      forged-sha vector is closed by API-side head resolution
+- [ ] **Bitbucket deploys tested against a real workspace** —
+      implementation complete (OAuth consumer `key:secret` → on-demand
+      Bearer; forged-sha vector closed by API-side head resolution) but
+      awaiting external verification with a real workspace — help
+      welcome
 - [x] **Release packaging** — `v*` tags trigger `release.yml`: linux/
       macOS CLI binaries → GitHub release assets, multi-arch image →
       `ghcr.io/dvorinka/runway`; `npm/runway` wrapper downloads the
