@@ -10,7 +10,7 @@ Interactive setup: chooses local vs. domain install, asks for the
 dashboard hostname (deployments default to `<name>.<that-host>`; extra
 domains attach per project later), TLS mode (Let's Encrypt /
 Cloudflare Tunnel / external proxy), ports, optional SMTP, and the
-owner account. The owner email requires a password (min 8 chars) —
+owner account. The owner email requires a password —
 skipping the account asks for the registration policy instead:
 restricted to an address you name (seeded into the sign-up allowlist),
 or open (then an owner account is mandatory, since the first

@@ -571,11 +571,10 @@ function Account({ me }: { me: Me }) {
           />
           <Input
             type="password"
-            placeholder="new password (min 8)"
+            placeholder="new password"
             value={next}
             onChange={(e) => setNext(e.target.value)}
             required
-            minLength={8}
           />
           <div className="flex items-center gap-3">
             <Button type="submit" size="sm">

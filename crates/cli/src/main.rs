@@ -30,7 +30,7 @@ enum Command {
         /// Display name / username base.
         #[arg(long)]
         username: Option<String>,
-        /// Sign-in password (min 8 chars).
+        /// Sign-in password.
         #[arg(long)]
         password: Option<String>,
     },
@@ -286,7 +286,7 @@ async fn bootstrap(
         .await?;
 
     if let Some(pw) = password {
-        anyhow::ensure!(pw.len() >= 8, "password must be at least 8 characters");
+        anyhow::ensure!(!pw.is_empty(), "password must not be empty");
         let hash = runway_core::password::hash(&pw)?;
         sqlx::query("UPDATE \"user\" SET password_hash = $1 WHERE id = $2")
             .bind(&hash)

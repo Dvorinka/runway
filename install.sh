@@ -24,7 +24,7 @@
 #   HTTPS_PORT       published https port        (default 443)
 #   SMTP_*           optional mail (magic links, invites)
 #   BOOTSTRAP_EMAIL  create the owner account after start (password required)
-#   BOOTSTRAP_PASSWORD  owner password, min 8 chars (required with email)
+#   BOOTSTRAP_PASSWORD  owner password (required with email)
 #   ALLOW_REGISTRATION  open | restricted (default restricted; open with
 #                      no owner account is refused — first registrant is admin)
 #   ALLOWLIST_SEED_EMAIL  address allowed to register when skipping owner
@@ -434,10 +434,10 @@ EOF
       # Password is mandatory with an account — a passwordless owner
       # cannot sign in (no SMTP magic link) and blocks later signup.
       while true; do
-        ask_secret "Owner password (required, min 8 characters)"
+        ask_secret "Owner password (required)"
         BOOTSTRAP_PASSWORD="$REPLY"
-        if [ ${#BOOTSTRAP_PASSWORD} -ge 8 ]; then break; fi
-        warn "password must be at least 8 characters"
+        if [ -n "$BOOTSTRAP_PASSWORD" ]; then break; fi
+        warn "password must not be empty"
       done
       break
     done
@@ -445,8 +445,8 @@ EOF
     # Unattended: same rules, no prompts.
     if [ -n "$BOOTSTRAP_EMAIL" ]; then
       case "$BOOTSTRAP_EMAIL" in *@*) : ;; *) die "invalid email: $BOOTSTRAP_EMAIL" ;; esac
-      if [ ${#BOOTSTRAP_PASSWORD} -lt 8 ]; then
-        die "BOOTSTRAP_PASSWORD (min 8 chars) is required with BOOTSTRAP_EMAIL"
+      if [ -z "$BOOTSTRAP_PASSWORD" ]; then
+        die "BOOTSTRAP_PASSWORD is required with BOOTSTRAP_EMAIL"
       fi
       # Restricted (the default) also closes sign-up to the owner.
       ALLOWLIST_SEED_EMAIL="${ALLOWLIST_SEED_EMAIL:-$BOOTSTRAP_EMAIL}"
@@ -555,7 +555,7 @@ if [ -n "${BOOTSTRAP_EMAIL:-}" ]; then
   done
   say "Creating owner account ($BOOTSTRAP_EMAIL)"
   (cd "$DIR" && docker compose --env-file .env -f compose/production.yml exec -T runway runway bootstrap --email "$BOOTSTRAP_EMAIL" --password "$BOOTSTRAP_PASSWORD") || \
-    warn "bootstrap failed — retry later: $COMPOSE_CD exec runway runway bootstrap --email $BOOTSTRAP_EMAIL --password '<min-8-chars>'"
+    warn "bootstrap failed — retry later: $COMPOSE_CD exec runway runway bootstrap --email $BOOTSTRAP_EMAIL --password '<new-password>'"
 fi
 # A created account under a restricted policy also closes sign-up to
 # the owner (manage the allowlist in Settings to open up later).

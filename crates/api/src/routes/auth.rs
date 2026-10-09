@@ -115,10 +115,8 @@ pub async fn register(
     if !email.contains('@') || email.len() > 320 {
         return Err(ApiError::bad_request("invalid email"));
     }
-    if body.password.len() < 8 {
-        return Err(ApiError::bad_request(
-            "password must be at least 8 characters",
-        ));
+    if body.password.is_empty() {
+        return Err(ApiError::bad_request("password must not be empty"));
     }
     if !is_email_allowed(&state.db, &email).await? {
         notify_denied(&state, &email, "email").await;
@@ -323,10 +321,8 @@ pub async fn change_password(
     if !runway_core::password::verify(hash, &body.current_password) {
         return Err(ApiError::unauthorized("current password is wrong"));
     }
-    if body.new_password.len() < 8 {
-        return Err(ApiError::bad_request(
-            "password must be at least 8 characters",
-        ));
+    if body.new_password.is_empty() {
+        return Err(ApiError::bad_request("password must not be empty"));
     }
     let hash = runway_core::password::hash(&body.new_password)?;
     // Revoke every pre-existing session (JWTs are checked against this

@@ -172,6 +172,7 @@ export default function Login() {
               </label>
               <Input
                 id="email"
+                name="email"
                 ref={emailRef}
                 type="email"
                 required
@@ -188,6 +189,7 @@ export default function Login() {
                 </label>
                 <Input
                   id="username"
+                  name="username"
                   autoComplete="username"
                   placeholder="your name"
                   value={username}
@@ -202,11 +204,11 @@ export default function Login() {
               <div className="relative">
                 <Input
                   id="password"
+                  name="password"
                   type={showPw ? "text" : "password"}
                   required
-                  minLength={8}
                   autoComplete={mode === "login" ? "current-password" : "new-password"}
-                  placeholder={mode === "register" ? "8+ characters" : "password"}
+                  placeholder={mode === "register" ? "Choose a password" : "password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="pr-10"
