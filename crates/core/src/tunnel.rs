@@ -103,6 +103,7 @@ pub async fn ensure_cloudflared(
         }),
         ..Default::default()
     };
+    dkr::pull_image(docker, CLOUDFLARED_IMAGE).await?;
     let id = dkr::create_or_replace_container(docker, name, body).await?;
     docker
         .start_container(&id, None::<StartContainerOptions<String>>)

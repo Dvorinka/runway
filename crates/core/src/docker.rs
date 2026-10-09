@@ -214,6 +214,29 @@ pub async fn traefik_container_id(docker: &Docker) -> Option<String> {
     containers.into_iter().next()?.id
 }
 
+/// Pull an image, draining the progress stream. Cheap when cached.
+pub async fn pull_image(docker: &Docker, image: &str) -> Result<()> {
+    use bollard::image::CreateImageOptions;
+    use futures::StreamExt;
+    let (from, tag) = image.rsplit_once(':').unwrap_or((image, "latest"));
+    let mut stream = docker.create_image(
+        Some(CreateImageOptions {
+            from_image: from.to_string(),
+            tag: tag.to_string(),
+            ..Default::default()
+        }),
+        None,
+        None,
+    );
+    while let Some(res) = stream.next().await {
+        let info = res?;
+        if let Some(err) = info.error {
+            anyhow::bail!(err);
+        }
+    }
+    Ok(())
+}
+
 /// Create a container, removing any stale container with the same name
 /// first (idempotent after a worker retry). Does not start it.
 pub async fn create_or_replace_container(
