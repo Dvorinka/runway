@@ -202,8 +202,12 @@ export default function Login() {
                 Password
               </label>
               <div className="relative">
+                {/* key remounts on tab switch: password managers classify the
+                    field at insert time and miss React-only autocomplete
+                    flips (login fills, register generation never appears). */}
                 <Input
                   id="password"
+                  key={mode}
                   name="password"
                   type={showPw ? "text" : "password"}
                   required
