@@ -44,7 +44,9 @@ FROM debian:bookworm-slim
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates git \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd -m -u 1000 runway
+    && useradd -m -u 1000 runway \
+    && mkdir -p /home/runway/data \
+    && chown runway:runway /home/runway/data
 USER runway
 WORKDIR /home/runway
 COPY --from=build /src/target/release/runway /usr/local/bin/runway
