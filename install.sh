@@ -337,6 +337,19 @@ EOF
               cf_zone_covers "$APP_HOSTNAME" || missing=" $APP_HOSTNAME"
               cf_zone_covers "$DEPLOY_DOMAIN" || missing="$missing $DEPLOY_DOMAIN"
               [ -n "$missing" ] && warn "no Cloudflare zone covers:${missing} — add the domain to this account first"
+              # Free-plan edge certs cover a zone plus one level: deploy
+              # URLs (<name>.DEPLOY_DOMAIN) need DEPLOY_DOMAIN to be a zone
+              # itself or one level below one, or browsers get TLS errors.
+              parent="${DEPLOY_DOMAIN#*.}"
+              tls_ok=0
+              for z in ${zones[@]+"${zones[@]}"}; do
+                if [ "$DEPLOY_DOMAIN" = "$z" ] || [ "$parent" = "$z" ]; then tls_ok=1; break; fi
+              done
+              if [ "$tls_ok" = 0 ]; then
+                warn "deploy URLs (*.$DEPLOY_DOMAIN) sit deeper than one level under any zone —"
+                warn "Cloudflare won't issue edge TLS for them on a free plan."
+                warn "Use a first-level domain (e.g. the zone itself), or Total TLS / ACM."
+              fi
             fi
           else
             CF_ACCOUNT_ID="${CF_ACCOUNT_ID:-}"
