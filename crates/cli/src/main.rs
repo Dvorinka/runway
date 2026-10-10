@@ -36,9 +36,32 @@ enum Command {
     },
     /// Deploy the current directory (upload tarball to the linked project).
     Deploy {
-        /// Poll until the deployment reaches a terminal status.
-        #[arg(long)]
+        /// Stream build logs until the deployment settles (default: on).
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
         follow: bool,
+    },
+    /// New deployment from the same source (latest or a given ID).
+    Redeploy {
+        /// Deployment ID (defaults to the latest of the linked project).
+        deployment: Option<String>,
+        /// Stream build logs until the deployment settles (default: on).
+        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        follow: bool,
+    },
+    /// Show the logged-in user and instance health.
+    Whoami,
+    /// Log out this machine (delete stored credentials).
+    Logout,
+    /// Unlink the current directory (delete .runway/project.json).
+    Unlink,
+    /// List all projects on the instance.
+    Projects,
+    /// Show instance, link, project, and latest deployment status.
+    Status,
+    /// Print shell completions (bash|zsh|fish|powershell|elvish).
+    Completions {
+        /// Shell name.
+        shell: String,
     },
     /// Stream logs for a deployment.
     Logs {
@@ -73,9 +96,9 @@ enum Command {
         #[arg(long)]
         preset: Option<String>,
     },
-    /// Manage environment variables: env [list|set KEY=VAL|unset KEY].
+    /// Manage environment variables: env [list|set KEY=VAL|unset KEY|pull [file]|push [file]].
     Env {
-        /// list | set KEY=VALUE | unset KEY
+        /// list | set KEY=VALUE | unset KEY | pull [file] | push [file]
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
         /// Environment slug to scope the variable to.
@@ -207,6 +230,27 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::Login { server, key } => commands::login(server, key).await?,
         Command::Link { project } => commands::link(project).await?,
+        Command::Whoami => commands::whoami().await?,
+        Command::Logout => commands::logout().await?,
+        Command::Unlink => commands::unlink().await?,
+        Command::Projects => commands::projects().await?,
+        Command::Status => commands::status().await?,
+        Command::Completions { shell } => {
+            use clap::CommandFactory;
+            use clap_complete::{generate, shells::*};
+            let mut cmd = Cli::command();
+            match shell.to_lowercase().as_str() {
+                "bash" => generate(Bash, &mut cmd, "runway", &mut std::io::stdout()),
+                "zsh" => generate(Zsh, &mut cmd, "runway", &mut std::io::stdout()),
+                "fish" => generate(Fish, &mut cmd, "runway", &mut std::io::stdout()),
+                "powershell" | "ps1" => {
+                    generate(PowerShell, &mut cmd, "runway", &mut std::io::stdout())
+                }
+                "elvish" => generate(Elvish, &mut cmd, "runway", &mut std::io::stdout()),
+                other => anyhow::bail!("unknown shell: {other} (bash|zsh|fish|powershell|elvish)"),
+            }
+        }
+        Command::Redeploy { deployment, follow } => commands::redeploy(deployment, follow).await?,
         Command::Create { name, preset } => {
             commands::create(name, preset).await?;
         }

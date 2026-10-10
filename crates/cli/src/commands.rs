@@ -84,6 +84,146 @@ fn cwd_name() -> anyhow::Result<String> {
         .context("cannot determine project name — pass one explicitly")
 }
 
+/// `runway whoami` — show the logged-in user and instance health.
+pub async fn whoami() -> anyhow::Result<()> {
+    let client = Client::from_config()?;
+    let me = client.get("/api/auth/me").await?;
+    let email = me["email"].as_str().unwrap_or("?");
+    let username = me["username"].as_str().unwrap_or("");
+    let health = client
+        .get("/health")
+        .await
+        .ok()
+        .and_then(|h| h["status"].as_str().map(String::from))
+        .unwrap_or_else(|| "unreachable".to_string());
+    let server = client::load_config().server.unwrap_or_default();
+    if username.is_empty() {
+        println!("{email}");
+    } else {
+        println!("{email} ({username})");
+    }
+    println!("server: {server} [{health}]");
+    Ok(())
+}
+
+/// `runway logout` — delete stored credentials on this machine.
+pub async fn logout() -> anyhow::Result<()> {
+    let path = client::config_path();
+    if path.exists() {
+        std::fs::remove_file(&path)?;
+        println!("Logged out ({})", path.display());
+    } else {
+        println!("Not logged in.");
+    }
+    Ok(())
+}
+
+/// `runway unlink` — forget the linked project for this directory.
+pub async fn unlink() -> anyhow::Result<()> {
+    let path = client::link_path();
+    if path.exists() {
+        std::fs::remove_file(&path)?;
+        println!("Unlinked this directory.");
+    } else {
+        println!("Directory is not linked.");
+    }
+    Ok(())
+}
+
+/// `runway projects` — list all projects on the instance.
+pub async fn projects() -> anyhow::Result<()> {
+    let client = Client::from_config()?;
+    let res = client.get("/api/v1/projects").await?;
+    let list = res["projects"].as_array().cloned().unwrap_or_default();
+    if list.is_empty() {
+        println!("No projects yet — run `runway create <name>`.");
+        return Ok(());
+    }
+    for p in &list {
+        let url = p["url"].as_str().unwrap_or("");
+        println!(
+            "{}  {}{}",
+            p["id"].as_str().unwrap_or("?"),
+            p["name"].as_str().unwrap_or("?"),
+            if url.is_empty() {
+                String::new()
+            } else {
+                // Project URLs already carry the scheme.
+                format!("  {url}")
+            }
+        );
+    }
+    Ok(())
+}
+
+/// `runway status` — instance, link, project, and latest deployment state.
+pub async fn status() -> anyhow::Result<()> {
+    let client = Client::from_config()?;
+    let server = client::load_config().server.unwrap_or_default();
+    let health = client
+        .get("/health")
+        .await
+        .ok()
+        .and_then(|h| h["status"].as_str().map(String::from))
+        .unwrap_or_else(|| "unreachable".to_string());
+    println!("server: {server} [{health}]");
+    let Ok(link) = client::load_link() else {
+        println!("directory: not linked (run `runway link` or `runway create`)");
+        return Ok(());
+    };
+    let p = client
+        .get(&format!("/api/v1/projects/{}", link.project_id))
+        .await?;
+    println!(
+        "project: {} ({})",
+        p["name"].as_str().unwrap_or("?"),
+        link.project_id
+    );
+    if let Some(url) = p["url"].as_str().filter(|u| !u.is_empty()) {
+        println!("url: {url}");
+    }
+    let deps = client
+        .get(&format!(
+            "/api/v1/projects/{}/deployments?limit=1",
+            link.project_id
+        ))
+        .await?;
+    if let Some(d) = deps["deployments"].as_array().and_then(|a| a.first()) {
+        let conclusion = d["conclusion"].as_str().unwrap_or("");
+        let state = if conclusion.is_empty() {
+            d["status"].as_str().unwrap_or("?").to_string()
+        } else {
+            format!("{} ({conclusion})", d["status"].as_str().unwrap_or("?"))
+        };
+        println!(
+            "latest: {} {state} {}",
+            d["id"].as_str().unwrap_or("?"),
+            d["created_at"].as_str().unwrap_or("")
+        );
+    } else {
+        println!("latest: no deployments yet");
+    }
+    Ok(())
+}
+
+/// `runway redeploy [id]` — new deployment from the same source.
+pub async fn redeploy(deployment: Option<String>, follow: bool) -> anyhow::Result<()> {
+    let client = Client::from_config()?;
+    let id = match deployment {
+        Some(id) => id,
+        None => latest_deployment(&client).await?,
+    };
+    let res = client
+        .post(&format!("/api/v1/deployments/{id}/redeploy"), &json!({}))
+        .await?;
+    let new_id = res["id"].as_str().context("no deployment id in response")?;
+    println!("Redeployed as {new_id}");
+    if follow {
+        follow_deployment(&client, new_id).await?;
+    }
+    Ok(())
+}
+
 pub async fn link(project: Option<String>) -> anyhow::Result<()> {
     let client = Client::from_config()?;
     let project_id = match project {
@@ -104,7 +244,7 @@ pub async fn link(project: Option<String>) -> anyhow::Result<()> {
     let p = client
         .get(&format!("/api/v1/projects/{project_id}"))
         .await?;
-    let name = p["project"]["name"].as_str().map(String::from);
+    let name = p["name"].as_str().map(String::from);
     client::save_link(&LinkFile {
         project_id: project_id.clone(),
         project_name: name.clone(),
@@ -140,6 +280,9 @@ pub async fn deploy(follow: bool) -> anyhow::Result<()> {
             .await?;
             client::load_link()?
         }
+        Err(_) if !std::io::stdin().is_terminal() => {
+            bail!("no linked project — run `runway link <project-id>` or `runway create <name>`");
+        }
         Err(e) => bail!("{e} — run `runway create <name>` first"),
     };
 
@@ -160,7 +303,11 @@ pub async fn deploy(follow: bool) -> anyhow::Result<()> {
     println!("Deployment {dep_id} queued — https://{url}");
 
     if follow {
+        let started = std::time::Instant::now();
         follow_deployment(&client, dep_id).await?;
+        println!("done in {}s", started.elapsed().as_secs());
+    } else {
+        println!("Stream logs with `runway logs --follow` (or re-run with --follow).");
     }
     Ok(())
 }
@@ -292,7 +439,12 @@ pub async fn env(args: Vec<String>, environment: Option<String>) -> anyhow::Resu
     match args.first().map(String::as_str) {
         None | Some("list") => {
             let res = client.get(&base).await?;
-            for v in res["env"].as_array().cloned().unwrap_or_default() {
+            let vars = res["env"].as_array().cloned().unwrap_or_default();
+            if vars.is_empty() {
+                println!("No variables — `runway env set KEY=VALUE` or `runway env push [file]`.");
+                return Ok(());
+            }
+            for v in &vars {
                 let env_tag = v["environment"]
                     .as_str()
                     .map(|e| format!(" [{e}]"))
@@ -319,14 +471,19 @@ pub async fn env(args: Vec<String>, environment: Option<String>) -> anyhow::Resu
             println!("Set {key}");
         }
         Some("unset") | Some("rm") => {
-            let key = args.get(1).context("usage: runway env unset KEY")?;
-            client
-                .patch(
-                    &base,
-                    &json!([{ "key": key, "environment": environment, "delete": true }]),
-                )
-                .await?;
-            println!("Unset {key}");
+            let keys: Vec<&String> = args.iter().skip(1).collect();
+            if keys.is_empty() {
+                bail!("usage: runway env unset KEY [KEY...]");
+            }
+            for key in keys {
+                client
+                    .patch(
+                        &base,
+                        &json!([{ "key": key, "environment": environment, "delete": true }]),
+                    )
+                    .await?;
+                println!("Unset {key}");
+            }
         }
         // `runway env pull [path] [--force]` — dotenv via the project
         // export (the only read that decrypts; writer-gated like the
@@ -380,7 +537,49 @@ pub async fn env(args: Vec<String>, environment: Option<String>) -> anyhow::Resu
             }
             println!("Wrote {path}");
         }
-        Some(other) => bail!("unknown env action '{other}' — list|set|unset|pull"),
+        // `runway env push [file]` — read a dotenv file and set each entry
+        // (blank lines, `#` comments, and an optional `export ` prefix are
+        // skipped; surrounding quotes are stripped).
+        Some("push") => {
+            let path = match args.get(1).map(String::as_str) {
+                Some(a) if !a.starts_with('-') => a,
+                _ => ".env.local",
+            };
+            let raw = tokio::fs::read_to_string(path)
+                .await
+                .with_context(|| format!("cannot read {path}"))?;
+            let mut vars = vec![];
+            for (n, line) in raw.lines().enumerate() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+                let line = line.strip_prefix("export ").unwrap_or(line).trim();
+                let (key, value) = line
+                    .split_once('=')
+                    .with_context(|| format!("{path}:{}: expected KEY=VALUE", n + 1))?;
+                let key = key.trim().to_string();
+                let mut value = value.trim().to_string();
+                if value.len() >= 2 && value.starts_with('"') && value.ends_with('"')
+                    || value.len() >= 2 && value.starts_with('\'') && value.ends_with('\'')
+                {
+                    value = value[1..value.len() - 1].to_string();
+                }
+                anyhow::ensure!(!key.is_empty(), "{path}:{}: empty key", n + 1);
+                vars.push(json!({ "key": key, "value": value, "environment": environment }));
+            }
+            if vars.is_empty() {
+                println!("Nothing to push from {path}.");
+                return Ok(());
+            }
+            client.patch(&base, &Value::Array(vars.clone())).await?;
+            println!(
+                "Pushed {} variable{} from {path}",
+                vars.len(),
+                if vars.len() == 1 { "" } else { "s" }
+            );
+        }
+        Some(other) => bail!("unknown env action '{other}' — list|set|unset|pull|push"),
     }
     Ok(())
 }
@@ -573,11 +772,13 @@ async fn follow_deployment(client: &Client, dep_id: &str) -> anyhow::Result<()> 
         }
         match dep["conclusion"].as_str() {
             Some("succeeded") => {
-                let url = dep["urls"]["environment"]
-                    .as_str()
-                    .or(dep["urls"]["immutable"].as_str())
-                    .unwrap_or("");
-                println!("Live at https://{url}");
+                let env = dep["urls"]["environment"].as_str().unwrap_or("");
+                let imm = dep["urls"]["immutable"].as_str().unwrap_or("");
+                if !env.is_empty() && env != imm {
+                    println!("Live at https://{env} (immutable: https://{imm})");
+                } else {
+                    println!("Live at https://{imm}");
+                }
                 return Ok(());
             }
             Some(other) => {
