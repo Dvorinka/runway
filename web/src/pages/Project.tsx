@@ -10,10 +10,11 @@ import {
   type RemoteNode,
   type Webhook,
 } from "@/lib/api";
-import { Avatar, AvatarRow, Badge, Button, Card, ComboBox, Input, SectionHead, Skeleton, StatusDot, displayStatus } from "@/components/ui";
+import { Avatar, AvatarRow, Badge, Button, Card, ComboBox, Input, SectionHead, Skeleton, StatusDot } from "@/components/ui";
+import { DeploymentRow } from "@/components/DeploymentRow";
 import { filesToTarGz } from "@/lib/tarball";
-import { duration, firstLine, timeAgo } from "@/lib/utils";
-import { Globe, Link2, Webhook as WebhookIcon } from "lucide-react";
+import { timeAgo } from "@/lib/utils";
+import { Globe, Link2, Rocket, Webhook as WebhookIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
@@ -496,9 +497,13 @@ function Deployments({ id }: { id: string }) {
           </div>
         </div>
       )}
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <span className="text-xs text-muted-foreground">
-          {uploading ? "Uploading…" : "Tip: drop files here to deploy instantly"}
+          {uploading
+            ? "Uploading…"
+            : deployments && deployments.length > 0
+              ? `${deployments.length} deployment${deployments.length === 1 ? "" : "s"} · tip: drop files here to deploy instantly`
+              : "Tip: drop files here to deploy instantly"}
         </span>
         <Button
           size="sm"
@@ -517,44 +522,55 @@ function Deployments({ id }: { id: string }) {
         </Button>
       </div>
       <Err msg={error} />
+      {(() => {
+        const latest = deployments?.find(
+          (d) => d.conclusion === "succeeded" || d.status === "completed",
+        );
+        const liveUrl = latest?.urls?.environment ?? latest?.urls?.immutable ?? null;
+        if (!latest || !liveUrl) return null;
+        return (
+          <Link
+            to={`/deployments/${latest.id}`}
+            className="mb-2 block rounded-lg border border-brand/25 bg-gradient-to-r from-brand/[0.08] to-transparent p-4 transition-colors hover:border-brand/40"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-3">
+                <StatusDot
+                  status={latest.status}
+                  conclusion={latest.conclusion}
+                  computed={latest.computed_status}
+                />
+                <div className="min-w-0">
+                  <div className="text-[10px] uppercase tracking-wide text-brand">
+                    Production · live
+                  </div>
+                  <div className="truncate font-mono text-sm">
+                    {liveUrl.replace(/^https?:\/\//, "")}
+                  </div>
+                </div>
+              </div>
+              <div className="shrink-0 text-right text-xs text-muted-foreground">
+                <div className="font-mono">{latest.commit_sha.slice(0, 7)}</div>
+                <div>{timeAgo(latest.created_at)}</div>
+              </div>
+            </div>
+          </Link>
+        );
+      })()}
       <div className="stagger grid gap-2">
         {deployments === null && [0, 1, 2].map((i) => <Skeleton key={i} className="h-[64px]" />)}
         {deployments?.map((d) => (
-          <Link key={d.id} to={`/deployments/${d.id}`}>
-            <Card className="flex items-center justify-between p-4 transition-colors hover:border-brand/25 hover:bg-accent/50">
-              <div className="flex min-w-0 items-center gap-4">
-                <StatusDot status={d.status} conclusion={d.conclusion} computed={d.computed_status} />
-                <div className="min-w-0">
-                  <div className="truncate text-sm">
-                    <span className="font-mono">{d.commit_sha.slice(0, 7)}</span>
-                    {firstLine(d.commit_meta?.message) && (
-                      <span className="ml-2 text-muted-foreground">
-                        {firstLine(d.commit_meta?.message)}
-                      </span>
-                    )}
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    {d.branch} · {d.environment_id}
-                    {d.commit_meta?.author && ` · ${d.commit_meta.author}`}
-                  </div>
-                </div>
-                <Badge variant={displayStatus(d).variant} className="shrink-0">
-                  {displayStatus(d).label}
-                </Badge>
-              </div>
-              <div className="shrink-0 text-right text-xs text-muted-foreground">
-                <div>{timeAgo(d.created_at)}</div>
-                {duration(d.created_at, d.concluded_at) && (
-                  <div className="font-mono">{duration(d.created_at, d.concluded_at)}</div>
-                )}
-              </div>
-            </Card>
-          </Link>
+          <DeploymentRow key={d.id} d={d} />
         ))}
         {deployments !== null && deployments.length === 0 && (
-          <p className="text-sm text-muted-foreground">
-            No deployments yet — hit Deploy now, or drop files here.
-          </p>
+          <div className="rounded-lg border border-dashed border-border p-12 text-center">
+            <div className="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-full border border-brand/30 bg-brand/10">
+              <Rocket className="h-5 w-5 text-brand" />
+            </div>
+            <p className="text-sm text-muted-foreground">
+              No deployments yet — hit Deploy now, or drop files here.
+            </p>
+          </div>
         )}
       </div>
     </div>
