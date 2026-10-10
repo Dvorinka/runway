@@ -713,6 +713,7 @@ fn pack_cwd() -> anyhow::Result<Vec<u8>> {
             "--exclude=./.git",
             "--exclude=./node_modules",
             "--exclude=./.runway",
+            "--exclude=./.vercel",
             "--exclude=./target",
             "--exclude=./.next",
             "--exclude=./.turbo",
