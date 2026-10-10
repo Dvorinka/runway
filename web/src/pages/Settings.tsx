@@ -10,7 +10,7 @@ import { GIT_PROVIDERS, PROVIDER_GUIDES, providerLabel } from "@/lib/gitprovider
 import { AvatarRow, Badge, Button, Card, ComboBox, Input, SectionHead } from "@/components/ui";
 import { timeAgo } from "@/lib/utils";
 import { AppWindow, BookOpen, CheckCircle2, GitBranch, KeyRound, ListOrdered, Server, ShieldCheck, Smartphone, User } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 function GitProviders() {
   const [provider, setProvider] = useState("gitea");
@@ -259,13 +259,17 @@ function Allowlist() {
 function JobQueue() {
   const [data, setData] = useState<Awaited<ReturnType<typeof api.adminJobs>> | null>(null);
   const [filter, setFilter] = useState("");
+  const [limit, setLimit] = useState(25);
   const [error, setError] = useState("");
 
-  const load = (status = filter) =>
-    api.adminJobs(status || undefined).then(setData).catch((e) => setError(e.message));
+  const load = (status = filter, lim = limit) =>
+    api.adminJobs(status || undefined, lim).then(setData).catch((e) => setError(e.message));
+  const limitRef = useRef(limit);
+  limitRef.current = limit;
   useEffect(() => {
-    load();
-    const t = setInterval(load, 5000);
+    setLimit(25);
+    load(filter, 25);
+    const t = setInterval(() => load(filter, limitRef.current), 5000);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filter]);
@@ -290,7 +294,7 @@ function JobQueue() {
           Live — background work: deploys, cleanups, tunnel syncs. Failed jobs can be retried.
         </span>
       </SectionHead>
-      <div className="mb-3 flex flex-wrap gap-1.5">
+      <div className="mb-3 flex flex-wrap items-center gap-1.5">
         <Badge
           variant={filter === "" ? "brand" : "outline"}
           className="cursor-pointer"
@@ -308,6 +312,19 @@ function JobQueue() {
             {c.status} {c.count}
           </Badge>
         ))}
+        {["done", "failed", "canceled"].includes(filter) && jobs.length > 0 && (
+          <button
+            className="ml-auto text-xs text-muted-foreground hover:text-destructive"
+            onClick={() =>
+              api
+                .pruneJobs(filter)
+                .then(() => load(filter, limit))
+                .catch((e) => setError(e.message))
+            }
+          >
+            Clear {filter}
+          </button>
+        )}
       </div>
       {error && <p className="mb-3 text-xs text-destructive">{error}</p>}
       {jobs.length === 0 ? (
@@ -373,6 +390,30 @@ function JobQueue() {
               )}
             </div>
           ))}
+          {(() => {
+            const total = filter
+              ? (data?.counts.find((c) => c.status === filter)?.count ?? jobs.length)
+              : (data?.counts.reduce((a, c) => a + c.count, 0) ?? jobs.length);
+            return (
+              <div className="flex items-center justify-between pt-1 text-xs text-muted-foreground">
+                <span>
+                  Showing {jobs.length} of {total}
+                </span>
+                {jobs.length < total && (
+                  <button
+                    className="underline-offset-2 hover:text-brand hover:underline"
+                    onClick={() => {
+                      const next = Math.min(limit + 25, 200);
+                      setLimit(next);
+                      load(filter, next);
+                    }}
+                  >
+                    Show more
+                  </button>
+                )}
+              </div>
+            );
+          })()}
         </div>
       )}
     </Card>

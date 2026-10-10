@@ -308,18 +308,38 @@ pub fn alias_domains(
         let sanitized = branch_slug(&deployment.branch);
         if !sanitized.is_empty() {
             let sub = format!("{slug}-branch-{sanitized}");
-            v.insert("branch_subdomain".into(), sub.clone());
-            v.insert(
-                "branch_domain".into(),
-                format!("{sub}.{}", settings.deploy_domain),
-            );
-            v.insert(
-                "branch_url".into(),
-                format!(
-                    "{}://{}.{}",
-                    settings.url_scheme, sub, settings.deploy_domain
+            // Optional staging base (`config.preview_domain`): branch
+            // previews live at <slug>-branch-<x>.<preview> instead of the
+            // shared deploy domain. Must be a bare domain; anything else
+            // falls back to the default.
+            let preview_base = project
+                .config
+                .get("preview_domain")
+                .and_then(|d| d.as_str())
+                .map(str::trim)
+                .filter(|d| {
+                    !d.is_empty()
+                        && !d.contains("://")
+                        && !d.contains('/')
+                        && !d.chars().any(|c| c.is_whitespace())
+                        && d.contains('.')
+                });
+            let (domain, url) = match preview_base {
+                Some(base) => (
+                    format!("{sub}.{base}"),
+                    format!("{}://{sub}.{base}", settings.url_scheme),
                 ),
-            );
+                None => (
+                    format!("{sub}.{}", settings.deploy_domain),
+                    format!(
+                        "{}://{}.{}",
+                        settings.url_scheme, sub, settings.deploy_domain
+                    ),
+                ),
+            };
+            v.insert("branch_subdomain".into(), sub.clone());
+            v.insert("branch_domain".into(), domain);
+            v.insert("branch_url".into(), url);
         }
     }
 
@@ -795,6 +815,35 @@ mod tests {
         let m = alias_domains(&d, &project(), &s);
         assert_eq!(m["environment_subdomain"], "proj-env-staging");
         assert_eq!(m["environment_id_subdomain"], "proj-env-id-stg");
+        assert_eq!(m["branch_domain"], "proj-branch-dev-feat.deploy.test");
+    }
+
+    #[test]
+    fn alias_domains_preview_domain() {
+        let s = test_settings();
+        let d = deployment("stg", "dev-feat");
+        let mut p = project();
+        p.config = serde_json::json!({ "preview_domain": "staging.example.com" });
+        let m = alias_domains(&d, &p, &s);
+        assert_eq!(
+            m["branch_domain"],
+            "proj-branch-dev-feat.staging.example.com"
+        );
+        assert_eq!(
+            m["branch_url"],
+            "https://proj-branch-dev-feat.staging.example.com"
+        );
+        // Environment + immutable URLs stay on the deploy domain.
+        assert_eq!(m["environment_domain"], "proj-env-staging.deploy.test");
+    }
+
+    #[test]
+    fn alias_domains_preview_domain_invalid_falls_back() {
+        let s = test_settings();
+        let d = deployment("stg", "dev-feat");
+        let mut p = project();
+        p.config = serde_json::json!({ "preview_domain": "https://staging.example.com/x" });
+        let m = alias_domains(&d, &p, &s);
         assert_eq!(m["branch_domain"], "proj-branch-dev-feat.deploy.test");
     }
 }

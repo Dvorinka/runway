@@ -332,7 +332,12 @@ pub async fn update_project_config(
     {
         middlewares.insert(
             "fw-allowlist".into(),
-            json!({ "ipAllowList": { "sourceRange": allow } }),
+            // Depth 2 like rate_limit below: behind the Cloudflare tunnel
+            // Traefik sees cloudflared's IP, so match on X-Forwarded-For.
+            json!({ "ipAllowList": {
+                "sourceRange": allow,
+                "ipStrategy": { "depth": 2 },
+            } }),
         );
         fw_mws.push("fw-allowlist".into());
     }

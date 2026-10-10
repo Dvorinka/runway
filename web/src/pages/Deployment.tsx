@@ -2,6 +2,7 @@ import { api, deploymentLogsStream, type Deployment } from "@/lib/api";
 import { Badge, Button, StatusDot, displayStatus, isRunning } from "@/components/ui";
 import { Ansi } from "@/lib/ansi";
 import { cn, duration, elapsed, firstLine, timeAgo } from "@/lib/utils";
+import { Globe } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 
@@ -81,8 +82,110 @@ function LiveStats({ id }: { id: string }) {
   );
 }
 
-function Stepper({ dep }: { dep: Deployment }) {
-  const idx = Math.max(0, STEPS.indexOf(dep.status));
+function DeployInfo({ dep, active }: { dep: Deployment; active: boolean }) {
+  const [copied, setCopied] = useState(false);
+  const envUrl = dep.urls?.environment;
+  const immUrl = dep.urls?.immutable;
+  const mainUrl = envUrl ?? immUrl ?? null;
+  const extraUrls = [immUrl && immUrl !== envUrl ? immUrl : null, dep.urls?.branch]
+    .filter(Boolean) as string[];
+
+  function copy(text: string) {
+    navigator.clipboard
+      .writeText(text.startsWith("http") ? text : `https://${text}`)
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      })
+      .catch(() => {});
+  }
+
+  const rows: [string, React.ReactNode][] = [
+    [
+      "Status",
+      <span key="s" className="flex items-center gap-2">
+        <Badge variant={displayStatus(dep).variant}>{displayStatus(dep).label}</Badge>
+        <span className="text-xs text-muted-foreground">
+          {timeAgo(dep.created_at)}
+          {active
+            ? ` · running ${elapsed(dep.created_at)}`
+            : duration(dep.created_at, dep.concluded_at)
+              ? ` · took ${duration(dep.created_at, dep.concluded_at)}`
+              : ""}
+          {dep.trigger ? ` · via ${dep.trigger}` : ""}
+        </span>
+      </span>,
+    ],
+    [
+      "Source",
+      <span key="src" className="font-mono text-xs">
+        {dep.branch}@{dep.commit_sha.slice(0, 7)}
+        {dep.commit_meta?.author && (
+          <span className="text-muted-foreground"> · {dep.commit_meta.author}</span>
+        )}
+      </span>,
+    ],
+  ];
+
+  return (
+    <div className="mb-4 grid gap-2 sm:grid-cols-2">
+      <div className="rounded-md border border-border p-3">
+        <div className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+          Production deployment
+        </div>
+        {mainUrl ? (
+          <div className="flex items-center gap-2">
+            <Globe className="h-4 w-4 shrink-0 text-brand" />
+            <a
+              href={mainUrl.startsWith("http") ? mainUrl : `https://${mainUrl}`}
+              target="_blank"
+              rel="noreferrer"
+              className="truncate font-mono text-sm hover:text-brand"
+            >
+              {mainUrl.replace(/^https?:\/\//, "")}
+            </a>
+            <button
+              onClick={() => copy(mainUrl)}
+              className="shrink-0 text-muted-foreground hover:text-foreground"
+              title="Copy URL"
+            >
+              {copied ? "✓" : "⧉"}
+            </button>
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">No public URL yet — still building.</p>
+        )}
+      </div>
+      <div className="rounded-md border border-border p-3">
+        {rows.map(([label, value]) => (
+          <div key={label} className="flex items-baseline gap-3 py-0.5 text-xs">
+            <span className="w-14 shrink-0 uppercase tracking-wide text-muted-foreground text-[10px]">
+              {label}
+            </span>
+            <span className="min-w-0">{value}</span>
+          </div>
+        ))}
+        {extraUrls.length > 0 && (
+          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+            {extraUrls.map((u) => (
+              <a
+                key={u}
+                href={`https://${u}`}
+                target="_blank"
+                rel="noreferrer"
+                className="font-mono text-xs text-muted-foreground hover:text-brand"
+              >
+                {u}
+              </a>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Stepper({ dep }: { dep: Deployment }) {  const idx = Math.max(0, STEPS.indexOf(dep.status));
   const done = dep.conclusion === "succeeded";
   const failed = dep.conclusion != null && !done;
   return (
@@ -272,6 +375,7 @@ export default function DeploymentPage() {
           {firstLine(dep.commit_meta?.message)}
         </p>
       )}
+      {dep && <DeployInfo dep={dep} active={active} />}
       {dep && <Stepper dep={dep} />}
       {dep?.conclusion === "succeeded" && dep.container_status === "running" && (
         <LiveStats id={id} />

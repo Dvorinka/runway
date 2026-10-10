@@ -383,3 +383,24 @@ pub async fn retry_job(
     }
     Ok(Json(json!({ "ok": true })).into_response())
 }
+
+/// `DELETE /api/v1/admin/jobs?status=<done|failed|canceled>` — prune
+/// finished jobs. Terminal statuses only; pending/running are refused.
+pub async fn prune_jobs(
+    user: AuthUser,
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> ApiResult<Response> {
+    require_superadmin(&user)?;
+    let status = q.get("status").map(String::as_str).unwrap_or("");
+    if !["done", "failed", "canceled"].contains(&status) {
+        return Err(ApiError::bad_request(
+            "refusing to prune — status must be done, failed, or canceled",
+        ));
+    }
+    let res = sqlx::query("DELETE FROM job WHERE status = $1")
+        .bind(status)
+        .execute(&state.db)
+        .await?;
+    Ok(Json(json!({ "ok": true, "deleted": res.rows_affected() })).into_response())
+}

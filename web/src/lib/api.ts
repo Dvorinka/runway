@@ -521,7 +521,7 @@ export const api = {
   deleteAllowlistRule: (id: number) =>
     req<void>(`/api/v1/admin/allowlist/${id}`, { method: "DELETE" }),
 
-  adminJobs: (status?: string) =>
+  adminJobs: (status?: string, limit = 25) =>
     req<{
       counts: { status: string; count: number }[];
       jobs: {
@@ -533,9 +533,13 @@ export const api = {
         created_at: string;
         updated_at: string;
       }[];
-    }>(`/api/v1/admin/jobs${status ? `?status=${status}` : ""}`),
+    }>(`/api/v1/admin/jobs${status ? `?status=${status}&` : "?"}limit=${limit}`),
   retryJob: (id: number) =>
     req<{ ok: boolean }>(`/api/v1/admin/jobs/${id}/retry`, { method: "POST" }),
+  pruneJobs: (status: string) =>
+    req<{ ok: boolean; deleted: number }>(`/api/v1/admin/jobs?status=${status}`, {
+      method: "DELETE",
+    }),
 
   nodes: () => req<{ nodes: RemoteNode[] }>("/api/v1/admin/nodes"),
   createNode: (body: { name: string; host: string; docker_url: string }) =>

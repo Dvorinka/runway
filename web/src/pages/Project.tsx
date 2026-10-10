@@ -10,9 +10,10 @@ import {
   type RemoteNode,
   type Webhook,
 } from "@/lib/api";
-import { Avatar, AvatarRow, Badge, Button, Card, ComboBox, Input, Skeleton, StatusDot, displayStatus } from "@/components/ui";
+import { Avatar, AvatarRow, Badge, Button, Card, ComboBox, Input, SectionHead, Skeleton, StatusDot, displayStatus } from "@/components/ui";
 import { filesToTarGz } from "@/lib/tarball";
 import { duration, firstLine, timeAgo } from "@/lib/utils";
+import { Globe, Link2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
@@ -854,14 +855,45 @@ function Redirects({ id }: { id: string }) {
 
 function Domains({ id }: { id: string }) {
   const [domains, setDomains] = useState<Domain[]>([]);
+  const [auto, setAuto] = useState<{ label: string; host: string }[]>([]);
   const [hostname, setHostname] = useState("");
   const [error, setError] = useState("");
+  const [copied, setCopied] = useState("");
 
-  const load = () =>
+  const load = () => {
     api.domains(id).then((r) => setDomains(r.domains)).catch((e) => setError(e.message));
+    api
+      .deployments(id)
+      .then((r) => {
+        const d = r.deployments[0];
+        const seen = new Set<string>();
+        const rows: { label: string; host: string }[] = [];
+        const push = (label: string, host?: string | null) => {
+          if (host && !seen.has(host)) {
+            seen.add(host);
+            rows.push({ label, host });
+          }
+        };
+        push("Environment", d?.urls?.environment);
+        push("Branch preview", d?.urls?.branch);
+        push("Immutable", d?.urls?.immutable);
+        setAuto(rows);
+      })
+      .catch(() => {});
+  };
   useEffect(() => {
     load();
   }, [id]);
+
+  function copy(host: string) {
+    navigator.clipboard
+      .writeText(`https://${host}`)
+      .then(() => {
+        setCopied(host);
+        setTimeout(() => setCopied(""), 1500);
+      })
+      .catch(() => {});
+  }
 
   async function add(e: React.FormEvent) {
     e.preventDefault();
@@ -877,6 +909,36 @@ function Domains({ id }: { id: string }) {
 
   return (
     <>
+      {auto.length > 0 && (
+        <>
+          <SectionHead icon={Globe} title="Automatic">
+            Issued for every deployment — environment, branch previews, and the immutable build URL.
+          </SectionHead>
+          <div className="stagger mb-6 grid gap-2">
+            {auto.map((a) => (
+              <Card key={a.host} className="flex items-center justify-between p-3">
+                <div className="flex min-w-0 items-center gap-2">
+                  <Badge variant="brand">{a.label}</Badge>
+                  <a
+                    href={`https://${a.host}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="truncate font-mono text-sm hover:text-brand"
+                  >
+                    {a.host}
+                  </a>
+                </div>
+                <Button variant="ghost" size="sm" onClick={() => copy(a.host)} title="Copy URL">
+                  {copied === a.host ? "✓" : "⧉"}
+                </Button>
+              </Card>
+            ))}
+          </div>
+        </>
+      )}
+      <SectionHead icon={Link2} title="Custom domains">
+        Point DNS at this instance (or assign via Cloudflare), then verify.
+      </SectionHead>
       <form onSubmit={add} className="mb-4 flex gap-2">
         <Input
           placeholder="app.example.com"
@@ -1100,6 +1162,7 @@ function Settings({ id, project }: { id: string; project: Project | null }) {
       <DeployRules id={id} project={project} />
       <StatusPageCard id={id} project={project} />
       <Firewall id={id} project={project} />
+      <PreviewDomain id={id} project={project} />
       <Card className="p-4">
         <h3 className="mb-2 text-sm font-medium">Export / import</h3>
         <div className="flex gap-2">
@@ -1665,6 +1728,66 @@ function StatusPageCard({ id, project }: { id: string; project: Project | null }
         </div>
       )}
       <Err msg={error} />
+    </Card>
+  );
+}
+
+function PreviewDomain({ id, project }: { id: string; project: Project | null }) {
+  const [domain, setDomain] = useState("");
+  const [msg, setMsg] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setDomain((project?.config?.preview_domain as string | undefined) ?? "");
+  }, [project?.config]);
+
+  const valid =
+    domain.trim() === "" ||
+    (/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(domain.trim()) &&
+      !domain.includes("://") &&
+      !domain.includes("/") &&
+      !/\s/.test(domain));
+
+  async function save() {
+    setError("");
+    setMsg("");
+    const d = domain.trim().toLowerCase();
+    if (d !== "" && !valid) {
+      setError("enter a bare domain like staging.example.com");
+      return;
+    }
+    try {
+      await api.patchProject(id, { config: { preview_domain: d } });
+      setMsg(
+        d === ""
+          ? "Cleared — branch previews use the deploy domain again."
+          : "Saved — new branch previews will live under " + d + ". Point *." + d + " at this instance (or assign via Cloudflare).",
+      );
+      setTimeout(() => setMsg(""), 4000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "save failed");
+    }
+  }
+
+  return (
+    <Card className="p-4">
+      <h3 className="mb-2 text-sm font-medium">Preview domain</h3>
+      <p className="mb-3 text-xs text-muted-foreground">
+        Staging base for branch previews: <code className="font-mono">&lt;project&gt;-branch-&lt;branch&gt;.{domain.trim() || "staging.example.com"}</code>.
+        Environment and immutable URLs stay on the deploy domain.
+      </p>
+      <div className="flex gap-2">
+        <Input
+          placeholder="staging.example.com (empty = deploy domain)"
+          value={domain}
+          onChange={(e) => setDomain(e.target.value)}
+        />
+        <Button size="sm" onClick={save}>
+          Save
+        </Button>
+      </div>
+      <Err msg={error} />
+      {msg && <span className="text-xs text-muted-foreground">{msg}</span>}
     </Card>
   );
 }
