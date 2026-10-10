@@ -1171,6 +1171,17 @@ pub async fn finalize(ctx: &Ctx, deployment_id: &str) -> anyhow::Result<()> {
         None,
     )
     .await?;
+    // Tunnel mode: exact CNAMEs for every served hostname so Cloudflare
+    // issues edge certs (free plans don't cover second-level wildcards).
+    // Best-effort: the deployment itself is healthy either way.
+    if ctx.settings.cf_api_token.is_some() {
+        if let Err(e) = ensure_deploy_dns(ctx, &deployment, &project).await {
+            tracing::warn!(deployment_id, error = %e, "deploy DNS ensure failed");
+            ctx.logs
+                .info(deployment_id, &format!("DNS setup needs attention: {e}"))
+                .await;
+        }
+    }
     ctx.logs.info(deployment_id, "Deployment succeeded").await;
     post_commit_status(ctx, &deployment, &project, "success", "Deployment ready").await;
     let dep_now = deploy::get(&ctx.db, deployment_id)
@@ -1208,6 +1219,33 @@ pub async fn finalize(ctx: &Ctx, deployment_id: &str) -> anyhow::Result<()> {
         0,
     )
     .await?;
+    Ok(())
+}
+
+/// Exact proxied CNAMEs for a deployment's served hostnames, pointed at
+/// the instance tunnel. See `finalize` for why (edge certificates).
+async fn ensure_deploy_dns(
+    ctx: &Ctx,
+    deployment: &Deployment,
+    project: &Project,
+) -> anyhow::Result<()> {
+    let Some(token) = ctx.settings.cf_api_token.clone() else {
+        return Ok(());
+    };
+    let state = runway_core::tunnel::read_tunnel_state(&ctx.settings.data_dir)
+        .await
+        .ok_or_else(|| anyhow::anyhow!("no instance tunnel state"))?;
+    let cf = runway_core::cloudflare::CloudflareClient::new(token);
+    let target = format!("{}.cfargotunnel.com", state.tunnel_id);
+    let domains = deploy::alias_domains(deployment, project, &ctx.settings);
+    for (key, hostname) in &domains {
+        if !key.ends_with("_domain") {
+            continue;
+        }
+        cf.create_or_update_dns_record(hostname, &target, true)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("no cloudflare zone covers {hostname}"))?;
+    }
     Ok(())
 }
 
