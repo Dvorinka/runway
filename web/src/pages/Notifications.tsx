@@ -1,6 +1,5 @@
 import { api, type AppNotification } from "@/lib/api";
-import { Badge, Button, Card } from "@/components/ui";
-import { timeAgo } from "@/lib/utils";
+import { Badge, Button, Card, TimeAgo } from "@/components/ui";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
@@ -55,7 +54,7 @@ export default function NotificationsPage() {
                   {n.body && <div className="mt-1 text-xs text-muted-foreground">{n.body}</div>}
                 </div>
               </div>
-              <div className="shrink-0 text-xs text-muted-foreground">{timeAgo(n.created_at)}</div>
+              <div className="shrink-0 text-xs text-muted-foreground"><TimeAgo at={n.created_at} /></div>
             </Card>
           );
           return n.link ? (

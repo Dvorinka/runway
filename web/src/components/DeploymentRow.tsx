@@ -1,6 +1,6 @@
 import type { Deployment } from "@/lib/api";
-import { Badge, Card, StatusDot, displayStatus } from "@/components/ui";
-import { duration, firstLine, timeAgo } from "@/lib/utils";
+import { Badge, Card, StatusDot, TimeAgo, displayStatus } from "@/components/ui";
+import { duration, firstLine } from "@/lib/utils";
 import { Link } from "react-router-dom";
 
 export function DeploymentRow({ d, showProject }: { d: Deployment; showProject?: boolean }) {
@@ -34,7 +34,7 @@ export function DeploymentRow({ d, showProject }: { d: Deployment; showProject?:
           </Badge>
         </div>
         <div className="shrink-0 text-right text-xs text-muted-foreground">
-          <div>{timeAgo(d.created_at)}</div>
+          <TimeAgo at={d.created_at} />
           {duration(d.created_at, d.concluded_at) && (
             <div className="font-mono">{duration(d.created_at, d.concluded_at)}</div>
           )}

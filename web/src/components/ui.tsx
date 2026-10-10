@@ -1,6 +1,6 @@
 // Minimal shadcn-style primitives — extended on demand.
 import { cva, type VariantProps } from "class-variance-authority";
-import { cn } from "@/lib/utils";
+import { cn, timeAgo } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { Check, ChevronsUpDown, Search } from "lucide-react";
 import { forwardRef, useEffect, useRef, useState } from "react";
@@ -264,6 +264,16 @@ export interface ComboOption {
   value: string;
   label: string;
   hint?: string;
+}
+
+// Relative time with the absolute timestamp on hover.
+export function TimeAgo({ at, className }: { at: string; className?: string }) {
+  const d = new Date(at);
+  return (
+    <span className={className} title={isNaN(d.getTime()) ? undefined : d.toLocaleString()}>
+      {timeAgo(at)}
+    </span>
+  );
 }
 
 // Searchable dropdown — replaces native <select> (whose popup ignores the

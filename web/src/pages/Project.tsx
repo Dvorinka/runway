@@ -14,7 +14,7 @@ import { Avatar, AvatarRow, Badge, Button, Card, ComboBox, Input, SectionHead, S
 import { DeploymentRow } from "@/components/DeploymentRow";
 import { filesToTarGz } from "@/lib/tarball";
 import { timeAgo } from "@/lib/utils";
-import { Globe, Link2, Rocket, Webhook as WebhookIcon } from "lucide-react";
+import { Globe, Link2, Rocket, Webhook as WebhookIcon, ArrowRightLeft } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
@@ -907,7 +907,12 @@ function Redirects({ id }: { id: string }) {
           </Card>
         ))}
         {rules.length === 0 && (
-          <p className="text-sm text-muted-foreground">No redirect rules yet.</p>
+          <div className="rounded-lg border border-dashed border-border p-8 text-center">
+            <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full border border-border bg-accent/50">
+              <ArrowRightLeft className="h-5 w-5 text-muted-foreground" />
+            </div>
+            <p className="text-xs text-muted-foreground">No redirect rules yet — /old-path → new home.</p>
+          </div>
         )}
       </div>
     </>

@@ -47,11 +47,19 @@ export default function Deployments() {
 
   return (
     <div className="page-enter mx-auto max-w-5xl p-4 sm:p-8">
-      <div className="mb-5 flex items-end justify-between gap-3">
+      <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold">Deployments</h1>
+          <h1 className="flex items-center gap-2 text-xl font-semibold">
+            Deployments
+            <span className="relative flex h-1.5 w-1.5" title="Auto-refreshes every 10s">
+              <span className="absolute h-full w-full animate-ping rounded-full bg-emerald-500 opacity-60" />
+              <span className="relative h-1.5 w-1.5 rounded-full bg-emerald-500" />
+            </span>
+          </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Every build and promotion across projects, live.
+            {deployments == null
+              ? "Every build and promotion across projects, live."
+              : `${deployments.length} total · every build and promotion across projects, live.`}
           </p>
         </div>
         <div className="relative w-56">
