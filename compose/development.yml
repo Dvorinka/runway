@@ -1,7 +1,10 @@
 # Development stack: runway + postgres + traefik.
-# Usage:  docker compose -f compose/development.yml up -d --build
+# Usage:  HOST_DATA_DIR=$PWD/data docker compose -f compose/development.yml up -d --build
 #         docker compose -f compose/development.yml exec runway runway bootstrap --email you@x.dev
 #
+# HOST_DATA_DIR must be an ABSOLUTE host path: the app hands data subpaths
+# (uploads, build contexts, static output) to the Docker API, which needs
+# host paths, not container paths. The same directory is bind-mounted below.
 # DISABLE_TLS is on for local dev (plain http on :8000, traefik on :80).
 
 services:
@@ -59,7 +62,7 @@ services:
       - "8080:80"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - runway-data:/traefik
+      - ${HOST_DATA_DIR:?set HOST_DATA_DIR to an absolute host path, e.g. HOST_DATA_DIR=$PWD/data}/traefik:/traefik
     labels:
       - traefik.enable=true
 
@@ -82,8 +85,9 @@ services:
       DATA_DIR: /home/runway/data
       RUNWAY_LISTEN: 0.0.0.0:8000
       # Runner containers need to reach us back via the workspace network.
-      # Via the socket proxy — the container user has no socket access.
+      # Absolute host path of the data dir (== the volume below).
       DOCKER_HOST: tcp://docker-proxy:2375
+      HOST_DATA_DIR: ${HOST_DATA_DIR:?set HOST_DATA_DIR to an absolute host path}
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
       GITHUB_APP_ID: ${GITHUB_APP_ID:-}
@@ -96,7 +100,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - runway-data:/home/runway/data
+      - ${HOST_DATA_DIR:?set HOST_DATA_DIR to an absolute host path}:/home/runway/data
     # Router for APP_HOSTNAME — the tunnel ingress targets traefik:80.
     labels:
       - traefik.enable=true
@@ -107,4 +111,3 @@ services:
 
 volumes:
   runway-db:
-  runway-data:

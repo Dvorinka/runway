@@ -14,6 +14,7 @@
 #   RUNWAY_REF       git ref to install          (default main)
 #   RUNWAY_VERSION   release tag alias for RUNWAY_REF
 #   RUNWAY_MODE      local | domain              (skips the mode prompt)
+#   HOST_DATA_DIR    absolute host data dir      (default <dir>/data)
 #   APP_HOSTNAME     dashboard hostname          (default runway.localhost)
 #   DEPLOY_DOMAIN    wildcard deploy domain      (default: APP_HOSTNAME)
 #   DISABLE_TLS      "true" when a tunnel/proxy terminates TLS upstream
@@ -178,6 +179,16 @@ else
 fi
 
 ENV_FILE="$DIR/.env"
+
+# Host data dir (bind mount): must be absolute — the app hands data
+# subpaths (uploads, build contexts, static output, traefik configs) to
+# the Docker API, which needs host paths, not container paths.
+DIR_ABS="$(cd "$DIR" && pwd)"
+HOST_DATA_DIR="${HOST_DATA_DIR:-$DIR_ABS/data}"
+mkdir -p "$HOST_DATA_DIR/traefik"
+# The container runs as uid 1000; the bind must be writable by it.
+chown -R 1000:1000 "$HOST_DATA_DIR" 2>/dev/null || \
+  warn "cannot chown $HOST_DATA_DIR to uid 1000 — builds/uploads may fail unless it is writable by the container user (Docker Desktop handles this automatically)"
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -488,6 +499,8 @@ DEPLOY_DOMAIN=$DEPLOY_DOMAIN
 SECRET_KEY=$(openssl rand -hex 32)
 ENCRYPTION_KEY=$(openssl rand -hex 32)
 POSTGRES_PASSWORD=$(openssl rand -hex 24)
+# Absolute host path bind-mounted as the data dir (builds/uploads/traefik).
+HOST_DATA_DIR=$HOST_DATA_DIR
 HTTP_PORT=$HTTP_PORT
 HTTPS_PORT=$HTTPS_PORT
 # TLS termination: "true" when behind a tunnel/reverse proxy or local,
@@ -527,6 +540,22 @@ say "Building and starting the stack"
 # `build: ..` context in compose/production.yml to the parent of $DIR,
 # so the build looks for ./Dockerfile in the wrong place and fails with
 # "failed to read dockerfile: open Dockerfile: no such file or directory".
+# Migrate pre-bind-mount installs: copy the legacy named data volume
+# (tunnel state, certs, logs) into the host data dir when it is empty.
+data_empty=1
+for f in "$HOST_DATA_DIR"/* "$HOST_DATA_DIR"/.*; do
+  [ -e "$f" ] || continue
+  case "$f" in */. | */.. | */traefik) continue ;; *) data_empty=0; break ;; esac
+done
+if [ ! -f "$HOST_DATA_DIR/instance-tunnel.json" ] && [ "$data_empty" = 1 ]; then
+  LEGACY_VOL="$(docker volume ls -q --filter label=com.docker.compose.volume=runway-data 2>/dev/null | head -1)"
+  if [ -n "$LEGACY_VOL" ]; then
+    say "Migrating existing data volume ($LEGACY_VOL) into $HOST_DATA_DIR"
+    docker run --rm -v "$LEGACY_VOL:/from:ro" -v "$HOST_DATA_DIR:/to" alpine:3 \
+      sh -c "cp -a /from/. /to/ && chown -R 1000:1000 /to" || \
+      warn "volume migration failed — continuing with a fresh data dir (tunnel/DNS will be re-provisioned)"
+  fi
+fi
 (cd "$DIR" && docker compose --env-file .env \
   -f compose/production.yml up -d --build)
 
