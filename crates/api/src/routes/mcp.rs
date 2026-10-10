@@ -323,7 +323,7 @@ async fn call(state: &AppState, user_id: i64, name: &str, args: &Value) -> ApiRe
                 .to_string();
             let has_remote = match p.repo_provider.as_str() {
                 "github" | "github_enterprise" => p.github_installation_id.is_some(),
-                "gitea" => p.gitea_connection_id.is_some(),
+                "gitea" | "forgejo" => p.gitea_connection_id.is_some(),
                 "gitlab" => p.gitlab_connection_id.is_some(),
                 "bitbucket" => p.bitbucket_connection_id.is_some(),
                 _ => false,

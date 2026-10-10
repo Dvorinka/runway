@@ -154,7 +154,7 @@ pub async fn create(
 
     let has_remote = match project.repo_provider.as_str() {
         "github" | "github_enterprise" => project.github_installation_id.is_some(),
-        "gitea" => project.gitea_connection_id.is_some(),
+        "gitea" | "forgejo" => project.gitea_connection_id.is_some(),
         "gitlab" => project.gitlab_connection_id.is_some(),
         "bitbucket" => project.bitbucket_connection_id.is_some(),
         _ => false,

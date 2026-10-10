@@ -66,6 +66,7 @@ const badgeVariants = cva(
       variant: {
         default: "border-transparent bg-primary text-primary-foreground",
         secondary: "border-transparent bg-muted text-muted-foreground",
+        brand: "border-transparent bg-brand/15 text-brand",
         success: "border-transparent bg-emerald-500/15 text-emerald-400",
         warning: "border-transparent bg-amber-500/15 text-amber-400",
         destructive: "border-transparent bg-destructive/15 text-red-400",
@@ -414,6 +415,30 @@ export function ComboBox({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// Section header with a brand-medallion icon — one visual language for
+// card sections across Settings, Teams, and project flows.
+export function SectionHead({
+  icon: Icon,
+  title,
+  children,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div className="mb-4 flex items-start gap-2.5">
+      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-brand/30 bg-brand/10">
+        <Icon className="h-4 w-4 text-brand" />
+      </div>
+      <div className="min-w-0 pt-0.5">
+        <h2 className="text-sm font-medium">{title}</h2>
+        {children && <div className="mt-1 text-xs text-muted-foreground">{children}</div>}
+      </div>
     </div>
   );
 }

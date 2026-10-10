@@ -2,7 +2,7 @@ import { api, type Deployment, type Project } from "@/lib/api";
 import { DeploymentRow } from "@/components/DeploymentRow";
 import { Card, Skeleton, isRunning } from "@/components/ui";
 import { ProjectCard } from "@/pages/Projects";
-import { Rocket } from "lucide-react";
+import { Activity, AlertTriangle, FolderGit2, Percent, Rocket } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
@@ -35,12 +35,24 @@ export default function Overview() {
         ["crashed", "dead", "missing", "paused"].includes(d.computed_status ?? ""),
     ) ?? [];
 
-  const stats: [string, string, string?][] = [
-    ["Projects", projects ? String(projects.length) : "—"],
-    ["Deploys (7d)", week ? String(week.length) : "—"],
-    ["Running", deployments ? String(running.length) : "—", running.length > 0 ? "text-brand" : undefined],
-    ["Success rate", successRate !== null ? `${successRate}%` : "—"],
-    ["Down", String(down.length), down.length > 0 ? "text-destructive" : undefined],
+  const stats: { label: string; value: string; cls?: string; icon: typeof FolderGit2; hot?: boolean }[] = [
+    { label: "Projects", value: projects ? String(projects.length) : "—", icon: FolderGit2 },
+    { label: "Deploys (7d)", value: week ? String(week.length) : "—", icon: Rocket },
+    {
+      label: "Running",
+      value: deployments ? String(running.length) : "—",
+      cls: running.length > 0 ? "text-brand" : undefined,
+      icon: Activity,
+      hot: running.length > 0,
+    },
+    { label: "Success rate", value: successRate !== null ? `${successRate}%` : "—", icon: Percent },
+    {
+      label: "Down",
+      value: String(down.length),
+      cls: down.length > 0 ? "text-destructive" : undefined,
+      icon: AlertTriangle,
+      hot: down.length > 0,
+    },
   ];
 
   return (
@@ -50,10 +62,19 @@ export default function Overview() {
         Instance health and recent activity at a glance.
       </p>
       <div className="mb-8 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-        {stats.map(([label, value, cls]) => (
+        {stats.map(({ label, value, cls, icon: Icon, hot }) => (
           <Card key={label} className="group p-4 transition-colors hover:border-muted-foreground/25">
-            <div className="text-xs text-muted-foreground">{label}</div>
-            <div className={`mt-1 font-mono text-2xl tabular-nums ${cls ?? ""}`}>{value}</div>
+            <div className="mb-2 flex items-center justify-between">
+              <div className="text-xs text-muted-foreground">{label}</div>
+              <div
+                className={`flex h-6 w-6 items-center justify-center rounded-md border ${
+                  hot ? "border-brand/30 bg-brand/10" : "border-border bg-accent/50"
+                }`}
+              >
+                <Icon className={`h-3.5 w-3.5 ${hot ? "text-brand" : "text-muted-foreground"}`} />
+              </div>
+            </div>
+            <div className={`font-mono text-2xl tabular-nums ${cls ?? ""}`}>{value}</div>
             {label === "Success rate" && successRate !== null && (
               <div className="mt-2 h-1 overflow-hidden rounded-full bg-muted">
                 <div

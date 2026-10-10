@@ -8,7 +8,8 @@ import {
   type TeamInvite,
   type TeamWebhook,
 } from "@/lib/api";
-import { Avatar, AvatarRow, Badge, Button, Card, ComboBox, Input } from "@/components/ui";
+import { Avatar, AvatarRow, Badge, Button, Card, ComboBox, Input, SectionHead } from "@/components/ui";
+import { Cloud, Database, MailPlus, ScrollText, Users, Webhook } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
@@ -27,7 +28,7 @@ function Members({ team, myRole, me, reload }: {
   const act = (p: Promise<unknown>) => p.then(reload).catch((e) => setError(e.message));
   return (
     <Card className="p-5">
-      <h2 className="mb-4 text-sm font-medium">Members</h2>
+      <SectionHead icon={Users} title="Members" />
       <Err msg={error} />
       <div className="stagger grid gap-2">
         {team.members.map((m) => (
@@ -55,7 +56,7 @@ function Members({ team, myRole, me, reload }: {
                   placeholder="role…"
                 />
               ) : (
-                <Badge variant="secondary">{m.role}</Badge>
+                <Badge variant={m.role === "owner" ? "brand" : m.role === "admin" ? "default" : "secondary"}>{m.role}</Badge>
               )}
               {(admin || m.user_id === me.id) && (
                 <Button
@@ -102,10 +103,9 @@ function Invites({ teamId, admin }: { teamId: string; admin: boolean }) {
 
   return (
     <Card className="p-5">
-      <h2 className="mb-1 text-sm font-medium">Invites</h2>
-      <p className="mb-4 text-xs text-muted-foreground">
+      <SectionHead icon={MailPlus} title="Invites">
         Emailed invite links expire after 30 days; the recipient's account email must match.
-      </p>
+      </SectionHead>
       {admin && (
         <form onSubmit={invite} className="mb-4 grid grid-cols-[1fr_120px_auto] gap-2">
           <Input
@@ -207,11 +207,10 @@ function StorageSection({ teamId, admin }: { teamId: string; admin: boolean }) {
 
   return (
     <Card className="p-5">
-      <h2 className="mb-1 text-sm font-medium">Storage</h2>
-      <p className="mb-4 text-xs text-muted-foreground">
+      <SectionHead icon={Database} title="Storage">
         Team-scoped databases, volumes, and key-value stores. Linked storages are mounted at
         /data and reachable on a private network from deployments.
-      </p>
+      </SectionHead>
       {admin && (
         <form onSubmit={create} className="mb-4 grid grid-cols-[1fr_120px_130px_auto] gap-2">
           <Input
@@ -367,10 +366,9 @@ function Webhooks({ teamId, admin }: { teamId: string; admin: boolean }) {
 
   return (
     <Card className="p-5">
-      <h2 className="mb-1 text-sm font-medium">Team webhooks</h2>
-      <p className="mb-4 text-xs text-muted-foreground">
+      <SectionHead icon={Webhook} title="Team webhooks">
         Deployment events for every project in this team, signed with X-Runway-Signature.
-      </p>
+      </SectionHead>
       {admin && (
         <form onSubmit={create} className="mb-4 grid grid-cols-[1fr_2fr_1fr_auto] gap-2">
           <Input placeholder="name" value={name} onChange={(e) => setName(e.target.value)} required />
@@ -454,12 +452,11 @@ function Cloudflare({ teamId, admin }: { teamId: string; admin: boolean }) {
 
   return (
     <Card className="p-5">
-      <h2 className="mb-1 text-sm font-medium">Cloudflare</h2>
-      <p className="mb-4 text-xs text-muted-foreground">
+      <SectionHead icon={Cloud} title="Cloudflare">
         One-token setup: DNS records are created automatically when you assign a domain. When
         the instance sits behind CGNAT or a private IP, a cloudflared tunnel is created and
         hostnames route through it — no inbound ports needed.
-      </p>
+      </SectionHead>
       {status?.connected ? (
         <div className="flex items-center justify-between">
           <div className="text-sm">
@@ -515,7 +512,7 @@ function Audit({ teamId }: { teamId: string }) {
   }, [teamId]);
   return (
     <Card className="p-5">
-      <h2 className="mb-4 text-sm font-medium">Audit log</h2>
+      <SectionHead icon={ScrollText} title="Audit log" />
       <Err msg={error} />
       <div className="grid gap-1 font-mono text-xs">
         {entries.map((e) => (
@@ -582,7 +579,7 @@ export default function TeamPage({ me }: { me: Me }) {
           <div>
             <h1 className="flex items-center gap-2 text-xl font-semibold">
               {team.name}
-              <Badge variant={myRole === "owner" ? "default" : "secondary"}>{myRole}</Badge>
+              <Badge variant={myRole === "owner" ? "brand" : myRole === "admin" ? "default" : "secondary"}>{myRole}</Badge>
             </h1>
             <p className="text-xs text-muted-foreground">{team.slug}</p>
           </div>

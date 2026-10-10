@@ -30,6 +30,7 @@ pub struct Connection {
 pub fn provider_kind(p: &str) -> Option<&'static str> {
     match p {
         "gitea" => Some("gitea"),
+        "forgejo" => Some("forgejo"),
         "gitlab" => Some("gitlab"),
         "bitbucket" => Some("bitbucket"),
         // GHE reuses the GitHub client with a different base URL.
@@ -47,7 +48,7 @@ pub async fn connection(
     conn_id: i64,
 ) -> Result<Option<Connection>> {
     let table = match provider {
-        "gitea" => "gitea_connection",
+        "gitea" | "forgejo" => "gitea_connection",
         "gitlab" => "gitlab_connection",
         "bitbucket" => "bitbucket_connection",
         _ => return Ok(None),
@@ -94,7 +95,7 @@ impl Client {
     fn api_base(&self) -> String {
         let base = self.conn.base_url.trim_end_matches('/');
         match self.provider.as_str() {
-            "gitea" => format!("{base}/api/v1"),
+            "gitea" | "forgejo" => format!("{base}/api/v1"),
             "gitlab" => format!("{base}/api/v4"),
             "bitbucket" => "https://api.bitbucket.org/2.0".into(),
             _ => base.into(),
@@ -140,7 +141,9 @@ impl Client {
 
     async fn auth(&self, req: reqwest::RequestBuilder) -> Result<reqwest::RequestBuilder> {
         Ok(match self.provider.as_str() {
-            "gitea" => req.header("Authorization", format!("token {}", self.conn.token)),
+            "gitea" | "forgejo" => {
+                req.header("Authorization", format!("token {}", self.conn.token))
+            }
             "gitlab" => req.header("PRIVATE-TOKEN", &self.conn.token),
             "bitbucket" => req.bearer_auth(self.bitbucket_bearer().await?),
             _ => req.bearer_auth(&self.conn.token),
@@ -169,7 +172,7 @@ impl Client {
     pub async fn repository(&self, full: &str) -> Result<Value> {
         let (owner, repo) = split_full_name(full)?;
         let path = match self.provider.as_str() {
-            "gitea" => format!("/repos/{owner}/{repo}"),
+            "gitea" | "forgejo" => format!("/repos/{owner}/{repo}"),
             "gitlab" => format!("/projects/{}", path_encode(full)),
             "bitbucket" => format!("/repositories/{owner}/{repo}"),
             _ => return Err(Error::BadRequest("unsupported provider".into())),
@@ -183,7 +186,7 @@ impl Client {
     pub async fn list_root_files(&self, full: &str, branch: &str) -> Result<Vec<String>> {
         let (owner, repo) = split_full_name(full)?;
         let path = match self.provider.as_str() {
-            "gitea" => format!("/repos/{owner}/{repo}/contents?ref={branch}"),
+            "gitea" | "forgejo" => format!("/repos/{owner}/{repo}/contents?ref={branch}"),
             "gitlab" => format!(
                 "/projects/{}/repository/tree?ref={branch}&per_page=100",
                 path_encode(full)
@@ -228,7 +231,7 @@ impl Client {
     /// `/projects?membership=true`; bitbucket: `/repositories/{workspace}`.
     pub async fn list_repos(&self) -> Result<Vec<Value>> {
         match self.provider.as_str() {
-            "gitea" => Ok(self
+            "gitea" | "forgejo" => Ok(self
                 .get("/user/repos?limit=50")
                 .await?
                 .as_array()
@@ -253,7 +256,7 @@ impl Client {
     /// Branches for `owner/repo` (gitlab takes the path URL-encoded).
     pub async fn list_branches(&self, owner: &str, repo: &str) -> Result<Vec<Value>> {
         let path = match self.provider.as_str() {
-            "gitea" => format!("/repos/{owner}/{repo}/branches?limit=100"),
+            "gitea" | "forgejo" => format!("/repos/{owner}/{repo}/branches?limit=100"),
             "gitlab" => format!(
                 "/projects/{}/repository/branches?per_page=100",
                 path_encode(&format!("{owner}/{repo}"))
@@ -278,7 +281,7 @@ impl Client {
         branch: &str,
     ) -> Result<Option<Commit>> {
         let path = match self.provider.as_str() {
-            "gitea" => format!("/repos/{owner}/{repo}/commits?sha={branch}&limit=1"),
+            "gitea" | "forgejo" => format!("/repos/{owner}/{repo}/commits?sha={branch}&limit=1"),
             "gitlab" => format!(
                 "/projects/{}/repository/commits?ref_name={branch}&per_page=1",
                 path_encode(&format!("{owner}/{repo}"))
@@ -312,7 +315,7 @@ impl Client {
         branch: &str,
     ) -> Result<Option<String>> {
         let res = match self.provider.as_str() {
-            "gitea" => {
+            "gitea" | "forgejo" => {
                 let v = self
                     .get(&format!(
                         "/repos/{owner}/{repo}/contents/{path}?ref={branch}"

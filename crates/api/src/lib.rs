@@ -104,6 +104,10 @@ pub fn router(state: AppState) -> Router {
             post(routes::git_providers::gitea_webhook),
         )
         .route(
+            "/api/forgejo/webhook",
+            post(routes::git_providers::forgejo_webhook),
+        )
+        .route(
             "/api/gitlab/webhook",
             post(routes::git_providers::gitlab_webhook),
         )

@@ -238,7 +238,7 @@ pub async fn create(
                 }
             }
         }
-        p @ ("gitea" | "gitlab" | "bitbucket") => {
+        p @ ("gitea" | "forgejo" | "gitlab" | "bitbucket") => {
             let conn_id = body
                 .connection_id
                 .ok_or_else(|| ApiError::bad_request("connection_id required"))?;
@@ -259,7 +259,7 @@ pub async fn create(
                 client.conn.base_url.clone()
             };
             match p {
-                "gitea" => gitea_connection_id = Some(conn_id),
+                "gitea" | "forgejo" => gitea_connection_id = Some(conn_id),
                 "gitlab" => gitlab_connection_id = Some(conn_id),
                 _ => bitbucket_connection_id = Some(conn_id),
             }

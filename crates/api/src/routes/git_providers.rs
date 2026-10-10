@@ -32,6 +32,7 @@ use crate::state::AppState;
 fn provider_kind(provider: &str) -> ApiResult<&'static str> {
     match provider {
         "gitea" => Ok("gitea"),
+        "forgejo" => Ok("forgejo"),
         "gitlab" => Ok("gitlab"),
         "bitbucket" => Ok("bitbucket"),
         _ => Err(ApiError::not_found("provider")),
@@ -40,7 +41,7 @@ fn provider_kind(provider: &str) -> ApiResult<&'static str> {
 
 fn provider_table(provider: &str) -> ApiResult<&'static str> {
     Ok(match provider_kind(provider)? {
-        "gitea" => "gitea_connection",
+        "gitea" | "forgejo" => "gitea_connection",
         "gitlab" => "gitlab_connection",
         _ => "bitbucket_connection",
     })
@@ -99,7 +100,7 @@ pub async fn connect(
 
     // Probe the token before storing — a bad token fails fast here.
     let base_url = match provider {
-        "gitea" => body
+        "gitea" | "forgejo" => body
             .base_url
             .clone()
             .filter(|b| !b.trim().is_empty())
@@ -122,7 +123,7 @@ pub async fn connect(
         .await
         .map_err(|_| ApiError::bad_request("token rejected by provider"))?;
     let username = match provider {
-        "gitea" => account["login"].as_str(),
+        "gitea" | "forgejo" => account["login"].as_str(),
         "gitlab" => account["username"].as_str(),
         _ => account["nickname"]
             .as_str()
@@ -322,6 +323,7 @@ pub async fn list_branches(
 // ---------- inbound webhooks ----------
 
 /// `POST /api/gitea/webhook` — hex-HMAC signed, `X-Gitea-Event: push`.
+/// `POST /api/forgejo/webhook` — same payload shape, `X-Forgejo-*` headers.
 pub async fn gitea_webhook(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -371,6 +373,61 @@ pub async fn gitea_webhook(
             timestamp: last["timestamp"].as_str().map(String::from),
         };
         provider_push(&state, "gitea", repo_id, &base_url, &data, commit).await;
+    }
+    Ok(StatusCode::OK.into_response())
+}
+
+/// `POST /api/forgejo/webhook` — Forgejo speaks the Gitea webhook
+/// dialect with `X-Forgejo-Signature` / `X-Forgejo-Event` headers.
+/// Shares the gitea webhook secret setting.
+pub async fn forgejo_webhook(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> ApiResult<Response> {
+    let Some(secret) = &state.settings.gitea_webhook_secret else {
+        return Err(ApiError::bad_request("forgejo webhook not configured"));
+    };
+    let signature = headers
+        .get("x-forgejo-signature")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if !git_providers::verify_gitea_signature(secret, &body, signature) {
+        return Err(ApiError::unauthorized("invalid signature"));
+    }
+    let event = headers
+        .get("x-forgejo-event")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let data: Value =
+        serde_json::from_slice(&body).map_err(|_| ApiError::bad_request("invalid payload"))?;
+    if event == "push" {
+        let repo = &data["repository"];
+        let repo_id = repo["id"].as_i64().unwrap_or(0);
+        let base_url = repo["html_url"]
+            .as_str()
+            .unwrap_or("")
+            .rsplitn(3, '/')
+            .last()
+            .unwrap_or("")
+            .to_string();
+        let last = data["commits"]
+            .as_array()
+            .and_then(|c| c.last())
+            .cloned()
+            .unwrap_or(json!({}));
+        let commit = CommitInfo {
+            sha: data["after"].as_str().unwrap_or_default().into(),
+            author: data["pusher"]["login"]
+                .as_str()
+                .or_else(|| data["pusher"]["username"].as_str())
+                .unwrap_or_default()
+                .into(),
+            message: last["message"].as_str().unwrap_or_default().into(),
+            timestamp: last["timestamp"].as_str().map(String::from),
+        };
+        provider_push(&state, "forgejo", repo_id, &base_url, &data, commit).await;
     }
     Ok(StatusCode::OK.into_response())
 }

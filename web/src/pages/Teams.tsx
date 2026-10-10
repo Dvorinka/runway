@@ -8,6 +8,7 @@ export default function TeamsPage() {
   const [teams, setTeams] = useState<Team[]>([]);
   const [name, setName] = useState("");
   const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
 
   const load = () => api.teams().then((r) => setTeams(r.teams)).catch((e) => setError(e.message));
   useEffect(() => {
@@ -17,18 +18,21 @@ export default function TeamsPage() {
   async function create(e: React.FormEvent) {
     e.preventDefault();
     setError("");
+    setBusy(true);
     try {
       await api.createTeam(name);
       setName("");
-      load();
+      await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "failed");
+    } finally {
+      setBusy(false);
     }
   }
 
   return (
     <div className="page-enter mx-auto max-w-5xl p-4 sm:p-8">
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold">Teams</h1>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -41,9 +45,10 @@ export default function TeamsPage() {
             value={name}
             onChange={(e) => setName(e.target.value)}
             required
+            disabled={busy}
           />
-          <Button type="submit" size="sm">
-            Create team
+          <Button type="submit" size="sm" disabled={busy}>
+            {busy ? "Creating…" : "Create team"}
           </Button>
         </form>
       </div>
@@ -59,7 +64,7 @@ export default function TeamsPage() {
                   <div className="text-xs text-muted-foreground">{t.slug}</div>
                 </div>
               </div>
-              <Badge variant={t.role === "owner" ? "default" : "secondary"}>{t.role}</Badge>
+              <Badge variant={t.role === "owner" ? "brand" : t.role === "admin" ? "default" : "secondary"}>{t.role}</Badge>
             </Card>
           </Link>
         ))}

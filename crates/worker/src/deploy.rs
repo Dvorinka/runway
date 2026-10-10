@@ -218,12 +218,12 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
                     sha = deployment.commit_sha,
                 ));
             }
-            p @ ("gitea" | "gitlab" | "bitbucket") => {
+            p @ ("gitea" | "forgejo" | "gitlab" | "bitbucket") => {
                 // Port of devpush's gitea clone arm — token connection,
                 // askpass injection, `<base_url>/<full_name>.git`.
                 // Bitbucket clones go to bitbucket.org (api.* is REST).
                 let conn_id = match p {
-                    "gitea" => project.gitea_connection_id,
+                    "gitea" | "forgejo" => project.gitea_connection_id,
                     "gitlab" => project.gitlab_connection_id,
                     _ => project.bitbucket_connection_id,
                 }

@@ -5,14 +5,14 @@ import {
   type Project,
   type Repo,
 } from "@/lib/api";
-import { Avatar, Button, Card, ComboBox, Input, Skeleton, StatusDot } from "@/components/ui";
+import { GIT_PROVIDERS, PROVIDER_GUIDES, providerLabel, type GitProvider } from "@/lib/gitproviders";
+import { Avatar, Button, Card, ComboBox, Input, SectionHead, Skeleton, StatusDot } from "@/components/ui";
 import { duration, firstLine, timeAgo } from "@/lib/utils";
-import { LayoutGrid, List, Plus, Search } from "lucide-react";
+import { LayoutGrid, List, Plus, BookOpen, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
-const PROVIDERS = ["github", "gitea", "gitlab", "bitbucket"] as const;
-type Provider = (typeof PROVIDERS)[number];
+type Provider = GitProvider;
 
 interface GhInstallation {
   id: number;
@@ -22,6 +22,72 @@ interface GhRepo {
   id: number;
   full_name: string;
   default_branch: string;
+}
+
+function ConnectGuide({
+  provider,
+  baseUrl,
+  setBaseUrl,
+  workspace,
+  setWorkspace,
+  token,
+  setToken,
+  onConnect,
+}: {
+  provider: Exclude<GitProvider, "github">;
+  baseUrl: string;
+  setBaseUrl: (v: string) => void;
+  workspace: string;
+  setWorkspace: (v: string) => void;
+  token: string;
+  setToken: (v: string) => void;
+  onConnect: () => void;
+}) {
+  const guide = PROVIDER_GUIDES[provider];
+  return (
+    <div className="grid gap-2 rounded-md border border-border p-3">
+      <div className="flex items-center gap-2">
+        <BookOpen className="h-3.5 w-3.5 text-brand" />
+        <p className="text-xs font-medium">Connect {providerLabel(provider)}</p>
+        <a
+          className="ml-auto text-xs text-muted-foreground underline-offset-2 hover:text-brand hover:underline"
+          href={guide.docsUrl}
+          target="_blank"
+          rel="noreferrer"
+        >
+          {guide.docsLabel}
+        </a>
+      </div>
+      <ol className="grid gap-1 text-xs text-muted-foreground">
+        {guide.steps.map((s, i) => (
+          <li key={i} className="flex gap-2">
+            <span className="font-mono text-brand">{i + 1}.</span>
+            <span>{s}</span>
+          </li>
+        ))}
+      </ol>
+      {guide.workspace ? (
+        <Input
+          placeholder="workspace slug"
+          value={workspace}
+          onChange={(e) => setWorkspace(e.target.value)}
+        />
+      ) : (
+        guide.basePlaceholder && (
+          <Input placeholder={guide.basePlaceholder} value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} />
+        )
+      )}
+      <Input
+        type="password"
+        placeholder={guide.tokenPlaceholder}
+        value={token}
+        onChange={(e) => setToken(e.target.value)}
+      />
+      <Button type="button" variant="outline" size="sm" onClick={onConnect} disabled={!token}>
+        Connect
+      </Button>
+    </div>
+  );
 }
 
 function NewProject({ onDone }: { onDone: () => void }) {
@@ -93,8 +159,7 @@ function NewProject({ onDone }: { onDone: () => void }) {
     }
   }, [provider, installationId, connId]);
 
-  async function connect(e: React.FormEvent) {
-    e.preventDefault();
+  async function connect() {
     setError("");
     try {
       const body: { token: string; base_url?: string; workspace?: string } = { token };
@@ -139,16 +204,11 @@ function NewProject({ onDone }: { onDone: () => void }) {
 
   return (
     <Card className="mb-6 p-5">
-      <div className="mb-4 flex items-center gap-2.5">
-        <div className="flex h-7 w-7 items-center justify-center rounded-md border border-brand/30 bg-brand/10">
-          <Plus className="h-4 w-4 text-brand" />
-        </div>
-        <h2 className="text-sm font-medium">New project</h2>
-      </div>
+      <SectionHead icon={Plus} title="New project" />
       <form onSubmit={create} className="grid gap-3">
         <div className="grid grid-cols-2 gap-3">
-          <div className="grid grid-cols-4 gap-1 rounded-lg border border-border p-1">
-            {PROVIDERS.map((p) => (
+          <div className="grid grid-cols-5 gap-1 rounded-lg border border-border p-1">
+            {GIT_PROVIDERS.map((p) => (
               <button
                 key={p}
                 type="button"
@@ -159,7 +219,7 @@ function NewProject({ onDone }: { onDone: () => void }) {
                     : "border border-transparent text-muted-foreground hover:text-foreground"
                 }`}
               >
-                {p === "github" ? "GitHub" : p[0].toUpperCase() + p.slice(1)}
+                {providerLabel(p)}
               </button>
             ))}
           </div>
@@ -209,35 +269,16 @@ function NewProject({ onDone }: { onDone: () => void }) {
           </p>
         )}
         {provider !== "github" && connections.length === 0 && (
-          <div className="grid gap-2 rounded-md border border-border p-3">
-            <p className="text-xs text-muted-foreground">
-              Connect {provider === "bitbucket" ? "a Bitbucket workspace" : `a ${provider} instance`}:
-            </p>
-            {provider === "bitbucket" ? (
-              <Input
-                placeholder="workspace slug"
-                value={workspace}
-                onChange={(e) => setWorkspace(e.target.value)}
-              />
-            ) : (
-              <Input
-                placeholder={provider === "gitlab" ? "https://gitlab.com" : "https://git.example.com"}
-                value={baseUrl}
-                onChange={(e) => setBaseUrl(e.target.value)}
-              />
-            )}
-            <Input
-              type="password"
-              placeholder={
-                provider === "bitbucket" ? "OAuth key:secret or access token" : "access token"
-              }
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-            />
-            <Button type="button" variant="outline" size="sm" onClick={connect} disabled={!token}>
-              Connect
-            </Button>
-          </div>
+          <ConnectGuide
+            provider={provider}
+            baseUrl={baseUrl}
+            setBaseUrl={setBaseUrl}
+            workspace={workspace}
+            setWorkspace={setWorkspace}
+            token={token}
+            setToken={setToken}
+            onConnect={connect}
+          />
         )}
 
         <ComboBox

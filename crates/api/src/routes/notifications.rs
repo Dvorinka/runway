@@ -92,6 +92,7 @@ pub async fn deploy_button(Query(q): Query<DeployQuery>) -> Response {
         provider = match host.as_str() {
             h if h.contains("gitlab") => "gitlab",
             h if h.contains("bitbucket") => "bitbucket",
+            h if h.contains("forgejo") => "forgejo",
             h if h.contains("gitea") => "gitea",
             _ => "github",
         }

@@ -88,9 +88,9 @@ pub async fn resolve_commit(
                     .map(String::from),
             })
         }
-        p @ ("gitea" | "gitlab" | "bitbucket") => {
+        p @ ("gitea" | "forgejo" | "gitlab" | "bitbucket") => {
             let conn_id = match p {
-                "gitea" => project.gitea_connection_id,
+                "gitea" | "forgejo" => project.gitea_connection_id,
                 "gitlab" => project.gitlab_connection_id,
                 _ => project.bitbucket_connection_id,
             }
