@@ -51,7 +51,7 @@ function GitProviders() {
       <SectionHead icon={GitBranch} title="Git providers">
         Tokens for Gitea, Forgejo, GitLab, and Bitbucket. GitHub uses the App installation flow.
       </SectionHead>
-      <form onSubmit={connect} className="mb-3 grid grid-cols-[110px_1fr_1fr_auto] gap-2">
+      <form onSubmit={connect} className="mb-3 grid grid-cols-1 sm:grid-cols-[110px_1fr_1fr_auto] gap-2">
         <ComboBox
           value={provider}
           onChange={setProvider}
@@ -211,7 +211,7 @@ function Allowlist() {
       <SectionHead icon={ShieldCheck} title="Sign-up allowlist">
         Empty list = open sign-up. Rules match emails, domains, or regex patterns.
       </SectionHead>
-      <form onSubmit={add} className="mb-4 grid grid-cols-[110px_1fr_auto] gap-2">
+      <form onSubmit={add} className="mb-4 grid grid-cols-1 sm:grid-cols-[110px_1fr_auto] gap-2">
         <ComboBox
           value={type}
           onChange={setType}
@@ -463,7 +463,7 @@ function Nodes() {
         Deploy projects to remote Docker daemons. Containers publish a host port that Traefik
         routes to — the node must be network-reachable from this instance.
       </SectionHead>
-      <form onSubmit={add} className="mb-4 grid grid-cols-[1fr_1fr_1.5fr_auto] gap-2">
+      <form onSubmit={add} className="mb-4 grid grid-cols-1 sm:grid-cols-[1fr_1fr_1.5fr_auto] gap-2">
         <Input placeholder="name" value={name} onChange={(e) => setName(e.target.value)} required />
         <Input
           placeholder="node.example.com"

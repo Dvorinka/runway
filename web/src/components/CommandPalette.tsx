@@ -56,8 +56,13 @@ export function CommandPalette() {
         setOpen((o) => !o);
       } else if (e.key === "Escape") setOpen(false);
     };
+    const onOpen = () => setOpen(true);
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("runway:palette", onOpen);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("runway:palette", onOpen);
+    };
   }, []);
 
   useEffect(() => {

@@ -206,7 +206,7 @@ function NewProject({ onDone }: { onDone: () => void }) {
     <Card className="mb-6 p-5">
       <SectionHead icon={Plus} title="New project" />
       <form onSubmit={create} className="grid gap-3">
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div className="grid grid-cols-5 gap-1 rounded-lg border border-border p-1">
             {GIT_PROVIDERS.map((p) => (
               <button
@@ -297,7 +297,7 @@ function NewProject({ onDone }: { onDone: () => void }) {
           searchPlaceholder="Search repositories…"
           emptyText={installationId || connId ? "No repositories found" : "Pick an installation first"}
         />
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <Input placeholder="Name (optional)" value={name} onChange={(e) => setName(e.target.value)} />
           <Input placeholder="Branch" value={branch} onChange={(e) => setBranch(e.target.value)} />
           <Input
@@ -470,7 +470,7 @@ export default function Projects() {
             const dep = p.latest_deployment;
             return (
               <Link key={p.id} to={`/projects/${p.id}`}>
-                <Card className="flex items-center justify-between gap-4 p-3 transition-colors hover:border-muted-foreground/25 hover:bg-accent/50">
+                <Card className="flex items-center justify-between gap-4 p-3 transition-colors hover:border-brand/25 hover:bg-accent/50">
                   <div className="flex min-w-0 items-center gap-3">
                     {dep ? (
                       <StatusDot status={dep.status} conclusion={dep.conclusion} computed={dep.computed_status} />

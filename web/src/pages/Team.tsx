@@ -107,7 +107,7 @@ function Invites({ teamId, admin }: { teamId: string; admin: boolean }) {
         Emailed invite links expire after 30 days; the recipient's account email must match.
       </SectionHead>
       {admin && (
-        <form onSubmit={invite} className="mb-4 grid grid-cols-[1fr_120px_auto] gap-2">
+        <form onSubmit={invite} className="mb-4 grid grid-cols-1 sm:grid-cols-[1fr_120px_auto] gap-2">
           <Input
             type="email"
             placeholder="user@example.com"
@@ -212,7 +212,7 @@ function StorageSection({ teamId, admin }: { teamId: string; admin: boolean }) {
         /data and reachable on a private network from deployments.
       </SectionHead>
       {admin && (
-        <form onSubmit={create} className="mb-4 grid grid-cols-[1fr_120px_130px_auto] gap-2">
+        <form onSubmit={create} className="mb-4 grid grid-cols-1 sm:grid-cols-[1fr_120px_130px_auto] gap-2">
           <Input
             placeholder="name [a-z0-9-_]"
             value={name}
@@ -370,7 +370,7 @@ function Webhooks({ teamId, admin }: { teamId: string; admin: boolean }) {
         Deployment events for every project in this team, signed with X-Runway-Signature.
       </SectionHead>
       {admin && (
-        <form onSubmit={create} className="mb-4 grid grid-cols-[1fr_2fr_1fr_auto] gap-2">
+        <form onSubmit={create} className="mb-4 grid grid-cols-1 sm:grid-cols-[1fr_2fr_1fr_auto] gap-2">
           <Input placeholder="name" value={name} onChange={(e) => setName(e.target.value)} required />
           <Input
             type="url"

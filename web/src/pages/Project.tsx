@@ -13,7 +13,7 @@ import {
 import { Avatar, AvatarRow, Badge, Button, Card, ComboBox, Input, SectionHead, Skeleton, StatusDot, displayStatus } from "@/components/ui";
 import { filesToTarGz } from "@/lib/tarball";
 import { duration, firstLine, timeAgo } from "@/lib/utils";
-import { Globe, Link2 } from "lucide-react";
+import { Globe, Link2, Webhook as WebhookIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
@@ -237,7 +237,7 @@ function WebAnalytics({ id }: { id: string }) {
       </div>
       {data && data.views > 0 && (
         <div className="mt-4 grid gap-4">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="rounded-md border border-border p-3">
               <div className="text-2xl font-semibold">{data.views.toLocaleString()}</div>
               <div className="text-xs text-muted-foreground">Pageviews · {data.days}d</div>
@@ -487,7 +487,7 @@ function Deployments({ id }: { id: string }) {
       className="relative"
     >
       {dragging && (
-        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-lg border-2 border-dashed border-primary/60 bg-background/80">
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-lg border-2 border-dashed border-brand/60 bg-background/80">
           <div className="text-center">
             <p className="font-medium">Drop to deploy</p>
             <p className="mt-1 text-xs text-muted-foreground">
@@ -521,7 +521,7 @@ function Deployments({ id }: { id: string }) {
         {deployments === null && [0, 1, 2].map((i) => <Skeleton key={i} className="h-[64px]" />)}
         {deployments?.map((d) => (
           <Link key={d.id} to={`/deployments/${d.id}`}>
-            <Card className="flex items-center justify-between p-4 transition-colors hover:border-muted-foreground/25 hover:bg-accent/50">
+            <Card className="flex items-center justify-between p-4 transition-colors hover:border-brand/25 hover:bg-accent/50">
               <div className="flex min-w-0 items-center gap-4">
                 <StatusDot status={d.status} conclusion={d.conclusion} computed={d.computed_status} />
                 <div className="min-w-0">
@@ -649,7 +649,7 @@ function Environment({ id }: { id: string }) {
           </div>
         </form>
       ) : (
-        <form onSubmit={add} className="mb-4 grid grid-cols-[1fr_1fr_130px_auto_auto] gap-2">
+        <form onSubmit={add} className="mb-4 grid grid-cols-1 sm:grid-cols-[1fr_1fr_130px_auto_auto] gap-2">
           <Input placeholder="KEY" value={key} onChange={(e) => setKey(e.target.value)} required />
           <Input placeholder="value" value={value} onChange={(e) => setValue(e.target.value)} />
           <ComboBox
@@ -728,7 +728,7 @@ function Cron({ id }: { id: string }) {
 
   return (
     <>
-      <form onSubmit={add} className="mb-4 grid grid-cols-[1fr_1fr_120px_auto] gap-2">
+      <form onSubmit={add} className="mb-4 grid grid-cols-1 sm:grid-cols-[1fr_1fr_120px_auto] gap-2">
         <Input placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} required />
         <Input
           placeholder="every 30 minutes"
@@ -836,7 +836,7 @@ function Redirects({ id }: { id: string }) {
 
   return (
     <>
-      <form onSubmit={add} className="mb-4 grid grid-cols-[1fr_1fr_90px_auto] gap-2">
+      <form onSubmit={add} className="mb-4 grid grid-cols-1 sm:grid-cols-[1fr_1fr_90px_auto] gap-2">
         <Input
           placeholder="/old-path"
           value={source}
@@ -1071,7 +1071,7 @@ function Webhooks({ id }: { id: string }) {
 
   return (
     <>
-      <form onSubmit={add} className="mb-4 grid grid-cols-[1fr_2fr_1fr_auto] gap-2">
+      <form onSubmit={add} className="mb-4 grid grid-cols-1 sm:grid-cols-[1fr_2fr_1fr_auto] gap-2">
         <Input placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} required />
         <Input
           placeholder="https://example.com/hook"
@@ -1108,7 +1108,14 @@ function Webhooks({ id }: { id: string }) {
           </Card>
         ))}
         {hooks.length === 0 && (
-          <p className="text-sm text-muted-foreground">No webhooks yet.</p>
+          <div className="rounded-lg border border-dashed border-border p-8 text-center">
+            <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full border border-border bg-accent/50">
+              <WebhookIcon className="h-5 w-5 text-muted-foreground" />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              No webhooks yet — get signed POSTs for every deployment event.
+            </p>
+          </div>
         )}
       </div>
     </>
@@ -1367,7 +1374,7 @@ function Environments({ id, project }: { id: string; project: Project | null }) 
           </div>
         ))}
       </div>
-      <form onSubmit={add} className="grid grid-cols-[1fr_1fr_auto] gap-2">
+      <form onSubmit={add} className="grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2">
         <Input
           placeholder="staging"
           value={name}
@@ -1571,7 +1578,7 @@ function DeployRules({ id, project }: { id: string; project: Project | null }) {
           />
           Auto-deploy on push
         </label>
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           <div>
             <label className="mb-1 block text-xs text-muted-foreground">Branches</label>
             <Input

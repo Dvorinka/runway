@@ -2,6 +2,7 @@ import { api, type Me } from "@/lib/api";
 import { Avatar, Button } from "@/components/ui";
 import { CommandPalette } from "@/components/CommandPalette";
 import { cn } from "@/lib/utils";
+import { Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
 
@@ -72,6 +73,18 @@ export default function Layout({ me, children }: { me: Me; children: React.React
             </nav>
           </div>
           <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new Event("runway:palette"))}
+              className="hidden items-center gap-2 rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:border-muted-foreground/40 hover:text-foreground sm:flex"
+              title="Jump to projects, deployments, settings…"
+            >
+              <Search className="h-3.5 w-3.5" />
+              Search…
+              <kbd className="rounded border border-border bg-muted/50 px-1 font-mono text-[10px]">
+                ⌘K
+              </kbd>
+            </button>
             <Avatar
               kind="user"
               id={me.id}
