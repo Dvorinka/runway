@@ -128,6 +128,7 @@ function DeployInfo({ dep, active }: { dep: Deployment; active: boolean }) {
   ];
 
   return (
+    <>
     <div className="mb-4 grid gap-2 sm:grid-cols-2">
       <div className="rounded-md border border-border p-3">
         <div className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">
@@ -182,10 +183,71 @@ function DeployInfo({ dep, active }: { dep: Deployment; active: boolean }) {
         )}
       </div>
     </div>
+    {mainUrl && (
+      <div className="mb-4 overflow-hidden rounded-lg border border-border">
+        <div className="flex items-center justify-between border-b border-border px-3 py-2">
+          <span className="text-xs text-muted-foreground">Preview — the live site, embedded</span>
+          <a
+            href={mainUrl.startsWith("http") ? mainUrl : `https://${mainUrl}`}
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs text-muted-foreground hover:text-brand"
+          >
+            Open ↗
+          </a>
+        </div>
+        <iframe
+          src={mainUrl.startsWith("http") ? mainUrl : `https://${mainUrl}`}
+          title="Deployment preview"
+          loading="lazy"
+          sandbox="allow-scripts allow-forms allow-popups allow-modals"
+          className="h-[420px] w-full bg-muted/20"
+        />
+      </div>
+    )}
+    <DeployStats id={dep.id} />
+    </>
   );
 }
 
-function Stepper({ dep }: { dep: Deployment }) {  const idx = Math.max(0, STEPS.indexOf(dep.status));
+function DeployStats({ id }: { id: string }) {
+  const [samples, setSamples] =
+    useState<Awaited<ReturnType<typeof api.deploymentMetrics>>["samples"]>([]);
+  useEffect(() => {
+    api
+      .deploymentMetrics(id)
+      .then((m) => setSamples(m.samples))
+      .catch(() => {});
+  }, [id]);
+  if (samples.length < 2) return null;
+  const first = samples[0];
+  const last = samples[samples.length - 1];
+  const avgCpu = samples.reduce((a, s) => a + (s.cpu_pct ?? 0), 0) / samples.length;
+  const peakMem = Math.max(...samples.map((s) => s.mem_used ?? 0));
+  const rx = Math.max(0, (last.net_rx ?? 0) - (first.net_rx ?? 0));
+  const tx = Math.max(0, (last.net_tx ?? 0) - (first.net_tx ?? 0));
+  const spanH =
+    (new Date(last.ts).getTime() - new Date(first.ts).getTime()) / 3600000;
+  const stats: [string, string][] = [
+    ["Transfer", `↓${fmtBytes(rx)} ↑${fmtBytes(tx)}`],
+    ["Avg CPU", `${avgCpu.toFixed(1)}%`],
+    ["Peak memory", fmtBytes(peakMem)],
+    ["Sampled", spanH < 1 ? `${Math.round(spanH * 60)}m` : `${spanH.toFixed(1)}h`],
+  ];
+  return (
+    <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+      {stats.map(([label, value]) => (
+        <div key={label} className="rounded-md border border-border px-3 py-2">
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
+          <div className="font-mono text-sm tabular-nums">{value}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Stepper({ dep }: { dep: Deployment }) {
+  const idx = Math.max(0, STEPS.indexOf(dep.status));
   const done = dep.conclusion === "succeeded";
   const failed = dep.conclusion != null && !done;
   return (

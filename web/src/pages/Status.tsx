@@ -54,6 +54,10 @@ export default function StatusPage() {
   return (
     <div className="flex min-h-screen items-start justify-center bg-background px-4 py-24 text-foreground">
       <div className="w-full max-w-xl">
+        <div className="relative mb-8 flex justify-center">
+          <div className="pointer-events-none absolute top-1/2 h-32 w-64 -translate-y-1/2 rounded-full bg-brand/10 blur-[60px]" />
+          <img src="/runway-mark-white.svg" alt="Runway" className="relative h-12 w-12" />
+        </div>
         {error && <p className="text-center text-sm text-muted-foreground">{error}</p>}
         {!data && !error && <p className="text-center text-sm text-muted-foreground">Loading…</p>}
         {data && (

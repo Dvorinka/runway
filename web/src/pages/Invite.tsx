@@ -25,6 +25,7 @@ export default function InvitePage() {
   return (
     <div className="page-enter mx-auto max-w-md pt-24">
       <Card className="p-6 text-center">
+        <img src="/runway-mark-white.svg" alt="" className="mx-auto mb-4 h-10 w-10" />
         <h1 className="mb-2 text-lg font-semibold">Team invite</h1>
         <p className="mb-6 text-sm text-muted-foreground">
           Accept to join the team. The invite is bound to your account email.

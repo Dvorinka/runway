@@ -735,12 +735,34 @@ function Cron({ id }: { id: string }) {
           value={schedule}
           onChange={(e) => setSchedule(e.target.value)}
           required
+          title="every N minutes, every N hours, */N * * * *, or bare minutes"
         />
         <Input placeholder="branch" value={branch} onChange={(e) => setBranch(e.target.value)} />
         <Button type="submit" size="sm">
           Add
         </Button>
       </form>
+      <div className="mb-4 flex flex-wrap gap-1.5">
+        {[
+          ["15 min", "every 15 minutes"],
+          ["hourly", "every 1 hours"],
+          ["every 6h", "every 6 hours"],
+          ["daily", "every 24 hours"],
+        ].map(([label, s]) => (
+          <button
+            key={s}
+            type="button"
+            onClick={() => setSchedule(s)}
+            className={`rounded-full border px-2.5 py-0.5 text-xs transition-colors ${
+              schedule === s
+                ? "border-brand/40 bg-brand/15 text-brand"
+                : "border-border text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
       <Err msg={error} />
       <div className="stagger grid gap-2">
         {jobs.map((j) => (
@@ -1989,8 +2011,12 @@ function ProjectLogs({ id }: { id: string }) {
   return (
     <div className="overflow-hidden rounded-lg border border-border bg-black/40">
       <div className="flex items-center justify-between border-b border-border px-3 py-2">
-        <span className="text-xs text-muted-foreground">
-          merged build + runtime log across recent deployments
+        <span className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span className="relative flex h-1.5 w-1.5">
+            <span className="absolute h-full w-full animate-ping rounded-full bg-emerald-500 opacity-60" />
+            <span className="relative h-1.5 w-1.5 rounded-full bg-emerald-500" />
+          </span>
+          live · merged build + runtime log across recent deployments
         </span>
         <input
           value={filter}
@@ -2044,13 +2070,15 @@ export default function ProjectPage() {
 
   return (
     <div className="page-enter mx-auto max-w-5xl p-4 sm:p-8">
-      <div className="mb-6 flex items-center justify-between">
+      <div className="relative mb-6">
+        <div className="pointer-events-none absolute -top-16 left-1/4 h-48 w-96 rounded-full bg-brand/[0.07] blur-[80px]" />
+        <div className="relative flex items-center justify-between">
         <div className="flex min-w-0 items-center gap-3">
           {project && (
-            <Avatar kind="project" id={project.id} name={project.name} hasAvatar={project.has_avatar} />
+            <Avatar kind="project" id={project.id} name={project.name} hasAvatar={project.has_avatar} className="h-11 w-11 text-base" />
           )}
           <div className="min-w-0">
-            <h1 className="truncate text-xl font-semibold">{project?.name ?? "Project"}</h1>
+            <h1 className="truncate text-2xl font-semibold tracking-tight">{project?.name ?? "Project"}</h1>
           {project && (
             <div className="mt-1.5 flex items-center gap-3 text-xs text-muted-foreground">
               <span className="font-mono">
@@ -2078,6 +2106,7 @@ export default function ProjectPage() {
             </div>
           )}
           </div>
+        </div>
         </div>
       </div>
       <div className="-mx-4 mb-6 flex gap-4 overflow-x-auto border-b border-border px-4 sm:mx-0 sm:px-0">
