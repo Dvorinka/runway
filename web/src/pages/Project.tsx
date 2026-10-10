@@ -10,7 +10,7 @@ import {
   type RemoteNode,
   type Webhook,
 } from "@/lib/api";
-import { AvatarRow, Badge, Button, Card, Input, Skeleton, StatusDot, displayStatus } from "@/components/ui";
+import { AvatarRow, Badge, Button, Card, ComboBox, Input, Skeleton, StatusDot, displayStatus } from "@/components/ui";
 import { filesToTarGz } from "@/lib/tarball";
 import { duration, firstLine, timeAgo } from "@/lib/utils";
 import { useEffect, useRef, useState } from "react";
@@ -113,17 +113,18 @@ function Analytics({ id }: { id: string }) {
           Works with Umami, Rybbit, Plausible, or any provider's script tag.
         </p>
       <div className="grid gap-3">
-        <select
-          className={selectCls}
+        <ComboBox
           value={provider}
-          onChange={(e) => setProvider(e.target.value as AnalyticsProvider)}
-        >
-          <option value="none">Disabled</option>
-          <option value="umami">Umami</option>
-          <option value="rybbit">Rybbit</option>
-          <option value="plausible">Plausible</option>
-          <option value="custom">Custom snippet</option>
-        </select>
+          onChange={(v) => setProvider(v as AnalyticsProvider)}
+          options={[
+            { value: "none", label: "Disabled" },
+            { value: "umami", label: "Umami" },
+            { value: "rybbit", label: "Rybbit" },
+            { value: "plausible", label: "Plausible" },
+            { value: "custom", label: "Custom snippet" },
+          ]}
+          placeholder="Analytics…"
+        />
         {(provider === "umami" || provider === "rybbit") && (
           <>
             <Input
@@ -425,8 +426,6 @@ function Speed({ id }: { id: string }) {
   );
 }
 
-const selectCls =
-  "h-9 w-full rounded-md border border-border bg-transparent px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring";
 const inputCls =
   "w-full rounded-md border border-border bg-transparent px-3 py-2 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-ring";
 
@@ -804,11 +803,12 @@ function Redirects({ id }: { id: string }) {
           onChange={(e) => setTarget(e.target.value)}
           required
         />
-        <select className={selectCls} value={code} onChange={(e) => setCode(e.target.value)}>
-          {["301", "302", "307", "308"].map((c) => (
-            <option key={c}>{c}</option>
-          ))}
-        </select>
+        <ComboBox
+          value={code}
+          onChange={setCode}
+          options={["301", "302", "307", "308"].map((c) => ({ value: c, label: c }))}
+          placeholder="Code…"
+        />
         <Button type="submit" size="sm">
           Add
         </Button>
@@ -1078,18 +1078,20 @@ function Settings({ id, project }: { id: string; project: Project | null }) {
           Deploy to a remote Docker daemon. Requires the node published port to be reachable from
           Traefik.
         </p>
-        <select
-          className={selectCls}
+        <ComboBox
           value={project?.remote_node_id ?? ""}
-          onChange={(e) => assign(e.target.value)}
-        >
-          <option value="">Local daemon</option>
-          {nodes.map((n) => (
-            <option key={n.id} value={n.id}>
-              {n.name} ({n.host}){n.status !== "online" ? " — offline" : ""}
-            </option>
-          ))}
-        </select>
+          onChange={(v) => assign(v)}
+          options={[
+            { value: "", label: "Local daemon" },
+            ...nodes.map((n) => ({
+              value: n.id,
+              label: n.name,
+              hint: `${n.host}${n.status !== "online" ? " — offline" : ""}`,
+            })),
+          ]}
+          placeholder="Local daemon"
+          searchPlaceholder="Search nodes…"
+        />
       </Card>
       <Environments id={id} project={project} />
       <DockerBuild id={id} project={project} />

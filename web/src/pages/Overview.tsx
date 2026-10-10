@@ -34,22 +34,22 @@ export default function Overview() {
         ["crashed", "dead", "missing", "paused"].includes(d.computed_status ?? ""),
     ) ?? [];
 
-  const stats: [string, string][] = [
+  const stats: [string, string, string?][] = [
     ["Projects", projects ? String(projects.length) : "—"],
     ["Deploys (7d)", week ? String(week.length) : "—"],
-    ["Running", deployments ? String(running.length) : "—"],
+    ["Running", deployments ? String(running.length) : "—", running.length > 0 ? "text-brand" : undefined],
     ["Success rate", successRate !== null ? `${successRate}%` : "—"],
-    ["Down", String(down.length)],
+    ["Down", String(down.length), down.length > 0 ? "text-destructive" : undefined],
   ];
 
   return (
     <div className="page-enter mx-auto max-w-6xl p-4 sm:p-8">
       <h1 className="mb-6 text-xl font-semibold">Overview</h1>
       <div className="mb-8 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-        {stats.map(([label, value]) => (
+        {stats.map(([label, value, cls]) => (
           <Card key={label} className="p-4">
             <div className="text-xs text-muted-foreground">{label}</div>
-            <div className="mt-1 font-mono text-2xl tabular-nums">{value}</div>
+            <div className={`mt-1 font-mono text-2xl tabular-nums ${cls ?? ""}`}>{value}</div>
           </Card>
         ))}
       </div>

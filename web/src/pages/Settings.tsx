@@ -6,11 +6,8 @@ import {
   type NodeTlsProvision,
   type RemoteNode,
 } from "@/lib/api";
-import { AvatarRow, Badge, Button, Card, Input } from "@/components/ui";
+import { AvatarRow, Badge, Button, Card, ComboBox, Input } from "@/components/ui";
 import { useEffect, useState } from "react";
-
-const selectCls =
-  "h-9 w-full rounded-md border border-border bg-transparent px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring";
 
 function GitProviders() {
   const [provider, setProvider] = useState("gitea");
@@ -53,11 +50,16 @@ function GitProviders() {
         Tokens for Gitea, GitLab, and Bitbucket. GitHub uses the App installation flow.
       </p>
       <form onSubmit={connect} className="mb-4 grid grid-cols-[110px_1fr_1fr_auto] gap-2">
-        <select className={selectCls} value={provider} onChange={(e) => setProvider(e.target.value)}>
-          <option value="gitea">Gitea</option>
-          <option value="gitlab">GitLab</option>
-          <option value="bitbucket">Bitbucket</option>
-        </select>
+        <ComboBox
+          value={provider}
+          onChange={setProvider}
+          options={[
+            { value: "gitea", label: "Gitea" },
+            { value: "gitlab", label: "GitLab" },
+            { value: "bitbucket", label: "Bitbucket" },
+          ]}
+          placeholder="Provider…"
+        />
         {provider === "bitbucket" ? (
           <Input
             placeholder="workspace slug"
@@ -187,11 +189,16 @@ function Allowlist() {
         Empty list = open sign-up. Rules match emails, domains, or regex patterns.
       </p>
       <form onSubmit={add} className="mb-4 grid grid-cols-[110px_1fr_auto] gap-2">
-        <select className={selectCls} value={type} onChange={(e) => setType(e.target.value)}>
-          <option value="email">email</option>
-          <option value="domain">domain</option>
-          <option value="pattern">pattern</option>
-        </select>
+        <ComboBox
+          value={type}
+          onChange={setType}
+          options={[
+            { value: "email", label: "email" },
+            { value: "domain", label: "domain" },
+            { value: "pattern", label: "pattern" },
+          ]}
+          placeholder="type…"
+        />
         <Input
           placeholder={type === "email" ? "user@example.com" : type === "domain" ? "example.com" : "^.*@acme\\.com$"}
           value={value}

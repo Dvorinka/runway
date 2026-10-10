@@ -13,7 +13,9 @@
   --color-muted-foreground: oklch(0.68 0 0);
   --color-accent: oklch(0.24 0 0);
   --color-border: oklch(1 0 0 / 9%);
-  --color-ring: oklch(0.556 0 0);
+  --color-ring: oklch(0.63 0.24 34);
+  --color-brand: #ff4d00;
+  --color-brand-foreground: #ffffff;
   --color-destructive: oklch(0.704 0.191 22.216);
   --radius: 0.625rem;
 }
@@ -87,4 +89,10 @@ pre {
 
 ::-webkit-scrollbar-track {
   background: transparent;
+}
+
+/* Fallback for any remaining native selects: keep option text readable. */
+select option {
+  background-color: oklch(0.18 0 0);
+  color: oklch(0.985 0 0);
 }

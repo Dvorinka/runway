@@ -2,7 +2,8 @@
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 import { api } from "@/lib/api";
-import { forwardRef, useRef, useState } from "react";
+import { Check, ChevronsUpDown, Search } from "lucide-react";
+import { forwardRef, useEffect, useRef, useState } from "react";
 
 const buttonVariants = cva(
   "inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none",
@@ -254,6 +255,165 @@ export function AvatarRow({
         </Button>
       )}
       {err && <span className="text-xs text-destructive">{err}</span>}
+    </div>
+  );
+}
+
+export interface ComboOption {
+  value: string;
+  label: string;
+  hint?: string;
+}
+
+// Searchable dropdown — replaces native <select> (whose popup ignores the
+// dark theme and can't filter). Controlled via value/onChange with string
+// values; map numbers/ids at the call site.
+export function ComboBox({
+  value,
+  onChange,
+  options,
+  placeholder = "Select…",
+  searchPlaceholder = "Search…",
+  emptyText = "No matches",
+  disabled,
+  className,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  options: ComboOption[];
+  placeholder?: string;
+  searchPlaceholder?: string;
+  emptyText?: string;
+  disabled?: boolean;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [active, setActive] = useState(0);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const selected = options.find((o) => o.value === value);
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? options.filter((o) => `${o.label} ${o.hint ?? ""}`.toLowerCase().includes(q))
+    : options;
+
+  function close() {
+    setOpen(false);
+    setQuery("");
+    setActive(0);
+  }
+  function pick(v: string) {
+    onChange(v);
+    close();
+  }
+
+  // Close on outside click / Escape.
+  useEffect(() => {
+    if (!open) return;
+    searchRef.current?.focus();
+    const onDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) close();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open ]);
+
+  function onTriggerKey(e: React.KeyboardEvent) {
+    if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      if (!open) setOpen(true);
+      else if (filtered[active]) pick(filtered[active].value);
+    } else if (e.key === "ArrowUp" && open && filtered.length) {
+      e.preventDefault();
+      setActive((a) => (a - 1 + filtered.length) % filtered.length);
+    }
+  }
+
+  return (
+    <div ref={rootRef} className={cn("relative", className)}>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => (open ? close() : setOpen(true))}
+        onKeyDown={onTriggerKey}
+        className="flex h-9 w-full items-center justify-between gap-2 rounded-md border border-border bg-transparent px-3 text-sm transition-colors hover:border-muted-foreground/40 focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
+      >
+        <span className={cn("truncate", selected ? "text-foreground" : "text-muted-foreground")}>
+          {selected ? selected.label : placeholder}
+        </span>
+        <ChevronsUpDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+      </button>
+      {open && (
+        <div className="absolute z-50 mt-1 max-h-64 w-full overflow-hidden rounded-md border border-border bg-card shadow-xl">
+          <div className="flex items-center gap-2 border-b border-border px-3">
+            <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <input
+              ref={searchRef}
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setActive(0);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "ArrowDown" && filtered.length) {
+                  e.preventDefault();
+                  setActive((a) => (a + 1) % filtered.length);
+                } else if (e.key === "ArrowUp" && filtered.length) {
+                  e.preventDefault();
+                  setActive((a) => (a - 1 + filtered.length) % filtered.length);
+                } else if (e.key === "Enter" && filtered[active]) {
+                  e.preventDefault();
+                  pick(filtered[active].value);
+                }
+              }}
+              placeholder={searchPlaceholder}
+              className="h-9 w-full bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+            />
+          </div>
+          <div className="max-h-52 overflow-y-auto p-1">
+            {filtered.length === 0 && (
+              <p className="px-2 py-3 text-center text-xs text-muted-foreground">{emptyText}</p>
+            )}
+            {filtered.map((o, i) => {
+              const isSel = o.value === value;
+              return (
+                <button
+                  key={o.value}
+                  type="button"
+                  onMouseEnter={() => setActive(i)}
+                  onClick={() => pick(o.value)}
+                  className={cn(
+                    "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm transition-colors",
+                    i === active ? "bg-accent" : "",
+                    isSel ? "text-foreground" : "text-muted-foreground",
+                  )}
+                >
+                  <Check
+                    className={cn(
+                      "h-4 w-4 shrink-0",
+                      isSel ? "text-brand" : "text-transparent",
+                    )}
+                  />
+                  <span className="min-w-0 flex-1 truncate">{o.label}</span>
+                  {o.hint && (
+                    <span className="shrink-0 truncate text-xs text-muted-foreground/70">
+                      {o.hint}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

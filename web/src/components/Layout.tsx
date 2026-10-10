@@ -20,7 +20,7 @@ function NavItem({ to, children }: { to: string; children: React.ReactNode }) {
           </span>
           <span
             className={cn(
-              "absolute inset-x-0 -bottom-[13px] h-px bg-foreground transition-opacity",
+              "absolute inset-x-0 -bottom-[13px] h-0.5 rounded-full bg-brand transition-opacity",
               isActive ? "opacity-100" : "opacity-0",
             )}
           />
@@ -62,7 +62,7 @@ export default function Layout({ me, children }: { me: Me; children: React.React
                 <span className="flex items-center gap-1.5">
                   Notifications
                   {unread > 0 && (
-                    <span className="rounded-full bg-primary px-1.5 text-[11px] leading-4 font-medium text-primary-foreground">
+                    <span className="rounded-full bg-brand px-1.5 text-[11px] leading-4 font-medium text-white">
                       {unread}
                     </span>
                   )}

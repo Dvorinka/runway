@@ -5,7 +5,7 @@ import {
   type Project,
   type Repo,
 } from "@/lib/api";
-import { Avatar, Button, Card, Input, Skeleton, StatusDot } from "@/components/ui";
+import { Avatar, Button, Card, ComboBox, Input, Skeleton, StatusDot } from "@/components/ui";
 import { duration, firstLine, timeAgo } from "@/lib/utils";
 import { LayoutGrid, List, Search } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -55,7 +55,13 @@ function NewProject({ onDone }: { onDone: () => void }) {
       fetch("/api/v1/github/installations", { credentials: "include" })
         .then((r) => r.json())
         .then((d) => {
-          setInstallations(d.installations ?? []);
+          const list: GhInstallation[] = d.installations ?? [];
+          setInstallations(list);
+          // Preselect the authed account — the common single-installation
+          // case needs no extra click; keep a prior pick if still present.
+          setInstallationId((cur) =>
+            list.some((i) => i.id === cur) ? cur : (list[0]?.id ?? null),
+          );
           setGhInstallUrl(d.install_url ?? null);
           setGhConfigured(d.configured !== false);
         })
@@ -131,51 +137,47 @@ function NewProject({ onDone }: { onDone: () => void }) {
     }
   }
 
-  const selectCls =
-    "h-9 w-full rounded-md border border-border bg-transparent px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring";
-
   return (
     <Card className="mb-6 p-5">
       <h2 className="mb-4 text-sm font-medium">New project</h2>
       <form onSubmit={create} className="grid gap-3">
         <div className="grid grid-cols-2 gap-3">
-          <select
-            className={selectCls}
-            value={provider}
-            onChange={(e) => setProvider(e.target.value as Provider)}
-          >
+          <div className="grid grid-cols-4 gap-1 rounded-lg border border-border p-1">
             {PROVIDERS.map((p) => (
-              <option key={p} value={p}>
+              <button
+                key={p}
+                type="button"
+                onClick={() => setProvider(p)}
+                className={`rounded-md px-2 py-1 text-xs transition-colors ${
+                  provider === p
+                    ? "border border-brand/40 bg-brand/15 font-medium text-brand"
+                    : "border border-transparent text-muted-foreground hover:text-foreground"
+                }`}
+              >
                 {p === "github" ? "GitHub" : p[0].toUpperCase() + p.slice(1)}
-              </option>
+              </button>
             ))}
-          </select>
+          </div>
           {provider === "github" ? (
-            <select
-              className={selectCls}
-              value={installationId ?? ""}
-              onChange={(e) => setInstallationId(Number(e.target.value) || null)}
-            >
-              <option value="">Installation…</option>
-              {installations.map((i) => (
-                <option key={i.id} value={i.id}>
-                  {i.account}
-                </option>
-              ))}
-            </select>
+            <ComboBox
+              value={installationId == null ? "" : String(installationId)}
+              onChange={(v) => setInstallationId(v ? Number(v) : null)}
+              options={installations.map((i) => ({ value: String(i.id), label: i.account }))}
+              placeholder="Installation…"
+              searchPlaceholder="Search accounts…"
+              emptyText="No installations — install the app below"
+            />
           ) : (
-            <select
-              className={selectCls}
-              value={connId ?? ""}
-              onChange={(e) => setConnId(Number(e.target.value) || null)}
-            >
-              <option value="">Connection…</option>
-              {connections.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.username ?? c.base_url ?? `connection ${c.id}`}
-                </option>
-              ))}
-            </select>
+            <ComboBox
+              value={connId == null ? "" : String(connId)}
+              onChange={(v) => setConnId(v ? Number(v) : null)}
+              options={connections.map((c) => ({
+                value: String(c.id),
+                label: c.username ?? c.base_url ?? `connection ${c.id}`,
+              }))}
+              placeholder="Connection…"
+              searchPlaceholder="Search connections…"
+            />
           )}
         </div>
 
@@ -233,22 +235,22 @@ function NewProject({ onDone }: { onDone: () => void }) {
           </div>
         )}
 
-        <select
-          className={selectCls}
+        <ComboBox
           value={repo}
-          onChange={(e) => {
-            setRepo(e.target.value);
-            const r = repos.find((x) => x.full_name === e.target.value.split("|")[0]);
+          onChange={(v) => {
+            setRepo(v);
+            const r = repos.find((x) => x.full_name === v.split("|")[0]);
             if (r) setBranch(r.default_branch || "main");
           }}
-        >
-          <option value="">Repository…</option>
-          {repos.map((r) => (
-            <option key={r.full_name} value={`${r.full_name}|${r.default_branch}`}>
-              {r.full_name}
-            </option>
-          ))}
-        </select>
+          options={repos.map((r) => ({
+            value: `${r.full_name}|${r.default_branch}`,
+            label: r.full_name,
+            hint: r.default_branch,
+          }))}
+          placeholder="Repository…"
+          searchPlaceholder="Search repositories…"
+          emptyText={installationId || connId ? "No repositories found" : "Pick an installation first"}
+        />
         <div className="grid grid-cols-3 gap-3">
           <Input placeholder="Name (optional)" value={name} onChange={(e) => setName(e.target.value)} />
           <Input placeholder="Branch" value={branch} onChange={(e) => setBranch(e.target.value)} />

@@ -8,12 +8,9 @@ import {
   type TeamInvite,
   type TeamWebhook,
 } from "@/lib/api";
-import { Avatar, AvatarRow, Badge, Button, Card, Input } from "@/components/ui";
+import { Avatar, AvatarRow, Badge, Button, Card, ComboBox, Input } from "@/components/ui";
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-
-const selectCls =
-  "h-9 w-full rounded-md border border-border bg-transparent px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring";
 
 function Err({ msg }: { msg: string }) {
   return msg ? <p className="mb-3 text-xs text-destructive">{msg}</p> : null;
@@ -46,15 +43,17 @@ function Members({ team, myRole, me, reload }: {
             </div>
             <div className="flex items-center gap-2">
               {admin && m.user_id !== me.id ? (
-                <select
-                  className={selectCls + " h-8 w-28"}
+                <ComboBox
+                  className="w-28"
                   value={m.role}
-                  onChange={(e) => act(api.updateMember(team.id, m.user_id, e.target.value))}
-                >
-                  <option value="owner">owner</option>
-                  <option value="admin">admin</option>
-                  <option value="member">member</option>
-                </select>
+                  onChange={(v) => act(api.updateMember(team.id, m.user_id, v))}
+                  options={[
+                    { value: "owner", label: "owner" },
+                    { value: "admin", label: "admin" },
+                    { value: "member", label: "member" },
+                  ]}
+                  placeholder="role…"
+                />
               ) : (
                 <Badge variant="secondary">{m.role}</Badge>
               )}
@@ -116,11 +115,16 @@ function Invites({ teamId, admin }: { teamId: string; admin: boolean }) {
             onChange={(e) => setEmail(e.target.value)}
             required
           />
-          <select className={selectCls} value={role} onChange={(e) => setRole(e.target.value)}>
-            <option value="member">member</option>
-            <option value="admin">admin</option>
-            <option value="owner">owner</option>
-          </select>
+          <ComboBox
+            value={role}
+            onChange={setRole}
+            options={[
+              { value: "member", label: "member" },
+              { value: "admin", label: "admin" },
+              { value: "owner", label: "owner" },
+            ]}
+            placeholder="role…"
+          />
           <Button type="submit" size="sm">
             Invite
           </Button>
@@ -216,24 +220,27 @@ function StorageSection({ teamId, admin }: { teamId: string; admin: boolean }) {
             onChange={(e) => setName(e.target.value)}
             required
           />
-          <select className={selectCls} value={type} onChange={(e) => setType(e.target.value)}>
-            <option value="database">database</option>
-            <option value="kv">kv</option>
-            <option value="volume">volume</option>
-            <option value="queue">queue</option>
-          </select>
+          <ComboBox
+            value={type}
+            onChange={setType}
+            options={[
+              { value: "database", label: "database" },
+              { value: "kv", label: "kv" },
+              { value: "volume", label: "volume" },
+              { value: "queue", label: "queue" },
+            ]}
+            placeholder="type…"
+          />
           {type === "database" ? (
-            <select className={selectCls} value={engine} onChange={(e) => setEngine(e.target.value)}>
-              {DB_ENGINES.map((e2) => (
-                <option key={e2} value={e2}>
-                  {e2}
-                </option>
-              ))}
-            </select>
+            <ComboBox
+              value={engine}
+              onChange={setEngine}
+              options={DB_ENGINES.map((e2) => ({ value: e2, label: e2 }))}
+              placeholder="engine…"
+              searchPlaceholder="Search engines…"
+            />
           ) : type === "kv" ? (
-            <select className={selectCls} value="redis" disabled>
-              <option value="redis">redis</option>
-            </select>
+            <ComboBox value="redis" onChange={() => {}} options={[{ value: "redis", label: "redis" }]} disabled />
           ) : (
             <span />
           )}
@@ -294,20 +301,16 @@ function StorageSection({ teamId, admin }: { teamId: string; admin: boolean }) {
               ))}
               {admin && projects.length > 0 && (
                 <div className="flex items-center gap-1">
-                  <select
-                    className={selectCls + " h-7 w-40 text-xs"}
+                  <ComboBox
+                    className="w-40"
                     value={linkTarget[s.id] ?? ""}
-                    onChange={(e) => setLinkTarget((t) => ({ ...t, [s.id]: e.target.value }))}
-                  >
-                    <option value="">link project…</option>
-                    {projects
+                    onChange={(v) => setLinkTarget((t) => ({ ...t, [s.id]: v }))}
+                    options={projects
                       .filter((p) => !s.links.some((l) => l.project_id === p.id))
-                      .map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
-                        </option>
-                      ))}
-                  </select>
+                      .map((p) => ({ value: p.id, label: p.name }))}
+                    placeholder="link project…"
+                    searchPlaceholder="Search projects…"
+                  />
                   {linkTarget[s.id] && (
                     <Button
                       variant="outline"
