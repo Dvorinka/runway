@@ -432,13 +432,20 @@ pub async fn update_project_config(
         routers.insert(key, router);
     }
 
-    let doc = json!({
-        "http": {
-            "routers": routers,
-            "middlewares": middlewares,
-            "services": services,
-        }
-    });
+    // Traefik v3 rejects empty section maps in file-provider configs
+    // ("services cannot be a standalone element"), which silently drops
+    // every router in the file — omit sections with no entries.
+    let mut http = serde_json::Map::new();
+    if !routers.is_empty() {
+        http.insert("routers".into(), Value::Object(routers));
+    }
+    if !middlewares.is_empty() {
+        http.insert("middlewares".into(), Value::Object(middlewares));
+    }
+    if !services.is_empty() {
+        http.insert("services".into(), Value::Object(services));
+    }
+    let doc = json!({ "http": http });
     let yaml = serde_yaml::to_string(&doc)
         .map_err(|e| crate::error::Error::Config(format!("traefik yaml: {e}")))?;
     write_atomic(&path, &yaml)
