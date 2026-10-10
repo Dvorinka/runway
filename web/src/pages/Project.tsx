@@ -565,11 +565,25 @@ function Environment({ id }: { id: string }) {
   const [vars, setVars] = useState<EnvVar[]>([]);
   const [key, setKey] = useState("");
   const [value, setValue] = useState("");
+  const [scope, setScope] = useState("");
+  const [scopes, setScopes] = useState<string[]>([]);
   const [bulk, setBulk] = useState(false);
   const [bulkText, setBulkText] = useState("");
   const [error, setError] = useState("");
 
-  const load = () => api.getEnv(id).then((r) => setVars(r.env)).catch((e) => setError(e.message));
+  const load = () => {
+    api.getEnv(id).then((r) => setVars(r.env)).catch((e) => setError(e.message));
+    api
+      .project(id)
+      .then((p) =>
+        setScopes(
+          ((p.environments ?? []) as { id?: string }[])
+            .map((e) => e.id ?? "")
+            .filter(Boolean),
+        ),
+      )
+      .catch(() => {});
+  };
   useEffect(() => {
     load();
   }, [id]);
@@ -578,7 +592,7 @@ function Environment({ id }: { id: string }) {
     e.preventDefault();
     setError("");
     try {
-      await api.patchEnv(id, [{ key, value }]);
+      await api.patchEnv(id, [{ key, value, environment: scope || undefined }]);
       setKey("");
       setValue("");
       load();
@@ -635,9 +649,18 @@ function Environment({ id }: { id: string }) {
           </div>
         </form>
       ) : (
-        <form onSubmit={add} className="mb-4 grid grid-cols-[1fr_1fr_auto_auto] gap-2">
+        <form onSubmit={add} className="mb-4 grid grid-cols-[1fr_1fr_130px_auto_auto] gap-2">
           <Input placeholder="KEY" value={key} onChange={(e) => setKey(e.target.value)} required />
           <Input placeholder="value" value={value} onChange={(e) => setValue(e.target.value)} />
+          <ComboBox
+            value={scope}
+            onChange={setScope}
+            options={[
+              { value: "", label: "All envs" },
+              ...scopes.map((s) => ({ value: s, label: s })),
+            ]}
+            placeholder="scope…"
+          />
           <Button type="submit" size="sm">
             Add
           </Button>
