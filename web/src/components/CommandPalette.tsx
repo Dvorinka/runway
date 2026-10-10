@@ -136,7 +136,7 @@ export function CommandPalette() {
                 i === sel ? "bg-accent" : "",
               )}
             >
-              <span className="text-muted-foreground">{it.icon}</span>
+              <span className={cn("text-muted-foreground", i === sel && "text-brand")}>{it.icon}</span>
               <span className="flex-1 truncate">{it.label}</span>
               {it.hint && (
                 <span className="truncate font-mono text-xs text-muted-foreground">{it.hint}</span>

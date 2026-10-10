@@ -6,7 +6,7 @@ import { Link } from "react-router-dom";
 export function DeploymentRow({ d, showProject }: { d: Deployment; showProject?: boolean }) {
   return (
     <Link to={`/deployments/${d.id}`}>
-      <Card className="flex items-center justify-between gap-4 p-4 transition-colors hover:border-muted-foreground/25 hover:bg-accent/50">
+      <Card className="flex items-center justify-between gap-4 p-4 transition-colors hover:border-brand/25 hover:bg-accent/50">
         <div className="flex min-w-0 items-center gap-4">
           <StatusDot status={d.status} conclusion={d.conclusion} computed={d.computed_status} />
           <div className="min-w-0">

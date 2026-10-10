@@ -47,8 +47,13 @@ export default function Deployments() {
 
   return (
     <div className="page-enter mx-auto max-w-5xl p-4 sm:p-8">
-      <div className="mb-5 flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Deployments</h1>
+      <div className="mb-5 flex items-end justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold">Deployments</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Every build and promotion across projects, live.
+          </p>
+        </div>
         <div className="relative w-56">
           <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -66,7 +71,7 @@ export default function Deployments() {
             onClick={() => setFilter(f)}
             className={`-mb-px border-b-2 px-3 pb-2 text-sm capitalize transition-colors ${
               filter === f
-                ? "border-foreground text-foreground"
+                ? "border-brand text-foreground"
                 : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
           >
@@ -81,6 +86,9 @@ export default function Deployments() {
         {filtered?.map((d) => <DeploymentRow key={d.id} d={d} showProject />)}
         {filtered !== undefined && filtered?.length === 0 && (
           <div className="rounded-lg border border-dashed border-border p-12 text-center">
+            <div className="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-full border border-border bg-accent/50">
+              <Search className="h-5 w-5 text-muted-foreground" />
+            </div>
             <p className="text-sm text-muted-foreground">
               {deployments?.length === 0
                 ? "No deployments yet."

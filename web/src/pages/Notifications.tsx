@@ -44,12 +44,12 @@ export default function NotificationsPage() {
         {items.map((n) => {
           const inner = (
             <Card
-              className={`flex items-center justify-between p-4 transition-colors hover:border-muted-foreground/25 hover:bg-accent/50 ${
+              className={`flex items-center justify-between p-4 transition-colors hover:border-brand/25 hover:bg-accent/50 ${
                 n.read ? "opacity-60" : ""
               }`}
             >
               <div className="flex items-start gap-3">
-                {!n.read && <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-primary" />}
+                {!n.read && <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-brand" />}
                 <div>
                   <div className="text-sm">{n.title}</div>
                   {n.body && <div className="mt-1 text-xs text-muted-foreground">{n.body}</div>}

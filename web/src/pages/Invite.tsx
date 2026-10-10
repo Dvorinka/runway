@@ -30,7 +30,7 @@ export default function InvitePage() {
           Accept to join the team. The invite is bound to your account email.
         </p>
         {error && <p className="mb-4 text-xs text-destructive">{error}</p>}
-        <Button onClick={accept} disabled={busy}>
+        <Button onClick={accept} disabled={busy} className="bg-brand text-white hover:bg-brand/90">
           {busy ? "Joining…" : "Accept invite"}
         </Button>
       </Card>

@@ -580,7 +580,10 @@ export default function TeamPage({ me }: { me: Me }) {
         <div className="flex items-center gap-3">
           <Avatar kind="team" id={team.id} name={team.name} hasAvatar={team.has_avatar} className="h-9 w-9 text-sm" />
           <div>
-            <h1 className="text-xl font-semibold">{team.name}</h1>
+            <h1 className="flex items-center gap-2 text-xl font-semibold">
+              {team.name}
+              <Badge variant={myRole === "owner" ? "default" : "secondary"}>{myRole}</Badge>
+            </h1>
             <p className="text-xs text-muted-foreground">{team.slug}</p>
           </div>
         </div>

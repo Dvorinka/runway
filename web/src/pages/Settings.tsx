@@ -774,7 +774,10 @@ function TwoFactor({ enabled: initiallyEnabled }: { enabled: boolean }) {
 export default function SettingsPage({ me }: { me: Me }) {
   return (
     <div className="page-enter mx-auto max-w-5xl p-4 sm:p-8">
-      <h1 className="mb-6 text-xl font-semibold">Settings</h1>
+      <h1 className="text-xl font-semibold">Settings</h1>
+      <p className="mb-6 mt-1 text-sm text-muted-foreground">
+        Your account, providers, access control, and instance infrastructure.
+      </p>
       <div className="grid gap-4">
         <Account me={me} />
         <GitProviders />

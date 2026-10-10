@@ -2,6 +2,7 @@ import { api, type Deployment, type Project } from "@/lib/api";
 import { DeploymentRow } from "@/components/DeploymentRow";
 import { Card, Skeleton, isRunning } from "@/components/ui";
 import { ProjectCard } from "@/pages/Projects";
+import { Rocket } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
@@ -44,12 +45,23 @@ export default function Overview() {
 
   return (
     <div className="page-enter mx-auto max-w-6xl p-4 sm:p-8">
-      <h1 className="mb-6 text-xl font-semibold">Overview</h1>
+      <h1 className="text-xl font-semibold">Overview</h1>
+      <p className="mb-6 mt-1 text-sm text-muted-foreground">
+        Instance health and recent activity at a glance.
+      </p>
       <div className="mb-8 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         {stats.map(([label, value, cls]) => (
-          <Card key={label} className="p-4">
+          <Card key={label} className="group p-4 transition-colors hover:border-muted-foreground/25">
             <div className="text-xs text-muted-foreground">{label}</div>
             <div className={`mt-1 font-mono text-2xl tabular-nums ${cls ?? ""}`}>{value}</div>
+            {label === "Success rate" && successRate !== null && (
+              <div className="mt-2 h-1 overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-brand/70 to-brand transition-all"
+                  style={{ width: `${successRate}%` }}
+                />
+              </div>
+            )}
           </Card>
         ))}
       </div>
@@ -76,7 +88,7 @@ export default function Overview() {
       <section className="mb-8">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-medium text-muted-foreground">Projects</h2>
-          <Link to="/projects" className="text-xs text-muted-foreground hover:text-foreground">
+          <Link to="/projects" className="text-xs text-muted-foreground hover:text-brand">
             View all →
           </Link>
         </div>
@@ -88,10 +100,13 @@ export default function Overview() {
           </div>
         ) : projects.length === 0 ? (
           <div className="rounded-lg border border-dashed border-border p-12 text-center">
+            <div className="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-full border border-brand/30 bg-brand/10">
+              <Rocket className="h-5 w-5 text-brand" />
+            </div>
             <p className="text-sm text-muted-foreground">No projects yet.</p>
             <Link
               to="/projects"
-              className="mt-2 inline-block text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+              className="mt-2 inline-block text-xs text-muted-foreground underline underline-offset-2 hover:text-brand"
             >
               Create your first project
             </Link>
@@ -107,7 +122,7 @@ export default function Overview() {
       <section>
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-medium text-muted-foreground">Recent deployments</h2>
-          <Link to="/deployments" className="text-xs text-muted-foreground hover:text-foreground">
+          <Link to="/deployments" className="text-xs text-muted-foreground hover:text-brand">
             View all →
           </Link>
         </div>

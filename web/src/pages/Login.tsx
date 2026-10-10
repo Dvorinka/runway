@@ -82,7 +82,8 @@ export default function Login() {
           <span className="text-lg font-semibold tracking-tight">Runway</span>
         </div>
         <div className="relative">
-          <img src="/runway-mark-white.svg" alt="" className="mb-8 h-40 w-40" />
+          <div className="pointer-events-none absolute -left-24 top-1/3 h-96 w-96 rounded-full bg-brand/15 blur-[120px]" />
+          <img src="/runway-mark-white.svg" alt="" className="relative mb-8 h-40 w-40" />
           <h2 className="mb-3 text-3xl font-semibold tracking-tight">
             Ship it. From your own runway.
           </h2>
@@ -137,8 +138,8 @@ export default function Login() {
                 }}
                 className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
                   mode === m
-                    ? "bg-zinc-800 font-medium text-foreground"
-                    : "text-muted-foreground hover:text-foreground"
+                    ? "border border-brand/40 bg-brand/15 font-medium text-brand"
+                    : "border border-transparent text-muted-foreground hover:text-foreground"
                 }`}
               >
                 {m === "login" ? "Sign in" : "Register"}
@@ -235,7 +236,7 @@ export default function Login() {
                 If that address has an account, a sign-in link is on its way.
               </p>
             )}
-            <Button type="submit" className="w-full" disabled={busy}>
+            <Button type="submit" className="w-full bg-brand text-white hover:bg-brand/90" disabled={busy}>
               {busy ? "…" : pending ? "Verify" : mode === "login" ? "Sign in" : "Create account"}
             </Button>
           </form>

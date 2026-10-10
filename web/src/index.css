@@ -64,8 +64,8 @@ pre {
 .stagger > *:nth-child(n + 8) { animation-delay: 0.28s; }
 
 ::selection {
-  background: oklch(0.92 0 0 / 85%);
-  color: oklch(0.15 0 0);
+  background: #ff4d00;
+  color: #fff;
 }
 
 * {

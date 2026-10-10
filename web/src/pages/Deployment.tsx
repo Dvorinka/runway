@@ -118,7 +118,7 @@ function Stepper({ dep }: { dep: Deployment }) {
                 className={cn(
                   "flex h-4 w-4 items-center justify-center rounded-full text-[9px] font-medium",
                   state === "done" && "bg-emerald-500/15 text-emerald-400",
-                  state === "active" && "bg-amber-400/15 text-amber-400",
+                  state === "active" && "bg-brand/15 text-brand",
                   state === "failed" && "bg-red-500/15 text-red-400",
                   state === "pending" && "bg-muted text-muted-foreground",
                 )}

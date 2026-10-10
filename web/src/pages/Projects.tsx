@@ -7,7 +7,7 @@ import {
 } from "@/lib/api";
 import { Avatar, Button, Card, ComboBox, Input, Skeleton, StatusDot } from "@/components/ui";
 import { duration, firstLine, timeAgo } from "@/lib/utils";
-import { LayoutGrid, List, Search } from "lucide-react";
+import { LayoutGrid, List, Plus, Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 
@@ -139,7 +139,12 @@ function NewProject({ onDone }: { onDone: () => void }) {
 
   return (
     <Card className="mb-6 p-5">
-      <h2 className="mb-4 text-sm font-medium">New project</h2>
+      <div className="mb-4 flex items-center gap-2.5">
+        <div className="flex h-7 w-7 items-center justify-center rounded-md border border-brand/30 bg-brand/10">
+          <Plus className="h-4 w-4 text-brand" />
+        </div>
+        <h2 className="text-sm font-medium">New project</h2>
+      </div>
       <form onSubmit={create} className="grid gap-3">
         <div className="grid grid-cols-2 gap-3">
           <div className="grid grid-cols-4 gap-1 rounded-lg border border-border p-1">
@@ -278,7 +283,7 @@ export function ProjectCard({ p }: { p: Project }) {
   const dep = p.latest_deployment;
   return (
     <Link key={p.id} to={`/projects/${p.id}`} className="block">
-      <Card className="flex h-full flex-col gap-3 p-4 transition-colors hover:border-muted-foreground/25 hover:bg-accent/50">
+      <Card className="flex h-full flex-col gap-3 p-4 transition-colors hover:border-brand/30 hover:bg-accent/50">
         <div className="flex items-center justify-between">
           <div className="flex min-w-0 items-center gap-2">
             <Avatar kind="project" id={p.id} name={p.name} hasAvatar={p.has_avatar} />
@@ -348,7 +353,12 @@ export default function Projects() {
   return (
     <div className="page-enter mx-auto max-w-6xl p-4 sm:p-8">
       <div className="mb-6 flex items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold">Projects</h1>
+        <div>
+          <h1 className="text-xl font-semibold">Projects</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Deploy from git or uploads — each project gets preview URLs and rollbacks.
+          </p>
+        </div>
         <Button size="sm" onClick={() => setCreating(true)} disabled={creating}>
           New project
         </Button>

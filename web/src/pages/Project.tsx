@@ -10,7 +10,7 @@ import {
   type RemoteNode,
   type Webhook,
 } from "@/lib/api";
-import { AvatarRow, Badge, Button, Card, ComboBox, Input, Skeleton, StatusDot, displayStatus } from "@/components/ui";
+import { Avatar, AvatarRow, Badge, Button, Card, ComboBox, Input, Skeleton, StatusDot, displayStatus } from "@/components/ui";
 import { filesToTarGz } from "@/lib/tarball";
 import { duration, firstLine, timeAgo } from "@/lib/utils";
 import { useEffect, useRef, useState } from "react";
@@ -1899,8 +1899,12 @@ export default function ProjectPage() {
   return (
     <div className="page-enter mx-auto max-w-5xl p-4 sm:p-8">
       <div className="mb-6 flex items-center justify-between">
-        <div className="min-w-0">
-          <h1 className="text-xl font-semibold">{project?.name ?? "Project"}</h1>
+        <div className="flex min-w-0 items-center gap-3">
+          {project && (
+            <Avatar kind="project" id={project.id} name={project.name} hasAvatar={project.has_avatar} />
+          )}
+          <div className="min-w-0">
+            <h1 className="truncate text-xl font-semibold">{project?.name ?? "Project"}</h1>
           {project && (
             <div className="mt-1.5 flex items-center gap-3 text-xs text-muted-foreground">
               <span className="font-mono">
@@ -1927,6 +1931,7 @@ export default function ProjectPage() {
               )}
             </div>
           )}
+          </div>
         </div>
       </div>
       <div className="-mx-4 mb-6 flex gap-4 overflow-x-auto border-b border-border px-4 sm:mx-0 sm:px-0">
@@ -1936,7 +1941,7 @@ export default function ProjectPage() {
             onClick={() => setTab(t)}
             className={`-mb-px shrink-0 border-b-2 pb-2 text-sm capitalize ${
               tab === t
-                ? "border-foreground text-foreground"
+                ? "border-brand text-foreground"
                 : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
           >
