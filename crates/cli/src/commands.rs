@@ -1,7 +1,7 @@
 //! User-facing CLI commands: login, link, deploy, logs, env, domains, open.
 //! All talk to a running instance over the REST API via `client::Client`.
 
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 
 use anyhow::{bail, Context};
 use serde_json::{json, Value};
@@ -44,6 +44,46 @@ pub async fn login(server: Option<String>, key: Option<String>) -> anyhow::Resul
 }
 
 /// `runway link [project-id]` — bind CWD to a project (`.runway/project.json`).
+/// `runway create [name] [--preset slug]` — create an upload-based
+/// project from the current directory and link it (vercel-style first run).
+pub async fn create(name: Option<String>, preset: Option<String>) -> anyhow::Result<String> {
+    let client = Client::from_config()?;
+    let name = match name {
+        Some(n) if !n.trim().is_empty() => n.trim().to_string(),
+        _ => cwd_name()?,
+    };
+    let mut body = json!({
+        "name": name,
+        "provider": "upload",
+        "repo_full_name": name,
+    });
+    if let Some(p) = preset {
+        body["preset"] = json!(p);
+    }
+    let res = client.post("/api/v1/projects", &body).await?;
+    let project_id = res["id"].as_str().context("no project id in response")?;
+    let url = res["url"].as_str().unwrap_or("");
+    client::save_link(&LinkFile {
+        project_id: project_id.to_string(),
+        project_name: Some(name.clone()),
+    })?;
+    println!("Created project {name} ({project_id}).");
+    if !url.is_empty() {
+        println!("URL: {url}");
+    }
+    println!("Linked this directory. Add `.runway/` to .gitignore if unwanted.");
+    Ok(project_id.to_string())
+}
+
+fn cwd_name() -> anyhow::Result<String> {
+    let cwd = std::env::current_dir()?;
+    cwd.file_name()
+        .and_then(|n| n.to_str())
+        .map(str::to_string)
+        .filter(|n| !n.is_empty())
+        .context("cannot determine project name — pass one explicitly")
+}
+
 pub async fn link(project: Option<String>) -> anyhow::Result<()> {
     let client = Client::from_config()?;
     let project_id = match project {
@@ -79,7 +119,29 @@ pub async fn link(project: Option<String>) -> anyhow::Result<()> {
 /// `runway deploy` — tar the current directory and upload-deploy it.
 pub async fn deploy(follow: bool) -> anyhow::Result<()> {
     let client = Client::from_config()?;
-    let link = client::load_link()?;
+    let link = match client::load_link() {
+        Ok(l) => l,
+        Err(e) if std::io::stdin().is_terminal() => {
+            println!("This directory is not linked to a project yet.");
+            if !confirm_yes("Create a new upload-based project from this directory?")? {
+                bail!("{e} — or run `runway create <name>` first");
+            }
+            let def = cwd_name().unwrap_or_else(|_| "site".to_string());
+            let name = prompt_default(&format!("Project name [{def}]:"), &def);
+            let preset = prompt_default("Preset (static, nextjs, … — empty = auto-detect):", "");
+            create(
+                if name.is_empty() { None } else { Some(name) },
+                if preset.is_empty() {
+                    None
+                } else {
+                    Some(preset)
+                },
+            )
+            .await?;
+            client::load_link()?
+        }
+        Err(e) => bail!("{e} — run `runway create <name>` first"),
+    };
 
     let tarball = pack_cwd()?;
     println!(
@@ -419,6 +481,28 @@ fn prompt(msg: &str) -> anyhow::Result<String> {
         bail!("empty input");
     }
     Ok(s)
+}
+
+/// Prompt with a default — empty input returns `default`.
+fn prompt_default(msg: &str, default: &str) -> String {
+    print!("{msg} ");
+    let _ = std::io::stdout().flush();
+    let mut s = String::new();
+    if std::io::stdin().read_line(&mut s).is_err() {
+        return default.to_string();
+    }
+    let s = s.trim().to_string();
+    if s.is_empty() {
+        default.to_string()
+    } else {
+        s
+    }
+}
+
+/// Yes/no prompt, defaulting to yes.
+fn confirm_yes(msg: &str) -> anyhow::Result<bool> {
+    let s = prompt_default(&format!("{msg} [Y/n]:"), "y");
+    Ok(!matches!(s.to_lowercase().as_str(), "n" | "no"))
 }
 
 /// Tar+gzip CWD via the system `tar` (excludes VCS/build dirs). Returns bytes.

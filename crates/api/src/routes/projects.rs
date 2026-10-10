@@ -136,7 +136,8 @@ pub async fn list(user: AuthUser, State(state): State<AppState>) -> ApiResult<Re
 pub struct CreateProject {
     pub name: String,
     /// Provider: `github` (default) | `github_enterprise` | `gitea` |
-    /// `gitlab` | `bitbucket`.
+    /// `forgejo` | `gitlab` | `bitbucket` | `upload` (local directory,
+    /// no remote — source arrives per-deployment via tarball upload).
     pub provider: Option<String>,
     /// GitHub repo numeric id (github providers). Gitea/GitLab resolve
     /// the id from `repo_full_name` via the connection.
@@ -201,6 +202,11 @@ pub async fn create(
     let mut package_json: Option<String> = None;
 
     match provider {
+        // Local-directory projects: no remote to verify — the source
+        // arrives per-deployment via tarball upload (`runway deploy`).
+        "upload" => {
+            repo_base_url = String::new();
+        }
         "github" | "github_enterprise" => {
             let gh = state
                 .github

@@ -65,6 +65,14 @@ enum Command {
         /// Project ID (interactive list if omitted).
         project: Option<String>,
     },
+    /// Create an upload-based project from the current directory and link it.
+    Create {
+        /// Project name (defaults to the directory name).
+        name: Option<String>,
+        /// Preset slug (e.g. "static", "nextjs"). Omit for auto-detect.
+        #[arg(long)]
+        preset: Option<String>,
+    },
     /// Manage environment variables: env [list|set KEY=VAL|unset KEY].
     Env {
         /// list | set KEY=VALUE | unset KEY
@@ -199,6 +207,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::Login { server, key } => commands::login(server, key).await?,
         Command::Link { project } => commands::link(project).await?,
+        Command::Create { name, preset } => {
+            commands::create(name, preset).await?;
+        }
         Command::Deploy { follow } => commands::deploy(follow).await?,
         Command::Logs {
             deployment,
