@@ -618,6 +618,7 @@ export default function DeploymentPage() {
   const [filter, setFilter] = useState("");
   const [copied, setCopied] = useState(false);
   const [following, setFollowing] = useState(true);
+  const [logTab, setLogTab] = useState<"build" | "runtime">("build");
   const [stepOpen, setStepOpen] = useState<Record<number, boolean>>({});
   const [aliasAction, setAliasAction] = useState<{
     kind: "rollback" | "promote";
@@ -677,7 +678,34 @@ export default function DeploymentPage() {
     setFollowing(el.scrollHeight - el.scrollTop - el.clientHeight < 40);
   }
 
-  const sections = groupLogLines(lines);
+  // Build vs runtime split (Vercel-style): the worker marks the
+  // deployment conclusion with a `step live` line; lines after it are
+  // post-deploy output (container stdout + lifecycle events). Older
+  // logs lack the marker — fall back to `runtime`-stream lines that
+  // appear after the `finalize` step marker.
+  const stepIndex = (name: string) =>
+    lines.reduce(
+      (acc, l, i) =>
+        logStream(l) === "step" && logText(l) === name ? i : acc,
+      -1,
+    );
+  const liveIdx = stepIndex("live");
+  const finIdx = liveIdx >= 0 ? -1 : stepIndex("finalize");
+  const buildLines =
+    liveIdx >= 0
+      ? lines.slice(0, liveIdx)
+      : finIdx >= 0
+        ? lines.filter((l, i) => i <= finIdx || logStream(l) !== "runtime")
+        : lines;
+  const runtimeLines =
+    liveIdx >= 0
+      ? lines.slice(liveIdx + 1).filter((l) => logStream(l) !== "step")
+      : finIdx >= 0
+        ? lines.slice(finIdx + 1).filter((l) => logStream(l) === "runtime")
+        : [];
+  const viewLines = logTab === "runtime" ? runtimeLines : buildLines;
+
+  const sections = groupLogLines(buildLines);
   const lastSection = sections.length - 1;
   // Completed phases collapse (Vercel behavior); a click toggles and
   // sticks, so an expanded section survives the next phase marker.
@@ -685,7 +713,7 @@ export default function DeploymentPage() {
 
   function copyLogs() {
     navigator.clipboard
-      .writeText(lines.join("\n"))
+      .writeText(viewLines.join("\n"))
       .then(() => {
         setCopied(true);
         setTimeout(() => setCopied(false), 1500);
@@ -694,10 +722,10 @@ export default function DeploymentPage() {
   }
 
   function downloadLogs() {
-    const blob = new Blob([lines.join("\n")], { type: "text/plain" });
+    const blob = new Blob([viewLines.join("\n")], { type: "text/plain" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `deploy-${id.slice(0, 8)}.log`;
+    a.download = `deploy-${id.slice(0, 8)}${logTab === "runtime" ? "-runtime" : ""}.log`;
     a.click();
     URL.revokeObjectURL(a.href);
   }
@@ -899,17 +927,29 @@ export default function DeploymentPage() {
       )}
       <div className="relative flex h-[45vh] min-h-64 flex-col overflow-hidden rounded-lg border border-border bg-black/40">
         <div className="flex items-center justify-between border-b border-border px-3 py-2">
-          <span className="flex items-center gap-2 text-xs text-muted-foreground">
-            {active ? (
-              <>
+          <span className="flex items-center gap-3 text-xs">
+            {(["build", "runtime"] as const).map((t) => (
+              <button
+                key={t}
+                onClick={() => setLogTab(t)}
+                className={cn(
+                  "transition-colors",
+                  logTab === t
+                    ? "text-foreground"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {t}
+              </button>
+            ))}
+            {active && (
+              <span className="flex items-center gap-2 text-muted-foreground">
                 <span className="relative flex h-1.5 w-1.5">
                   <span className="absolute h-full w-full animate-ping rounded-full bg-emerald-500 opacity-60" />
                   <span className="relative h-1.5 w-1.5 rounded-full bg-emerald-500" />
                 </span>
                 live
-              </>
-            ) : (
-              "build log"
+              </span>
             )}
           </span>
           <div className="flex items-center gap-3">
@@ -938,10 +978,16 @@ export default function DeploymentPage() {
           onScroll={onLogScroll}
           className="flex-1 overflow-auto p-4 font-mono text-xs leading-relaxed text-zinc-300"
         >
-          {lines.length === 0 ? (
-            <span className="text-muted-foreground">waiting for logs…</span>
+          {viewLines.length === 0 ? (
+            <span className="text-muted-foreground">
+              {lines.length === 0
+                ? "waiting for logs…"
+                : logTab === "runtime"
+                  ? "no runtime output — post-deploy container output and lifecycle events appear here"
+                  : "no build output"}
+            </span>
           ) : filter ? (
-            lines.map((l, i) =>
+            viewLines.map((l, i) =>
               logStream(l) === "step" ||
               !logText(l)
                 .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "")
@@ -952,6 +998,12 @@ export default function DeploymentPage() {
                 </div>
               ),
             )
+          ) : logTab === "runtime" ? (
+            runtimeLines.map((l, i) => (
+              <div key={i} className="whitespace-pre-wrap break-all">
+                <Ansi text={logText(l)} />
+              </div>
+            ))
           ) : (
             sections.map((s, si) => (
               <div key={si}>
