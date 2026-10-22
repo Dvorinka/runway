@@ -1205,10 +1205,7 @@ pub async fn finalize(ctx: &Ctx, deployment_id: &str) -> anyhow::Result<()> {
         "deployment.succeeded",
         &format!("Deployment ready: {}", project.name),
         runway_core::audit::Notify {
-            link: Some(&format!(
-                "/projects/{}/deployments/{deployment_id}",
-                project.id
-            )),
+            link: Some(&format!("/deployments/{deployment_id}")),
             project_id: Some(&project.id),
             ..Default::default()
         },
@@ -1371,10 +1368,7 @@ pub async fn fail(
             &format!("Deployment failed: {}", project.name),
             runway_core::audit::Notify {
                 body: Some(reason.unwrap_or("Deployment failed")),
-                link: Some(&format!(
-                    "/projects/{}/deployments/{deployment_id}",
-                    project.id
-                )),
+                link: Some(&format!("/deployments/{deployment_id}")),
                 project_id: Some(&project.id),
                 ..Default::default()
             },

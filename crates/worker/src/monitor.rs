@@ -540,10 +540,7 @@ async fn notify_crash(ctx: &Ctx, dep: &Deployment, observed: &str, exit_code: Op
         &format!("App down: {}", project.name),
         runway_core::audit::Notify {
             body: Some(&format!("{} — {}", &dep.id[..7.min(dep.id.len())], reason)),
-            link: Some(&format!(
-                "/projects/{}/deployments/{}",
-                dep.project_id, dep.id
-            )),
+            link: Some(&format!("/deployments/{}", dep.id)),
             project_id: Some(&dep.project_id),
             ..Default::default()
         },
