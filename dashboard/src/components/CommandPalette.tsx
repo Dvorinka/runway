@@ -94,10 +94,16 @@ export function CommandPalette() {
 
   if (!open) return null;
 
+  // Subsequence fuzzy match — "dmo" still finds "demo-app".
+  const fuzzy = (q: string, s: string) => {
+    let i = 0;
+    for (const c of s.toLowerCase()) if (c === q[i]) i++;
+    return i >= q.length;
+  };
   const match = (i: Item) =>
     !query ||
-    i.label.toLowerCase().includes(query.toLowerCase()) ||
-    i.hint?.toLowerCase().includes(query.toLowerCase());
+    fuzzy(query, i.label) ||
+    (i.hint ? fuzzy(query, i.hint) : false);
 
   const scopedId = pathname.match(/^\/projects\/([^/]+)/)?.[1];
   const scopedProject = projects.find((p) => p.id === scopedId);
