@@ -8,6 +8,7 @@ use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use runway_core::deploy;
 use runway_core::models::{DeployToken, Deployment, Domain, Environment, Project};
 use runway_core::slugify::token_hex;
 
@@ -368,7 +369,7 @@ pub async fn get(
     Path(id): Path<String>,
 ) -> ApiResult<Response> {
     let project = accessible_project(&state, user.user.id, &id).await?;
-    Ok(Json(project_json(&state, &project)).into_response())
+    Ok(Json(project_json(&state, &project).await).into_response())
 }
 
 #[derive(Deserialize)]
@@ -466,7 +467,7 @@ pub async fn patch(
     if edge_dirty {
         rewrite_traefik(&state, &updated).await?;
     }
-    Ok(Json(project_json(&state, &updated)).into_response())
+    Ok(Json(project_json(&state, &updated).await).into_response())
 }
 
 #[derive(Deserialize)]
@@ -506,7 +507,14 @@ pub async fn delete(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
-fn project_json(state: &AppState, p: &Project) -> Value {
+async fn project_json(state: &AppState, p: &Project) -> Value {
+    // Deployment the production alias currently resolves to — the source
+    // of truth for "what is live", as opposed to the newest deployment.
+    let production_deployment_id = deploy::environment_alias(&state.db, p, "prod")
+        .await
+        .ok()
+        .flatten()
+        .map(|a| a.deployment_id);
     json!({
         "id": p.id,
         "team_id": p.team_id,
@@ -527,6 +535,7 @@ fn project_json(state: &AppState, p: &Project) -> Value {
         "has_avatar": p.has_avatar,
         "config": p.config,
         "environments": p.environments,
+        "production_deployment_id": production_deployment_id,
         "status": p.status,
         "created_at": p.created_at,
         "updated_at": p.updated_at,

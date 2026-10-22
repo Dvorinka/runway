@@ -45,6 +45,7 @@ pub async fn start(ctx: &Ctx, deployment_id: &str) -> anyhow::Result<()> {
         None,
     )
     .await?;
+    ctx.logs.step(deployment_id, "prepare").await;
 
     let result = run_pipeline(ctx, &deployment, &project).await;
     match result {
@@ -937,6 +938,7 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
         Some("running"),
     )
     .await?;
+    ctx.logs.step(deployment_id, "deploy").await;
 
     deploy::enqueue(
         &ctx.db,
@@ -1133,6 +1135,7 @@ pub async fn finalize(ctx: &Ctx, deployment_id: &str) -> anyhow::Result<()> {
     let Some(project) = deploy::get_project(&ctx.db, &deployment.project_id).await? else {
         anyhow::bail!("project not found");
     };
+    ctx.logs.step(deployment_id, "finalize").await;
 
     if let Err(e) = async {
         deploy::setup_aliases(&ctx.db, &deployment, &project, &ctx.settings).await?;
@@ -1183,6 +1186,10 @@ pub async fn finalize(ctx: &Ctx, deployment_id: &str) -> anyhow::Result<()> {
         }
     }
     ctx.logs.info(deployment_id, "Deployment succeeded").await;
+    // Boundary marker: everything after `live` is post-deploy output
+    // (container stdout + lifecycle events) — the dashboard splits the
+    // log pane into build vs runtime on this marker.
+    ctx.logs.step(deployment_id, "live").await;
     post_commit_status(ctx, &deployment, &project, "success", "Deployment ready").await;
     let dep_now = deploy::get(&ctx.db, deployment_id)
         .await?
@@ -1202,10 +1209,7 @@ pub async fn finalize(ctx: &Ctx, deployment_id: &str) -> anyhow::Result<()> {
         "deployment.succeeded",
         &format!("Deployment ready: {}", project.name),
         runway_core::audit::Notify {
-            link: Some(&format!(
-                "/projects/{}/deployments/{deployment_id}",
-                project.id
-            )),
+            link: Some(&format!("/deployments/{deployment_id}")),
             project_id: Some(&project.id),
             ..Default::default()
         },
@@ -1368,10 +1372,7 @@ pub async fn fail(
             &format!("Deployment failed: {}", project.name),
             runway_core::audit::Notify {
                 body: Some(reason.unwrap_or("Deployment failed")),
-                link: Some(&format!(
-                    "/projects/{}/deployments/{deployment_id}",
-                    project.id
-                )),
+                link: Some(&format!("/deployments/{deployment_id}")),
                 project_id: Some(&project.id),
                 ..Default::default()
             },

@@ -1,5 +1,5 @@
 //! Deployment routes: create (manual/latest commit), list, inspect,
-//! cancel, skip, redeploy, rollback, logs (history + SSE stream).
+//! cancel, skip, redeploy, rollback, promote, logs (history + SSE stream).
 
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -55,6 +55,9 @@ fn deployment_json(state: &AppState, d: &Deployment, project: &Project) -> Value
         "branch": d.branch,
         "commit_sha": d.commit_sha,
         "commit_meta": d.commit_meta,
+        "repo_provider": d.repo_provider,
+        "repo_full_name": d.repo_full_name,
+        "repo_base_url": d.repo_base_url,
         "url": d.url(project.slug.as_deref().unwrap_or(&project.id), &state.settings),
         "urls": {
             "immutable": d.hostname(project.slug.as_deref().unwrap_or(&project.id), &state.settings),
@@ -237,7 +240,32 @@ pub async fn get(
     Path(id): Path<String>,
 ) -> ApiResult<Response> {
     let (dep, project) = accessible_deployment(&state, user.user.id, &id).await?;
-    Ok(Json(deployment_json(&state, &dep, &project)).into_response())
+    let mut body = deployment_json(&state, &dep, &project);
+    // Alias state for this deployment's environment — lets the UI mark the
+    // live deployment and gate "instant rollback" on the actual target.
+    body["env_state"] =
+        match deploy::environment_alias(&state.db, &project, &dep.environment_id).await? {
+            Some(a) => json!({
+                "subdomain": a.subdomain,
+                "current_deployment_id": a.deployment_id,
+                "previous_deployment_id": a.previous_deployment_id,
+            }),
+            None => Value::Null,
+        };
+    // Production alias state as well — gates "Promote to production".
+    body["prod_state"] = if dep.environment_id == "prod" {
+        body["env_state"].clone()
+    } else {
+        match deploy::environment_alias(&state.db, &project, "prod").await? {
+            Some(a) => json!({
+                "subdomain": a.subdomain,
+                "current_deployment_id": a.deployment_id,
+                "previous_deployment_id": a.previous_deployment_id,
+            }),
+            None => Value::Null,
+        }
+    };
+    Ok(Json(body).into_response())
 }
 
 pub async fn cancel(
@@ -384,6 +412,42 @@ pub async fn rollback(
     .into_response())
 }
 
+#[derive(Deserialize)]
+pub struct PromoteBody {
+    /// Target environment — defaults to production (Vercel's "Promote").
+    pub environment_id: Option<String>,
+}
+
+/// Promote a deployment so an environment's alias serves it.
+pub async fn promote(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    body: Option<Json<PromoteBody>>,
+) -> ApiResult<Response> {
+    let (dep, project) = accessible_deployment(&state, user.user.id, &id).await?;
+    let environment_id = body
+        .and_then(|b| b.0.environment_id)
+        .filter(|e| !e.is_empty())
+        .unwrap_or_else(|| "prod".into());
+    let alias = deploy::promote(
+        &state.db,
+        &state.bus,
+        &state.settings,
+        &project,
+        &environment_id,
+        &dep,
+    )
+    .await?;
+    Ok(Json(json!({
+        "subdomain": alias.subdomain,
+        "environment_id": environment_id,
+        "deployment_id": alias.deployment_id,
+        "previous_deployment_id": alias.previous_deployment_id,
+    }))
+    .into_response())
+}
+
 // ---------------------------------------------------------------------------
 // Logs
 // ---------------------------------------------------------------------------
@@ -411,6 +475,112 @@ pub async fn logs(
         .body(axum::body::Body::from(lines.join("\n")))
         .unwrap()
         .into_response())
+}
+
+/// `GET /api/v1/deployments/{id}/og?path=/` — fetch the deployed page
+/// server-side and report its Open Graph / Twitter meta. Always 200: a
+/// failed fetch returns `{ok:false}` so the UI can show a calm state.
+#[derive(Deserialize)]
+pub struct OgQuery {
+    pub path: Option<String>,
+}
+
+pub async fn open_graph(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<OgQuery>,
+) -> ApiResult<Response> {
+    let (dep, project) = accessible_deployment(&state, user.user.id, &id).await?;
+    let slug = project.slug.as_deref().unwrap_or(&project.id);
+    // Path must be a bare path — strip any scheme/authority attempts.
+    let path = q.path.as_deref().unwrap_or("/").trim();
+    let path = if path.starts_with('/') { path } else { "/" };
+    let url = format!("{}{}", dep.url(slug, &state.settings), path);
+    let result = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .redirect(reqwest::redirect::Policy::limited(3))
+        .build()
+        .map_err(ApiError::internal)?
+        .get(&url)
+        .send()
+        .await;
+    match result {
+        Ok(resp) if resp.status().is_success() => {
+            let bytes = resp.bytes().await.map_err(ApiError::internal)?;
+            let html = String::from_utf8_lossy(&bytes[..bytes.len().min(256 * 1024)]);
+            let report = runway_core::opengraph::parse(&html);
+            Ok(Json(json!({ "ok": true, "url": url, "report": report })).into_response())
+        }
+        Ok(resp) => Ok(Json(
+            json!({ "ok": false, "url": url, "reason": format!("HTTP {}", resp.status()) }),
+        )
+        .into_response()),
+        Err(e) => {
+            Ok(Json(json!({ "ok": false, "url": url, "reason": e.to_string() })).into_response())
+        }
+    }
+}
+
+/// `GET /api/v1/deployments/{id}/files` — inventory of the deployed
+/// static output (`data/static/<id>/`), Vercel's Resources tab.
+/// Always 200: `reason` distinguishes a static deploy whose published
+/// artifact is gone (`static_output_missing`) from a server/image deploy
+/// that never had a file payload (`no_file_payload`).
+pub async fn files(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Response> {
+    let (dep, _p) = accessible_deployment(&state, user.user.id, &id).await?;
+    let dir = std::path::Path::new(&state.settings.data_dir)
+        .join("static")
+        .join(&dep.id);
+    let files = tokio::task::spawn_blocking(move || walk_files(&dir))
+        .await
+        .map_err(ApiError::internal)?;
+    match files {
+        Some(list) => Ok(Json(json!({
+            "ok": true,
+            "files": list
+                .iter()
+                .map(|(p, s)| json!({ "path": p, "size": s }))
+                .collect::<Vec<_>>(),
+        }))
+        .into_response()),
+        None => {
+            let reason = if dep.is_static() {
+                "static_output_missing"
+            } else {
+                "no_file_payload"
+            };
+            Ok(Json(json!({ "ok": false, "reason": reason })).into_response())
+        }
+    }
+}
+
+/// Recursive file listing under `dir` as (relative path, size) pairs —
+/// None when the directory doesn't exist.
+fn walk_files(dir: &std::path::Path) -> Option<Vec<(String, u64)>> {
+    if !dir.is_dir() {
+        return None;
+    }
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let entries = std::fs::read_dir(&d).ok()?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if let Ok(meta) = entry.metadata() {
+                let rel = path.strip_prefix(dir).unwrap_or(&path);
+                out.push((rel.to_string_lossy().replace('\\', "/"), meta.len()));
+            }
+        }
+    }
+    out.sort();
+    Some(out)
 }
 
 /// `GET /api/v1/projects/{id}/logs` — merged tail across the project's

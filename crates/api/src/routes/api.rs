@@ -206,6 +206,8 @@ pub async fn openapi() -> Response {
         ("/api/v1/deployments/{id}/cancel", &[("post", "Cancel a running deployment")]),
         ("/api/v1/deployments/{id}/skip", &[("post", "Skip a queued deployment")]),
         ("/api/v1/deployments/{id}/redeploy", &[("post", "New deployment, same commit")]),
+        ("/api/v1/deployments/{id}/promote", &[("post", "Point an environment alias at this deployment {environment_id?} — default prod")]),
+        ("/api/v1/deployments/{id}/files", &[("get", "Deployed static-output file inventory")]),
         ("/api/v1/deployments/{id}/logs", &[("get", "Plain-text log tail (?tail=N)")]),
         ("/api/v1/deployments/{id}/logs/stream", &[("get", "SSE live log stream")]),
         ("/api/v1/teams", &[("get", "List teams for the current user")]),

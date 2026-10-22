@@ -363,6 +363,10 @@ pub fn router(state: AppState) -> Router {
             post(routes::deployments::redeploy),
         )
         .route(
+            "/api/v1/deployments/{id}/promote",
+            post(routes::deployments::promote),
+        )
+        .route(
             "/api/v1/deployments/{id}/logs",
             get(routes::deployments::logs),
         )
@@ -377,6 +381,14 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/deployments/{id}/metrics",
             get(routes::deployments::metrics),
+        )
+        .route(
+            "/api/v1/deployments/{id}/og",
+            get(routes::deployments::open_graph),
+        )
+        .route(
+            "/api/v1/deployments/{id}/files",
+            get(routes::deployments::files),
         )
         .route(
             "/api/v1/deployments/{id}/reconcile",
