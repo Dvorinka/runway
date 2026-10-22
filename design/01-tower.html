@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RUNWAY — TOWER</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Archivo:wght@500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --phos: #FF4D00;
+    --phos-hi: #FF7A33;
+    --phos-dim: rgba(255,77,0,.28);
+    --phos-faint: rgba(255,77,0,.10);
+    --ink: #05070A;
+    --panel: #0A0E12;
+    --line: rgba(255,77,0,.16);
+    --text: #FFC9A8;
+    --text-dim: rgba(255,201,168,.55);
+    --ok: #8CFF9B;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { height:100%; }
+  body {
+    background: var(--ink);
+    color: var(--text);
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    overflow:hidden;
+    display:flex; flex-direction:column;
+  }
+  ::selection { background: var(--phos); color:#000; }
+
+  /* ===== TOP BAR ===== */
+  .topbar {
+    height:44px; flex:none;
+    display:flex; align-items:center; gap:26px;
+    padding:0 18px;
+    border-bottom:1px solid var(--line);
+    background: linear-gradient(#0B0F14, #070A0E);
+    font-size:11px; letter-spacing:.08em;
+    position:relative; z-index:5;
+  }
+  .call { display:flex; align-items:center; gap:10px; font-weight:700; color:#fff; letter-spacing:.14em; }
+  .call .mark { width:22px; height:22px; }
+  .freq { color:var(--text-dim); }
+  .freq b { color:var(--text); font-weight:600; }
+  .topbar .spacer { flex:1; }
+  .led { width:7px; height:7px; border-radius:50%; background:var(--ok); box-shadow:0 0 8px var(--ok); }
+  .led.warn { background:var(--phos); box-shadow:0 0 8px var(--phos); animation:blink 1.1s steps(2) infinite; }
+  @keyframes blink { 50% { opacity:.2; } }
+  .clock { color:#fff; font-weight:600; font-variant-numeric:tabular-nums; }
+  .clock small { color:var(--text-dim); font-weight:400; }
+
+  /* ===== MAIN ===== */
+  main { flex:1; display:grid; grid-template-columns:minmax(0,1.35fr) minmax(360px,1fr); min-height:0; }
+
+  /* ===== SCOPE ===== */
+  .scope-wrap {
+    position:relative; overflow:hidden;
+    display:flex; align-items:center; justify-content:center;
+    background:
+      radial-gradient(ellipse at 50% 50%, rgba(255,77,0,.045), transparent 65%),
+      var(--ink);
+  }
+  .scope { position:relative; width:min(78vmin,720px); height:min(78vmin,720px); flex:none; }
+  .scope .disc {
+    position:absolute; inset:0; border-radius:50%;
+    border:1px solid var(--phos-dim);
+    background:
+      repeating-radial-gradient(circle at 50% 50%, transparent 0, transparent calc(100%/6 - 1px), var(--phos-faint) calc(100%/6 - 1px), var(--phos-faint) calc(100%/6)),
+      conic-gradient(from 0deg, transparent 0deg, rgba(255,77,0,.04) 90deg, transparent 90deg, rgba(255,77,0,.04) 180deg, transparent 180deg, rgba(255,77,0,.04) 270deg, transparent 270deg);
+    box-shadow: inset 0 0 120px rgba(255,77,0,.06), 0 0 60px rgba(255,77,0,.05);
+  }
+  .scope .azimuths { position:absolute; inset:0; }
+  .az {
+    position:absolute; top:-18px; left:50%; transform-origin:50% calc(50% + 18px + 50% - 18px);
+    color:var(--text-dim); font-size:9px; letter-spacing:.1em;
+    transform: translateX(-50%) rotate(var(--r));
+    height:calc(100% + 36px); width:1px;
+  }
+  .az::before { content:""; position:absolute; top:14px; left:0; width:1px; height:8px; background:var(--phos-dim); }
+  .az span { position:absolute; top:-2px; left:-10px; width:20px; text-align:center; transform:rotate(calc(var(--r) * -1)); }
+  .scope .cross-h, .scope .cross-v { position:absolute; background:var(--phos-faint); }
+  .scope .cross-h { left:0; right:0; top:50%; height:1px; }
+  .scope .cross-v { top:0; bottom:0; left:50%; width:1px; }
+
+  .sweep {
+    position:absolute; inset:0; border-radius:50%; overflow:hidden;
+    animation: sweep 8s linear infinite;
+  }
+  .sweep::before {
+    content:""; position:absolute; inset:0;
+    background: conic-gradient(from 0deg at 50% 50%,
+      rgba(255,77,0,0) 0deg, rgba(255,77,0,.20) 40deg, rgba(255,77,0,.55) 44deg,
+      rgba(255,122,51,.9) 45deg, rgba(255,77,0,0) 46deg);
+  }
+  @keyframes sweep { to { transform: rotate(360deg); } }
+
+  .blip { position:absolute; transform:translate(-50%,-50%); cursor:pointer; }
+  .blip .dot {
+    width:8px; height:8px; border-radius:50%;
+    background:var(--phos);
+    box-shadow:0 0 10px var(--phos);
+    animation: blipflash 8s linear infinite;
+    animation-delay: var(--d);
+    opacity:.45;
+  }
+  @keyframes blipflash {
+    0%,2% { opacity:1; transform:scale(1.6); box-shadow:0 0 18px var(--phos-hi); }
+    12% { opacity:.8; transform:scale(1); }
+    45% { opacity:.30; }
+    100% { opacity:.30; }
+  }
+  .blip .tag {
+    position:absolute; left:12px; top:-6px;
+    font-size:10px; line-height:1.5; white-space:nowrap;
+    color:var(--text); text-shadow:0 0 6px rgba(255,77,0,.5);
+    animation: tagflash 8s linear infinite; animation-delay: var(--d); opacity:.5;
+  }
+  @keyframes tagflash { 0%,3% {opacity:1;} 40% {opacity:.45;} 100% {opacity:.45;} }
+  .blip .tag b { color:#fff; font-weight:600; }
+  .blip .tag i { font-style:normal; color:var(--text-dim); }
+  .blip.sel .dot { opacity:1; animation:none; transform:scale(1.5); background:#fff; box-shadow:0 0 20px #fff; }
+  .blip.sel .tag { opacity:1; }
+  .blip.sel::after {
+    content:""; position:absolute; left:-9px; top:-9px; width:26px; height:26px;
+    border:1px solid #fff; border-radius:2px;
+  }
+  .blip.alert .dot { background:#FF2020; box-shadow:0 0 10px #FF2020; animation-name:alertflash; }
+  @keyframes alertflash { 0%,50% {opacity:1;} 51%,100% {opacity:.15;} }
+  .blip.alert .tag { color:#FF8080; }
+
+  .scope-label {
+    position:absolute; font-size:10px; letter-spacing:.18em; color:var(--text-dim);
+  }
+  .scope-label.tl { top:18px; left:22px; }
+  .scope-label.tr { top:18px; right:22px; text-align:right; }
+  .scope-label.bl { bottom:18px; left:22px; }
+  .scope-label.br { bottom:18px; right:22px; text-align:right; }
+  .scope-label b { color:var(--phos-hi); font-weight:600; }
+
+  .rings-key { position:absolute; bottom:22px; left:50%; transform:translateX(-50%);
+    font-size:9px; letter-spacing:.2em; color:var(--text-dim); }
+
+  /* ===== FLIGHT DATA COLUMN ===== */
+  .data {
+    border-left:1px solid var(--line);
+    display:flex; flex-direction:column; min-height:0;
+    background:var(--panel);
+  }
+  .data-head {
+    flex:none; padding:12px 16px; border-bottom:1px solid var(--line);
+    display:flex; justify-content:space-between; align-items:baseline;
+    font-size:11px; letter-spacing:.14em;
+  }
+  .data-head b { color:#fff; font-family:Archivo,sans-serif; font-weight:700; letter-spacing:.08em; font-size:13px; }
+  .data-head span { color:var(--text-dim); }
+  .strips { flex:1; overflow-y:auto; }
+  .strips::-webkit-scrollbar { width:6px; }
+  .strips::-webkit-scrollbar-thumb { background:var(--phos-dim); }
+  .strip {
+    padding:10px 16px; border-bottom:1px solid rgba(255,77,0,.08);
+    cursor:pointer; display:grid; grid-template-columns:86px 1fr auto; gap:4px 14px;
+    font-size:11px; position:relative;
+    transition:background .15s;
+  }
+  .strip:hover { background:rgba(255,77,0,.06); }
+  .strip.sel { background:rgba(255,77,0,.10); box-shadow:inset 2px 0 0 var(--phos); }
+  .strip .cs { color:#fff; font-weight:600; font-size:12px; }
+  .strip .route { color:var(--text); }
+  .strip .route i { font-style:normal; color:var(--phos-hi); }
+  .strip .st { text-align:right; font-weight:600; letter-spacing:.08em; }
+  .st.landed { color:var(--ok); }
+  .st.climb, .st.approach { color:var(--phos-hi); }
+  .st.hold { color:#FFD24D; }
+  .st.diverted { color:#FF5050; }
+  .strip .sub { grid-column:1/-1; color:var(--text-dim); font-size:10px; display:flex; gap:16px; }
+  .strip .prog { position:absolute; left:0; bottom:0; height:1px; background:var(--phos); }
+
+  .detail { flex:none; border-top:1px solid var(--line); padding:14px 16px; font-size:11px; line-height:1.9; max-height:40%; overflow:auto; }
+  .detail h3 { font-family:Archivo,sans-serif; color:#fff; font-size:12px; letter-spacing:.14em; margin-bottom:8px; display:flex; justify-content:space-between; }
+  .detail h3 span { color:var(--phos-hi); }
+  .detail .kv { display:grid; grid-template-columns:110px 1fr; column-gap:10px; }
+  .detail .k { color:var(--text-dim); }
+  .detail .v { color:var(--text); word-break:break-all; }
+  .detail .v.alias { color:#fff; }
+
+  /* ===== TELETYPE ===== */
+  .tty {
+    flex:none; height:120px; border-top:1px solid var(--line);
+    background:#04060A; padding:8px 18px; overflow:hidden; position:relative;
+    font-size:11px; line-height:1.85;
+  }
+  .tty::before {
+    content:"COM1 · DEPLOY LOG"; position:absolute; top:0; left:18px;
+    transform:translateY(-50%); background:var(--ink); padding:0 8px;
+    font-size:9px; letter-spacing:.2em; color:var(--phos-hi);
+  }
+  .tty-line { color:var(--text-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .tty-line b { color:var(--phos-hi); font-weight:600; }
+  .tty-line .t { color:rgba(255,201,168,.35); margin-right:10px; }
+
+  @media (max-width: 980px) {
+    main { grid-template-columns:1fr; grid-template-rows:minmax(0,1fr) 320px; }
+    .data { border-left:none; border-top:1px solid var(--line); }
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="call">
+    <svg class="mark" viewBox="0 0 240 240"><g transform="translate(0 -14) rotate(22.5 120 120)"><g fill="none" stroke="#fff" stroke-width="18" stroke-linecap="round"><path d="M56 204 L196 64"/><path d="M44 160 C 94 160 122 140 150 110"/></g><circle cx="150" cy="110" r="13" fill="#FF4D00"/></g></svg>
+    RUNWAY TWR
+  </div>
+  <div class="freq">GND <b>121.9</b></div>
+  <div class="freq">DEPLOY <b>—</b> <b class="ok" style="color:var(--ok)">ACTIVE</b></div>
+  <div class="freq">ATIS <b>INFO KILO</b></div>
+  <div class="freq">RWY IN USE <b>27</b></div>
+  <div class="spacer"></div>
+  <div class="led"></div><div class="freq">PG·QUEUE</div>
+  <div class="led warn"></div><div class="freq">BUILD SLOT</div>
+  <div class="clock" id="clock">--:--:-- <small>Z</small></div>
+</header>
+
+<main>
+  <section class="scope-wrap">
+    <div class="scope-label tl">RUNWAY APPROACH CONTROL<br>SECTOR: <b>devs-team</b></div>
+    <div class="scope-label tr">MODE: NORMAL<br>TARGETS: <b>6</b></div>
+    <div class="scope-label bl">RNG <b>PROD</b> ····· <b>PREVIEW</b></div>
+    <div class="scope-label br">DEPLOY.LOCALHOST</div>
+    <div class="scope" id="scope">
+      <div class="disc"></div>
+      <div class="cross-h"></div><div class="cross-v"></div>
+      <div class="azimuths" id="az"></div>
+      <div class="sweep"></div>
+      <!-- blips injected by JS -->
+    </div>
+    <div class="rings-key">RANGE RINGS = ENV BOUNDARY · CENTER = ORIGIN REPO</div>
+  </section>
+
+  <aside class="data">
+    <div class="data-head"><b>FLIGHT DATA</b><span id="count">6 TARGETS</span></div>
+    <div class="strips" id="strips"></div>
+    <div class="detail" id="detail"></div>
+  </aside>
+</main>
+
+<footer class="tty" id="tty"></footer>
+
+<script>
+/* Deployment = flight. Callsign = sha. Position on scope = deterministic from id. */
+const FLIGHTS = [
+  { cs:"RWY-4F2A", proj:"storefront", env:"production", st:"LANDED",   cls:"landed",   alt:"FL390", spd:"2m",  sqk:"-env-prod",    commit:"feat: cart totals rework",        alias:"storefront-devs-team.deploy.localhost", age:"2m",  x:62, y:38, alert:false },
+  { cs:"RWY-9C1E", proj:"api",        env:"production", st:"ON FINAL", cls:"approach", alt:"FL120", spd:"48s", sqk:"-env-prod",    commit:"fix: token refresh race",          alias:"api-devs-team.deploy.localhost",        age:"48s", x:44, y:60, alert:false },
+  { cs:"RWY-77BD", proj:"docs",       env:"preview",    st:"CLIMB",    cls:"climb",    alt:"FL080", spd:"31s", sqk:"-branch-docs", commit:"docs: self-hosting guide",        alias:"docs-branch-docs.deploy.localhost",     age:"31s", x:70, y:66, alert:false },
+  { cs:"RWY-B3F9", proj:"landing",    env:"production", st:"LANDED",   cls:"landed",   alt:"FL390", spd:"1h",  sqk:"-env-prod",    commit:"chore: bump hero copy",           alias:"landing-devs-team.deploy.localhost",    age:"1h",  x:30, y:42, alert:false },
+  { cs:"RWY-2E8C", proj:"storefront", env:"staging",    st:"HOLDING",  cls:"hold",     alt:"FL030", spd:"—",   sqk:"-env-staging", commit:"wip: checkout experiments",       alias:"storefront-env-staging.deploy.localhost", age:"9m", x:52, y:26, alert:false },
+  { cs:"RWY-A110", proj:"api",        env:"preview",    st:"DIVERTED", cls:"diverted", alt:"—",     spd:"—",   sqk:"-id-a1104f",   commit:"feat: retry scheduler (OOM)",     alias:"api-id-a1104f.deploy.localhost",        age:"14m", x:24, y:70, alert:true  },
+];
+
+const scope = document.getElementById('scope');
+const stripsEl = document.getElementById('strips');
+const detailEl = document.getElementById('detail');
+const tty = document.getElementById('tty');
+let sel = 0;
+
+/* azimuth ticks every 30° */
+const az = document.getElementById('az');
+for (let d = 0; d < 360; d += 30) {
+  const t = document.createElement('div');
+  t.className = 'az'; t.style.setProperty('--r', d + 'deg');
+  t.innerHTML = `<span>${String(d).padStart(3,'0')}</span>`;
+  az.appendChild(t);
+}
+
+/* blips: delay synced to sweep position from polar angle */
+FLIGHTS.forEach((f, i) => {
+  const b = document.createElement('div');
+  b.className = 'blip' + (f.alert ? ' alert' : '');
+  b.style.left = f.x + '%'; b.style.top = f.y + '%';
+  const ang = (Math.atan2(f.y - 50, f.x - 50) * 180 / Math.PI + 450) % 360;
+  b.style.setProperty('--d', (ang / 360 * 8) + 's');
+  b.innerHTML = `<div class="dot"></div><div class="tag"><b>${f.cs}</b> ${f.alt}<br><i>${f.proj} · ${f.env}</i></div>`;
+  b.onclick = () => select(i);
+  scope.appendChild(b);
+});
+
+function render() {
+  stripsEl.innerHTML = FLIGHTS.map((f, i) => `
+    <div class="strip ${i === sel ? 'sel' : ''}" data-i="${i}">
+      <div class="cs">${f.cs}</div>
+      <div class="route">${f.proj} <i>→</i> ${f.env}</div>
+      <div class="st ${f.cls}">${f.st}</div>
+      <div class="sub"><span>SQK ${f.sqk}</span><span>ETE ${f.spd}</span><span>${f.commit}</span></div>
+      <div class="prog" style="width:${f.cls === 'landed' ? 100 : f.cls === 'diverted' ? 100 : 20 + i * 13}%"></div>
+    </div>`).join('');
+  [...stripsEl.children].forEach((el, i) => el.onclick = () => select(i));
+  [...scope.querySelectorAll('.blip')].forEach((el, i) => el.classList.toggle('sel', i === sel));
+  const f = FLIGHTS[sel];
+  detailEl.innerHTML = `
+    <h3>DATA BLOCK <span>${f.cs}</span></h3>
+    <div class="kv">
+      <div class="k">ROUTE</div><div class="v">${f.proj} → ${f.env} / branch main</div>
+      <div class="k">STATUS</div><div class="v">${f.st} · ${f.age} ago</div>
+      <div class="k">ALIAS</div><div class="v alias">https://${f.alias}</div>
+      <div class="k">SQUAWK</div><div class="v">${f.sqk} (immutable · branch · env)</div>
+      <div class="k">REMARKS</div><div class="v">${f.commit}</div>
+      <div class="k">RECORDER</div><div class="v">data/logs/${f.cs.toLowerCase()}.log · file-tailed</div>
+      <div class="k">NETWORK</div><div class="v">runway_edge_${f.cs.toLowerCase()} · ws_devs-team</div>
+    </div>`;
+}
+function select(i) { sel = i; render(); }
+render();
+
+/* clock */
+setInterval(() => {
+  const d = new Date();
+  document.getElementById('clock').innerHTML =
+    d.toISOString().slice(11, 19) + ' <small>Z</small>';
+}, 500);
+
+/* teletype feed */
+const FEED = [
+  "claim <b>RWY-9C1E</b> · SELECT … FOR UPDATE SKIP LOCKED · worker-0",
+  "snapshot config · runner node:22 · build <b>pnpm build</b>",
+  "edge network <b>runway_edge_rwy-9c1e</b> created",
+  "probe :3000 · 200 OK · 214ms",
+  "alias swap <b>-env-prod</b> → RWY-9C1E · traefik.yml written atomically",
+  "webhook <b>deployment.succeeded</b> → team hook · 200",
+  "reconcile pass · 0 orphans · 1 requeue",
+  "tail <b>RWY-77BD</b> · vite build · 12 modules transformed",
+  "cloudflared ingress sync · *.deploy.localhost",
+  "retention sweep · env prod keeps last 5 rollback targets",
+];
+let fi = 0;
+function tick() {
+  const el = document.createElement('div');
+  el.className = 'tty-line';
+  const t = new Date().toISOString().slice(11, 19);
+  el.innerHTML = `<span class="t">${t}Z</span>${FEED[fi++ % FEED.length]}`;
+  tty.appendChild(el);
+  while (tty.children.length > 5) tty.removeChild(tty.firstChild);
+}
+tick(); setInterval(tick, 2100);
+</script>
+</body>
+</html>

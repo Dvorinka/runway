@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RUNWAY — Projects</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="theme.css">
+</head>
+<body>
+
+<header>
+  <a class="logo" href="index.html">
+    <svg width="19" height="19" viewBox="0 0 240 240"><g transform="translate(0 -14) rotate(22.5 120 120)"><g fill="none" stroke="#ECEDEF" stroke-width="18" stroke-linecap="round"><path d="M56 204 L196 64"/><path d="M44 160 C 94 160 122 140 150 110"/></g><circle cx="150" cy="110" r="13" fill="#FF4D00"/></g></svg>
+    RUNWAY
+  </a>
+  <nav>
+    <a href="index.html">Overview</a><a href="projects.html" class="on">Projects</a><a href="deployments.html">Departures</a><a href="#">Teams</a><a href="#">Settings</a>
+  </nav>
+  <div class="sp"></div>
+  <div class="cmdk">Search or command <kbd>⌘K</kbd></div>
+  <div class="avatar">D</div>
+</header>
+
+<main>
+  <div class="phead">
+    <h1>Projects</h1>
+    <span class="sub">4 passes issued · devs-team — deployments tear coupons off these</span>
+    <div class="sp"></div>
+    <button class="btn primary">New project</button>
+  </div>
+
+  <div class="grid" id="grid" style="grid-template-columns:repeat(auto-fill,minmax(430px,1fr))"></div>
+</main>
+
+<script src="data.js"></script>
+<script>
+document.getElementById('grid').innerHTML = PROJECTS.map((p, i) => projectPassHTML(p, i)).join('');
+</script>
+</body>
+</html>
