@@ -134,6 +134,27 @@ Done this session:
       collapses per phase, completed collapse, last open. Verified
       on a real deployment; also fixed SSE-history + REST-tail
       double-render it exposed
+- [x] Production card resolves the live alias target — their
+      "Production Deployment" card shows what the alias serves, not
+      the newest deploy; project payload exposes
+      `production_deployment_id`; falls back to newest concluded
+      pre-alias. Verified against seeded alias state
+- [x] Files panel honest empty states — distinguishes
+      `static_output_missing` (artifact gone) from `no_file_payload`
+      (server deploys keep artifacts in the image)
+
+Audit deltas filed as issues (#21–#33):
+- Actions menu still missing Instant Rollback + Delete (#21)
+- devpushhq image namespace leaks into user-facing logs (#22)
+- API key management UI (REST `/api/v1/keys` exists) (#23)
+- Runtime vs build log split — theirs are separate tabs (#24)
+- Project-scope sidebar swap (#25)
+- Composable deployment filters (#26)
+- CLI parity inventory (#27)
+- a11y pass (#28), skeleton/error-boundary consistency (#29),
+  card-contained empty states (#30), palette fuzzy depth (#31),
+  git-provider source context (#32), notification semantics (#33)
+
 Backlog candidates:
 - Composable filter chips on Deployments (vs tabs)
 - Project-scope sidebar swap (rail items become project-scoped)

@@ -295,7 +295,36 @@ throwaway `data-run` DB; production `~/.config/runway` was untouched
   Stack restored to the release image afterwards; prod alias back to
   seed state (`f80ed2e1` current / `276399ee` previous).
 
+## Phase 1 audit (PR17–20 merged tree, host-served on :8001)
+
+- Monitor crash-notification spam root-caused: host-serve ran against
+  `/var/run/docker.sock` (the `default` context daemon) while runners
+  live on Docker Desktop's socket — every seeded container read as
+  `not_found`, the compose monitor wrote `running` back, and the
+  observed-state flip-flop fired a notification per tick. Restarted
+  host-serve on `~/.docker/desktop/docker.sock`; spam stopped.
+- Hardened the emit path anyway (PR #20): the `running→down`
+  transition is claimed by a conditional UPDATE so one writer owns it,
+  plus a 15-minute per-deployment cooldown row-check. Verified live:
+  first flip → 1 notification, second flip inside cooldown → still 1.
+- Audit findings → issues #21–#33 (actions-menu rollback/delete,
+  devpushhq image leak in logs, API-keys UI, runtime/build log split,
+  project-scope rail, deploy filters, CLI parity, a11y, skeletons,
+  card-contained empty states, palette depth, git source context,
+  notification semantics).
+- Shipped in-flight: files endpoint now returns
+  `static_output_missing` vs `no_file_payload` via `is_static()`
+  (PR #18), project payload exposes `production_deployment_id` and the
+  Production card resolves the alias target instead of the newest
+  succeeded deployment (PR #18 + #19). Verified live: card links to
+  `f80ed2e` (the real alias target, `9c6edba` / 1d ago).
+- Not-a-bug resolved during audit: Overview amber vs Projects green
+  health dot for demo-app was mid-flip-flop data churn from the
+  monitor bug above, not a rendering inconsistency.
+
 ## TODO next
 
 - Artifact inventory is static-deploys-only; server/image deployments
   would need tarball/image inspection for the same list.
+- Audit continues: remaining routes/interactions (new-project flow,
+  promote/rollback dialog, palette `f`, mobile pass per route).
