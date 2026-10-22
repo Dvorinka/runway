@@ -575,7 +575,7 @@ function Stepper({ dep }: { dep: Deployment }) {
             {i > 0 && (
               <div
                 className={cn(
-                  "h-px w-10",
+                  "h-px w-4 sm:w-10",
                   state === "done" || state === "active" || state === "failed"
                     ? "bg-zinc-500"
                     : "bg-border",
@@ -789,7 +789,7 @@ export default function DeploymentPage() {
   return (
     <div className="page-enter mx-auto flex min-h-[calc(100vh-3.5rem)] max-w-5xl flex-col px-4 py-6 sm:px-8">
       <div className="mb-4 flex items-center justify-between">
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 items-center gap-3">
           {dep && <StatusDot status={dep.status} conclusion={dep.conclusion} computed={dep.computed_status} />}
           <h1 className="font-mono text-lg">
             {dep?.commit_sha.slice(0, 7) ?? id.slice(0, 7)}
@@ -800,7 +800,7 @@ export default function DeploymentPage() {
             </Badge>
           )}
           {dep && (
-            <span className="truncate text-xs text-muted-foreground">
+            <span className="min-w-0 truncate text-xs text-muted-foreground">
               {dep.branch}
               {dep.environment_id &&
                 ` · ${dep.environment_id === "prod" ? "production" : dep.environment_id}`}
