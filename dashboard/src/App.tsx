@@ -14,7 +14,7 @@ import InvitePage from "@/pages/Invite";
 import NotFound from "@/pages/NotFound";
 import StatusPage from "@/pages/Status";
 import { useEffect, useState } from "react";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
 export default function App() {
   const [me, setMe] = useState<Me | null>(null);
@@ -57,6 +57,8 @@ function Authed({ me, loading }: { me: Me | null; loading: boolean }) {
       <Route path="/invites/:id" element={page(<InvitePage />)} />
       <Route path="/notifications" element={page(<NotificationsPage />)} />
       <Route path="/settings" element={page(<SettingsPage me={me} />)} />
+      {/* Already signed in — /login bounces home instead of 404ing. */}
+      <Route path="/login" element={<Navigate to="/" replace />} />
       <Route path="*" element={page(<NotFound />)} />
     </Routes>
   );

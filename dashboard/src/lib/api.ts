@@ -119,6 +119,14 @@ export interface AllowlistRule {
   value: string;
 }
 
+export interface ApiKey {
+  id: string;
+  name: string;
+  status: string;
+  last_used_at: string | null;
+  created_at: string;
+}
+
 export interface RemoteNode {
   id: string;
   name: string;
@@ -360,6 +368,14 @@ export const api = {
     }),
   deleteMe: (password: string) =>
     req<void>("/api/auth/me", { method: "DELETE", body: JSON.stringify({ password }) }),
+  apiKeys: () => req<{ keys: ApiKey[] }>("/api/v1/keys"),
+  createApiKey: (name: string) =>
+    req<{ id: string; token: string }>("/api/v1/keys", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
+  revokeApiKey: (id: string) =>
+    req<void>(`/api/v1/keys/${id}`, { method: "DELETE" }),
   deploymentStats: (id: string) =>
     req<{
       running: boolean;

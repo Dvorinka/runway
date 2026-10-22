@@ -40,7 +40,7 @@ export default function NotificationsPage() {
         )}
       </div>
       {error && <p className="mb-4 text-xs text-destructive">{error}</p>}
-      <div className="stagger grid gap-2">
+      <div className="stagger grid grid-cols-1 gap-2">
         {items.map((n) => {
           const inner = (
             <Card

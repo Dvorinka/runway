@@ -14,7 +14,7 @@ import { Avatar, AvatarRow, Badge, Button, Card, CardFooter, ComboBox, EmptyStat
 import { DeploymentRow } from "@/components/DeploymentRow";
 import { filesToTarGz } from "@/lib/tarball";
 import { timeAgo } from "@/lib/utils";
-import { Globe, Link2, Rocket, Webhook as WebhookIcon, ArrowRightLeft, ListFilter, CheckCircle2, Circle } from "lucide-react";
+import { Globe, Link2, Rocket, Webhook as WebhookIcon, ArrowRightLeft, ListFilter, CheckCircle2, Circle, KeyRound, Clock } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
@@ -117,7 +117,7 @@ function Analytics({ id }: { id: string }) {
           Injects a tracking snippet into every HTML page on the next static deploy.
           Works with Umami, Rybbit, Plausible, or any provider's script tag.
         </p>
-      <div className="grid gap-3">
+      <div className="grid grid-cols-1 gap-3">
         <ComboBox
           value={provider}
           onChange={(v) => setProvider(v as AnalyticsProvider)}
@@ -240,7 +240,7 @@ function WebAnalytics({ id }: { id: string }) {
         </button>
       </div>
       {data && data.views > 0 && (
-        <div className="mt-4 grid gap-4">
+        <div className="mt-4 grid grid-cols-1 gap-4">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="rounded-md border border-border p-3">
               <div className="text-2xl font-semibold">{data.views.toLocaleString()}</div>
@@ -642,7 +642,7 @@ function Deployments({ id, project }: { id: string; project: Project | null }) {
         }}
         ready={deployments !== null && domainCount !== null && envCount !== null}
       />
-      <div className="stagger grid gap-2">
+      <div className="stagger grid grid-cols-1 gap-2">
         {deployments === null && [0, 1, 2].map((i) => <Skeleton key={i} className="h-[64px]" />)}
         {deployments?.map((d) => (
           <DeploymentRow key={d.id} d={d} />
@@ -728,7 +728,7 @@ function Environment({ id }: { id: string }) {
   return (
     <>
       {bulk ? (
-        <form onSubmit={addBulk} className="mb-4 grid gap-2">
+        <form onSubmit={addBulk} className="mb-4 grid grid-cols-1 gap-2">
           <textarea
             value={bulkText}
             onChange={(e) => setBulkText(e.target.value)}
@@ -768,7 +768,7 @@ function Environment({ id }: { id: string }) {
         </form>
       )}
       <Err msg={error} />
-      <div className="stagger grid gap-2">
+      <div className="stagger grid grid-cols-1 gap-2">
         {vars.map((v) => (
           <Card key={`${v.key}:${v.environment}`} className="flex items-center justify-between p-3">
             <div className="font-mono text-sm">
@@ -792,7 +792,11 @@ function Environment({ id }: { id: string }) {
           </Card>
         ))}
         {vars.length === 0 && (
-          <p className="text-sm text-muted-foreground">No environment variables yet.</p>
+          <EmptyState
+            icon={KeyRound}
+            title="No environment variables yet"
+            hint="Add a key above, or paste a .env file."
+          />
         )}
       </div>
     </>
@@ -862,7 +866,7 @@ function Cron({ id }: { id: string }) {
         ))}
       </div>
       <Err msg={error} />
-      <div className="stagger grid gap-2">
+      <div className="stagger grid grid-cols-1 gap-2">
         {jobs.map((j) => (
           <Card key={j.id} className="flex items-center justify-between p-3">
             <div>
@@ -895,7 +899,11 @@ function Cron({ id }: { id: string }) {
           </Card>
         ))}
         {jobs.length === 0 && (
-          <p className="text-sm text-muted-foreground">No cron jobs yet.</p>
+          <EmptyState
+            icon={Clock}
+            title="No cron jobs yet"
+            hint="Schedule deployments of a branch on an interval."
+          />
         )}
       </div>
     </>
@@ -958,7 +966,7 @@ function Redirects({ id }: { id: string }) {
         </Button>
       </form>
       <Err msg={error} />
-      <div className="stagger grid gap-2">
+      <div className="stagger grid grid-cols-1 gap-2">
         {rules.map((r) => (
           <Card key={r.id} className="flex items-center justify-between p-3">
             <div className="font-mono text-sm">
@@ -1062,7 +1070,7 @@ function Domains({ id }: { id: string }) {
           <SectionHead icon={Globe} title="Automatic">
             Issued for every deployment — environment, branch previews, and the immutable build URL.
           </SectionHead>
-          <div className="stagger mb-6 grid gap-2">
+          <div className="stagger mb-6 grid grid-cols-1 gap-2">
             {auto.map((a) => (
               <Card key={a.host} className="flex items-center justify-between p-3">
                 <div className="flex min-w-0 items-center gap-2">
@@ -1071,7 +1079,7 @@ function Domains({ id }: { id: string }) {
                     href={`https://${a.host}`}
                     target="_blank"
                     rel="noreferrer"
-                    className="truncate font-mono text-sm hover:text-foreground"
+                    className="min-w-0 flex-1 truncate font-mono text-sm hover:text-foreground"
                   >
                     {a.host}
                   </a>
@@ -1099,7 +1107,7 @@ function Domains({ id }: { id: string }) {
         </Button>
       </form>
       <Err msg={error} />
-      <div className="stagger grid gap-2">
+      <div className="stagger grid grid-cols-1 gap-2">
         {domains.map((d) => (
           <Card key={d.id} className="flex items-center justify-between p-3">
             <div className="font-mono text-sm">{d.hostname}</div>
@@ -1196,7 +1204,7 @@ function Webhooks({ id }: { id: string }) {
         </Button>
       </form>
       <Err msg={error} />
-      <div className="stagger grid gap-2">
+      <div className="stagger grid grid-cols-1 gap-2">
         {hooks.map((w) => (
           <Card key={w.id} className="flex items-center justify-between p-3">
             <div>
@@ -1276,7 +1284,7 @@ function Settings({ id, project }: { id: string; project: Project | null }) {
 
   const [avatarKey, setAvatarKey] = useState(0);
   return (
-    <div className="grid gap-4">
+    <div className="grid grid-cols-1 gap-4">
       {project && (
         <Card className="p-4">
           <h3 className="mb-2 text-sm font-medium">Avatar</h3>
@@ -1452,7 +1460,7 @@ function Environments({ id, project }: { id: string; project: Project | null }) 
           </span>
         </span>
       </label>
-      <div className="mb-3 grid gap-2">
+      <div className="mb-3 grid grid-cols-1 gap-2">
         {envs.map((env) => (
           <div
             key={env.id}
@@ -1556,7 +1564,7 @@ function DockerBuild({ id, project }: { id: string; project: Project | null }) {
         the image's own command serves the app. Path is relative to the repo root (or the root
         directory if set).
       </p>
-      <div className="grid gap-3">
+      <div className="grid grid-cols-1 gap-3">
         <Input
           placeholder="Dockerfile"
           value={df}
@@ -1676,7 +1684,7 @@ function DeployRules({ id, project }: { id: string; project: Project | null }) {
         pushes touching matching files — glob list like{" "}
         <code className="font-mono">apps/web/**,packages/shared/**</code> (monorepo filtering).
       </p>
-      <div className="grid gap-3">
+      <div className="grid grid-cols-1 gap-3">
         <label className="flex items-center gap-2 text-xs">
           <input
             type="checkbox"
@@ -2003,7 +2011,7 @@ function Firewall({ id, project }: { id: string; project: Project | null }) {
         Applied at the edge (Traefik) — blocked traffic never reaches the app. One IP/CIDR per
         line; leave empty to allow everyone.
       </p>
-      <div className="grid gap-3">
+      <div className="grid grid-cols-1 gap-3">
         <textarea
           value={allow}
           onChange={(e) => setAllow(e.target.value)}
@@ -2069,7 +2077,7 @@ function Protection({ id, project }: { id: string; project: Project | null }) {
   }
 
   return (
-    <div className="grid gap-2 border-t border-border pt-3">
+    <div className="grid grid-cols-1 gap-2 border-t border-border pt-3">
       <div className="flex items-center justify-between">
         <span className="text-sm">Deployment protection</span>
         {enabled && <Badge variant="success">on</Badge>}
@@ -2201,7 +2209,7 @@ export default function ProjectPage() {
           <div className="min-w-0">
             <h1 className="truncate text-2xl font-semibold tracking-tight">{project?.name ?? "Project"}</h1>
           {project && (
-            <div className="mt-1.5 flex items-center gap-3 text-xs text-muted-foreground">
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted-foreground">
               <span className="font-mono">
                 {project.repo_provider}:{project.repo_full_name}
               </span>
@@ -2230,7 +2238,8 @@ export default function ProjectPage() {
         </div>
         </div>
       </div>
-      <div className="-mx-4 mb-6 flex gap-4 overflow-x-auto border-b border-border px-4 sm:mx-0 sm:px-0">
+      {/* Rail carries tab links on lg+; strip stays for mobile. */}
+      <div className="-mx-4 mb-6 flex gap-4 overflow-x-auto border-b border-border px-4 sm:mx-0 sm:px-0 lg:hidden">
         {TABS.map((t) => (
           <button
             key={t}

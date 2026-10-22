@@ -12,7 +12,7 @@ import { FolderPlus, LayoutGrid, List, Plus, BookOpen, Search } from "lucide-rea
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
-type Provider = GitProvider;
+type Provider = GitProvider | "upload";
 
 interface GhInstallation {
   id: number;
@@ -45,7 +45,7 @@ function ConnectGuide({
 }) {
   const guide = PROVIDER_GUIDES[provider];
   return (
-    <div className="grid gap-2 rounded-md border border-border p-3">
+    <div className="grid grid-cols-1 gap-2 rounded-md border border-border p-3">
       <div className="flex items-center gap-2">
         <BookOpen className="h-3.5 w-3.5 text-muted-foreground" />
         <p className="text-xs font-medium">Connect {providerLabel(provider)}</p>
@@ -58,7 +58,7 @@ function ConnectGuide({
           {guide.docsLabel}
         </a>
       </div>
-      <ol className="grid gap-1 text-xs text-muted-foreground">
+      <ol className="grid grid-cols-1 gap-1 text-xs text-muted-foreground">
         {guide.steps.map((s, i) => (
           <li key={i} className="flex gap-2">
             <span className="font-mono text-muted-foreground/70">{i + 1}.</span>
@@ -132,7 +132,7 @@ function NewProject({ onDone }: { onDone: () => void }) {
           setGhConfigured(d.configured !== false);
         })
         .catch(() => {});
-    } else {
+    } else if (provider !== "upload") {
       api
         .gitConnections(provider)
         .then((d) => {
@@ -151,7 +151,7 @@ function NewProject({ onDone }: { onDone: () => void }) {
         .then((r) => r.json())
         .then((d) => setRepos(d.repositories ?? []))
         .catch(() => {});
-    } else if (provider !== "github" && connId) {
+    } else if (provider !== "github" && provider !== "upload" && connId) {
       api
         .gitRepos(provider, connId)
         .then((d) => setRepos(d.repositories))
@@ -180,12 +180,21 @@ function NewProject({ onDone }: { onDone: () => void }) {
     setBusy(true);
     try {
       const [full, br] = repo.split("|");
-      const body: CreateProjectInput = {
-        name: name || full.split("/").pop() || full,
-        repo_full_name: full,
-        branch: branch || br || "main",
-        provider,
-      };
+      const body: CreateProjectInput =
+        provider === "upload"
+          ? {
+              name,
+              // Display label only — upload projects have no remote.
+              repo_full_name: name,
+              branch: branch || "main",
+              provider,
+            }
+          : {
+              name: name || full.split("/").pop() || full,
+              repo_full_name: full,
+              branch: branch || br || "main",
+              provider,
+            };
       if (provider === "github") {
         const r = repos.find((x) => x.full_name === full) as GhRepo | undefined;
         body.repo_id = r ? Number(r.id) : undefined;
@@ -205,10 +214,10 @@ function NewProject({ onDone }: { onDone: () => void }) {
   return (
     <Card className="mb-6 p-5">
       <SectionHead icon={Plus} title="New project" />
-      <form onSubmit={create} className="grid gap-3">
+      <form onSubmit={create} className="grid grid-cols-1 gap-3">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div className="grid grid-cols-5 gap-1 rounded-lg border border-border p-1">
-            {GIT_PROVIDERS.map((p) => (
+          <div className="grid grid-cols-6 gap-1 rounded-lg border border-border p-1">
+            {([...GIT_PROVIDERS, "upload"] as Provider[]).map((p) => (
               <button
                 key={p}
                 type="button"
@@ -223,7 +232,15 @@ function NewProject({ onDone }: { onDone: () => void }) {
               </button>
             ))}
           </div>
-          {provider === "github" ? (
+          {provider === "upload" ? (
+            <p className="self-center text-xs text-muted-foreground">
+              No remote — drop files on the project page, or{" "}
+              <code className="rounded bg-accent px-1 py-0.5 font-mono text-[11px] text-foreground">
+                runway deploy
+              </code>{" "}
+              from a linked directory.
+            </p>
+          ) : provider === "github" ? (
             <ComboBox
               value={installationId == null ? "" : String(installationId)}
               onChange={(v) => setInstallationId(v ? Number(v) : null)}
@@ -268,7 +285,7 @@ function NewProject({ onDone }: { onDone: () => void }) {
             </a>
           </p>
         )}
-        {provider !== "github" && connections.length === 0 && (
+        {provider !== "github" && provider !== "upload" && connections.length === 0 && (
           <ConnectGuide
             provider={provider}
             baseUrl={baseUrl}
@@ -281,24 +298,30 @@ function NewProject({ onDone }: { onDone: () => void }) {
           />
         )}
 
-        <ComboBox
-          value={repo}
-          onChange={(v) => {
-            setRepo(v);
-            const r = repos.find((x) => x.full_name === v.split("|")[0]);
-            if (r) setBranch(r.default_branch || "main");
-          }}
-          options={repos.map((r) => ({
-            value: `${r.full_name}|${r.default_branch}`,
-            label: r.full_name,
-            hint: r.default_branch,
-          }))}
-          placeholder="Repository…"
-          searchPlaceholder="Search repositories…"
-          emptyText={installationId || connId ? "No repositories found" : "Pick an installation first"}
-        />
+        {provider !== "upload" && (
+          <ComboBox
+            value={repo}
+            onChange={(v) => {
+              setRepo(v);
+              const r = repos.find((x) => x.full_name === v.split("|")[0]);
+              if (r) setBranch(r.default_branch || "main");
+            }}
+            options={repos.map((r) => ({
+              value: `${r.full_name}|${r.default_branch}`,
+              label: r.full_name,
+              hint: r.default_branch,
+            }))}
+            placeholder="Repository…"
+            searchPlaceholder="Search repositories…"
+            emptyText={installationId || connId ? "No repositories found" : "Pick an installation first"}
+          />
+        )}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <Input placeholder="Name (optional)" value={name} onChange={(e) => setName(e.target.value)} />
+          <Input
+            placeholder={provider === "upload" ? "Name" : "Name (optional)"}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
           <Input placeholder="Branch" value={branch} onChange={(e) => setBranch(e.target.value)} />
           <Input
             placeholder="Preset (auto)"
@@ -308,7 +331,11 @@ function NewProject({ onDone }: { onDone: () => void }) {
         </div>
         {error && <p className="text-xs text-destructive">{error}</p>}
         <div className="flex gap-2">
-          <Button type="submit" size="sm" disabled={busy || !repo}>
+          <Button
+            type="submit"
+            size="sm"
+            disabled={busy || (provider === "upload" ? !name.trim() : !repo)}
+          >
             Create project
           </Button>
           <Button type="button" variant="ghost" size="sm" onClick={onDone}>
@@ -445,7 +472,7 @@ export default function Projects() {
       {creating && <NewProject onDone={() => setCreating(false)} />}
       {error && <p className="text-sm text-destructive">{error}</p>}
       {projects === null && !error && (
-        <div className={view === "grid" ? "grid gap-3 sm:grid-cols-2 lg:grid-cols-3" : "grid gap-3"}>
+        <div className={view === "grid" ? "grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3" : "grid grid-cols-1 gap-3"}>
           {[0, 1, 2].map((i) => (
             <Skeleton key={i} className="h-[104px]" />
           ))}
@@ -469,11 +496,11 @@ export default function Projects() {
         </EmptyState>
       )}
       {view === "grid" ? (
-        <div className="stagger grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="stagger grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {filtered?.map((p) => <ProjectCard key={p.id} p={p} />)}
         </div>
       ) : (
-        <div className="stagger grid gap-2">
+        <div className="stagger grid grid-cols-1 gap-2">
           {filtered?.map((p) => {
             const dep = p.latest_deployment;
             return (

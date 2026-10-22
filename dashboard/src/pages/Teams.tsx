@@ -53,7 +53,7 @@ export default function TeamsPage() {
         </form>
       </div>
       {error && <p className="mb-4 text-xs text-destructive">{error}</p>}
-      <div className="stagger grid gap-2">
+      <div className="stagger grid grid-cols-1 gap-2">
         {teams.map((t) => (
           <Link key={t.id} to={`/teams/${t.id}`}>
             <Card className="flex items-center justify-between p-4 transition-colors hover:border-muted-foreground/40 hover:bg-accent/50">

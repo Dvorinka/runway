@@ -55,6 +55,9 @@ fn deployment_json(state: &AppState, d: &Deployment, project: &Project) -> Value
         "branch": d.branch,
         "commit_sha": d.commit_sha,
         "commit_meta": d.commit_meta,
+        "repo_provider": d.repo_provider,
+        "repo_full_name": d.repo_full_name,
+        "repo_base_url": d.repo_base_url,
         "url": d.url(project.slug.as_deref().unwrap_or(&project.id), &state.settings),
         "urls": {
             "immutable": d.hostname(project.slug.as_deref().unwrap_or(&project.id), &state.settings),
