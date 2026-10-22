@@ -520,7 +520,9 @@ function FilesPanel({ id }: { id: string }) {
           </div>
           {data && !data.ok && (
             <p className="px-3 py-3 text-xs text-muted-foreground">
-              No file payload — server deployments keep their artifact inside the container image.
+              {data.reason === "static_output_missing"
+                ? "Static output expected — the published artifact is missing from storage."
+                : "No file payload — server deployments keep their artifact inside the container image."}
             </p>
           )}
           {!data && <p className="px-3 py-3 text-xs text-muted-foreground">loading…</p>}

@@ -14,6 +14,7 @@ export interface Project {
   environments?: { id: string; name: string; slug: string; branch?: string; status?: string }[];
   status: string;
   preset?: string | null;
+  production_deployment_id?: string | null;
   latest_deployment?: Deployment | null;
   created_at: string;
 }
