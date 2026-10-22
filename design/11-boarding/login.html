@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RUNWAY — Check in</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="theme.css">
+<style>
+  .login-pass { display:block; }
+  .login-pass .edge { background:var(--brand); }
+  .login-pass .tbody { padding:26px 34px 24px; }
+  .lp-mark { display:flex; align-items:center; gap:10px; margin-bottom:18px; }
+  .lp-mark b { font-family:Archivo,sans-serif; font-weight:800; font-size:13px; letter-spacing:.14em; color:var(--ink); }
+  .lp-mark .no { margin-left:auto; font-size:9px; color:var(--ticket-dim); letter-spacing:.1em; }
+  .lp-row { display:flex; justify-content:space-between; align-items:center; margin-top:12px; font-size:9px; color:var(--ticket-dim); letter-spacing:.06em; }
+  .lp-row a { color:var(--brand); text-decoration:none; }
+</style>
+</head>
+<body>
+
+<div class="login-wrap">
+  <div>
+    <div class="pass login-pass">
+      <div class="edge"></div>
+      <div class="tbody">
+        <div class="lp-mark">
+          <svg width="26" height="26" viewBox="0 0 240 240"><g transform="translate(0 -14) rotate(22.5 120 120)"><g fill="none" stroke="#191B1F" stroke-width="18" stroke-linecap="round"><path d="M56 204 L196 64"/><path d="M44 160 C 94 160 122 140 150 110"/></g><circle cx="150" cy="110" r="13" fill="#FF4D00"/></g></svg>
+          <b>RUNWAY</b>
+          <span class="no">CHECK-IN Nº 0001</span>
+        </div>
+        <h1>Check in</h1>
+        <div class="sub">SHIP IT. FROM YOUR OWN RUNWAY.</div>
+        <div class="field">
+          <label class="k">Passenger — Email</label>
+          <input type="email" placeholder="you@team.com" autofocus>
+        </div>
+        <div class="field">
+          <label class="k">Credentials — Password</label>
+          <input type="password" placeholder="••••••••••">
+        </div>
+        <button class="board-btn" onclick="location.href='index.html'">BOARD →</button>
+        <div class="lp-row">
+          <span>GATE ACCESS VIA CLI: runway login</span>
+          <a href="#">SSO / OAUTH →</a>
+        </div>
+        <div id="bc"></div>
+      </div>
+    </div>
+    <div class="login-foot">single binary · postgres queue · traefik edge · no per-seat fares</div>
+  </div>
+</div>
+
+<script src="data.js"></script>
+<script>
+document.getElementById('bc').innerHTML = barcodeHTML('RUNWAY-CHECKIN-9C1E', 20);
+</script>
+</body>
+</html>

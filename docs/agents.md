@@ -17,6 +17,7 @@ runway env pull                   # .env.local from project (decrypted)
 runway domains add app.example.com
 runway domains assign-cf app.example.com
 runway rollback                   # instant alias re-point to previous deploy
+runway promote <id>               # point an environment alias at a deploy (--environment, default prod)
 runway open                       # current deployment URL
 ```
 
@@ -38,7 +39,7 @@ Settings → API keys mint `ak_` tokens. Use as
 `list_projects`, `get_project`, `list_deployments`, `get_deployment`,
 `get_deployment_logs`, `deployment_stats`, `deploy_project`,
 `cancel_deployment`, `redeploy_deployment`, `rollback_environment`,
-`list_env`, `set_env`, `list_domains`, `ping`.
+`promote_deployment`, `list_env`, `set_env`, `list_domains`, `ping`.
 
 Write tools (`deploy_project`, `set_env`, `rollback_environment`, …)
 respect the same RBAC gates as the REST surface — issue the key to an

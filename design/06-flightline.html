@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RUNWAY — FLIGHTLINE</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #101216;
+    --panel: #15181E;
+    --panel2: #1A1E25;
+    --line: #242933;
+    --text: #E8EAEE;
+    --dim: #8B93A1;
+    --faint: #565E6C;
+    --brand: #FF4D00;
+    --ok: #45D97A;
+    --warn: #FFB224;
+    --bad: #FF5252;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background:var(--bg); color:var(--text);
+    font-family:"Geist", ui-sans-serif, system-ui, sans-serif;
+    font-size:13px; min-height:100vh;
+  }
+  .mono { font-family:"Geist Mono", ui-monospace, monospace; }
+  ::selection { background:var(--brand); color:#fff; }
+
+  /* ===== NAV ===== */
+  header {
+    height:48px; display:flex; align-items:center; gap:4px;
+    padding:0 16px; border-bottom:1px solid var(--line);
+    position:sticky; top:0; background:rgba(16,18,22,.92); backdrop-filter:blur(8px); z-index:10;
+  }
+  .logo { display:flex; align-items:center; gap:9px; margin-right:18px; font-weight:600; font-size:14px; }
+  .nav { display:flex; gap:2px; }
+  .nav a {
+    color:var(--dim); text-decoration:none; padding:5px 11px; border-radius:6px;
+    font-size:12.5px; font-weight:500; transition:.12s;
+  }
+  .nav a:hover { color:var(--text); background:var(--panel2); }
+  .nav a.on { color:var(--text); background:var(--panel2); }
+  header .sp { flex:1; }
+  .cmdk {
+    display:flex; align-items:center; gap:8px; color:var(--faint); font-size:12px;
+    border:1px solid var(--line); border-radius:6px; padding:5px 10px; cursor:pointer;
+    font-family:"Geist Mono"; transition:.12s;
+  }
+  .cmdk:hover { border-color:#384050; color:var(--dim); }
+  .cmdk kbd { background:var(--panel2); border-radius:3px; padding:0 5px; font-size:10px; }
+  .avatar { width:26px; height:26px; border-radius:50%; background:var(--brand); color:#fff; display:grid; place-items:center; font-size:11px; font-weight:600; margin-left:10px; }
+
+  main { max-width:1160px; margin:0 auto; padding:28px 24px 60px; }
+
+  /* ===== PAGE HEAD ===== */
+  .phead { display:flex; align-items:baseline; gap:16px; margin-bottom:20px; flex-wrap:wrap; }
+  .phead h1 { font-size:20px; font-weight:600; letter-spacing:-.01em; }
+  .phead .count { color:var(--faint); font-size:12px; font-family:"Geist Mono"; }
+  .phead .sp { flex:1; }
+  .btn {
+    font:inherit; font-size:12px; font-weight:500; cursor:pointer;
+    border:1px solid var(--line); background:var(--panel); color:var(--text);
+    padding:6px 12px; border-radius:6px; transition:.12s;
+  }
+  .btn:hover { border-color:#3A4252; }
+  .btn.primary { background:var(--brand); border-color:var(--brand); color:#fff; }
+  .btn.primary:hover { background:#FF5F1A; }
+
+  /* ===== INSTRUMENTS ===== */
+  .instruments { display:grid; grid-template-columns:repeat(4,1fr); gap:1px; background:var(--line); border:1px solid var(--line); border-radius:10px; overflow:hidden; margin-bottom:22px; }
+  .inst { background:var(--panel); padding:14px 16px; }
+  .inst .lbl { font-size:10px; letter-spacing:.14em; color:var(--faint); font-family:"Geist Mono"; text-transform:uppercase; display:flex; align-items:center; gap:7px; }
+  .inst .lbl::before { content:""; width:6px; height:6px; border-radius:50%; background:var(--faint); }
+  .inst .lbl.live::before { background:var(--brand); box-shadow:0 0 7px var(--brand); }
+  .inst .lbl.ok::before { background:var(--ok); }
+  .inst .lbl.bad::before { background:var(--bad); }
+  .inst .v { font-family:"Geist Mono"; font-size:26px; font-weight:600; margin-top:6px; font-variant-numeric:tabular-nums; }
+  .inst .v small { font-size:12px; color:var(--dim); font-weight:400; }
+  .inst .sub { font-size:11px; color:var(--dim); margin-top:2px; }
+
+  /* ===== FILTERS ===== */
+  .filters { display:flex; gap:6px; margin-bottom:14px; align-items:center; flex-wrap:wrap; }
+  .chip {
+    font-family:"Geist Mono"; font-size:11px; letter-spacing:.05em; cursor:pointer;
+    padding:4px 10px; border-radius:20px; border:1px solid var(--line); color:var(--dim);
+    background:transparent; transition:.12s; text-transform:uppercase;
+  }
+  .chip:hover { color:var(--text); border-color:#3A4252; }
+  .chip.on { background:var(--text); color:var(--bg); border-color:var(--text); font-weight:600; }
+  .filters .search { margin-left:auto; }
+  .search input {
+    font:inherit; font-family:"Geist Mono"; font-size:12px; width:220px;
+    background:var(--panel); border:1px solid var(--line); border-radius:6px;
+    color:var(--text); padding:6px 10px; outline:none;
+  }
+  .search input:focus { border-color:var(--brand); }
+  .search input::placeholder { color:var(--faint); }
+
+  /* ===== LIST ===== */
+  .list { border:1px solid var(--line); border-radius:10px; overflow:hidden; background:var(--panel); }
+  .row { border-bottom:1px solid var(--line); cursor:pointer; transition:background .12s; }
+  .row:last-child { border-bottom:none; }
+  .row:hover { background:var(--panel2); }
+  .row.open { background:var(--panel2); }
+  .row-main {
+    display:grid; grid-template-columns:130px 96px 200px 1fr 240px 76px;
+    align-items:center; gap:16px; padding:13px 18px;
+  }
+  .cs { font-family:"Geist Mono"; font-weight:600; font-size:13px; color:#fff; }
+  .cs small { display:block; font-weight:400; font-size:10px; color:var(--faint); margin-top:1px; }
+  .pill {
+    font-family:"Geist Mono"; font-size:9.5px; letter-spacing:.12em; font-weight:600;
+    padding:3px 8px; border-radius:4px; text-transform:uppercase; display:inline-block;
+  }
+  .pill.landed { background:rgba(69,217,122,.12); color:var(--ok); }
+  .pill.climb, .pill.final { background:rgba(255,77,0,.14); color:var(--brand); }
+  .pill.held { background:rgba(255,178,36,.12); color:var(--warn); }
+  .pill.diverted { background:rgba(255,82,82,.12); color:var(--bad); }
+  .route { font-size:13px; font-weight:500; }
+  .route .env { color:var(--dim); }
+  .route i { font-style:normal; color:var(--faint); margin:0 5px; }
+  .commit { color:var(--dim); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .when { font-family:"Geist Mono"; font-size:11px; color:var(--faint); text-align:right; font-variant-numeric:tabular-nums; }
+
+  /* signature: the flight path */
+  .fpath { width:100%; height:26px; display:block; }
+  .fpath .track { stroke:var(--line); stroke-width:2; }
+  .fpath .done { stroke:var(--brand); stroke-width:2; }
+  .fpath .tick { fill:var(--faint); }
+  .fpath .tick.hit { fill:var(--brand); }
+  .fpath .plane { fill:#fff; }
+  .fpath .end { fill:none; stroke:var(--faint); stroke-width:1.5; }
+  .fpath .end.hit { stroke:var(--ok); fill:var(--ok); }
+  .fpath .lbl { fill:var(--faint); font-family:"Geist Mono"; font-size:6.5px; letter-spacing:.06em; }
+  .fpath .lbl.cur { fill:var(--brand); font-weight:600; }
+
+  /* ===== EXPANDED ===== */
+  .exp { display:none; border-top:1px dashed var(--line); padding:16px 18px; }
+  .row.open .exp { display:grid; grid-template-columns:1fr 1.2fr; gap:24px; }
+  .kv { display:grid; grid-template-columns:110px 1fr; gap:6px 14px; font-size:12px; align-content:start; }
+  .kv .k { color:var(--faint); font-size:10px; letter-spacing:.12em; font-family:"Geist Mono"; text-transform:uppercase; padding-top:1px; }
+  .kv .v { color:var(--text); font-family:"Geist Mono"; font-size:12px; word-break:break-all; }
+  .alias-chips { display:flex; gap:6px; flex-wrap:wrap; }
+  .alias-chips span { font-family:"Geist Mono"; font-size:10.5px; background:var(--panel); border:1px solid var(--line); border-radius:4px; padding:3px 8px; color:var(--dim); }
+  .alias-chips span b { color:var(--brand); font-weight:600; }
+  .logbox { background:#0B0D11; border:1px solid var(--line); border-radius:7px; padding:12px 14px; font-family:"Geist Mono"; font-size:11px; line-height:1.8; color:var(--dim); max-height:150px; overflow:auto; }
+  .logbox .t { color:var(--faint); margin-right:8px; }
+  .logbox .ok { color:var(--ok); } .logbox .err { color:var(--bad); }
+  .exp .actions { grid-column:1/-1; display:flex; gap:8px; }
+
+  @media (max-width: 980px) {
+    .row-main { grid-template-columns:110px 90px 1fr; }
+    .route, .commit, .when { display:none; }
+    .exp { grid-template-columns:1fr; }
+    .instruments { grid-template-columns:repeat(2,1fr); }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <svg width="20" height="20" viewBox="0 0 240 240"><g transform="translate(0 -14) rotate(22.5 120 120)"><g fill="none" stroke="#E8EAEE" stroke-width="18" stroke-linecap="round"><path d="M56 204 L196 64"/><path d="M44 160 C 94 160 122 140 150 110"/></g><circle cx="150" cy="110" r="13" fill="#FF4D00"/></g></svg>
+    runway
+  </div>
+  <nav class="nav">
+    <a href="#">Overview</a><a href="#">Projects</a><a href="#" class="on">Deployments</a><a href="#">Teams</a><a href="#">Settings</a>
+  </nav>
+  <div class="sp"></div>
+  <div class="cmdk">Search or command <kbd>⌘K</kbd></div>
+  <div class="avatar">D</div>
+</header>
+
+<main>
+  <div class="phead">
+    <h1>Deployments</h1>
+    <span class="count mono" id="count"></span>
+    <div class="sp"></div>
+    <button class="btn">Filters</button>
+    <button class="btn primary">New deployment</button>
+  </div>
+
+  <div class="instruments">
+    <div class="inst"><div class="lbl live">In flight</div><div class="v">2</div><div class="sub">climbing · on final</div></div>
+    <div class="inst"><div class="lbl ok">Landed · 24h</div><div class="v">9</div><div class="sub">all environments</div></div>
+    <div class="inst"><div class="lbl bad">Diverted</div><div class="v">1 <small>runner OOM</small></div><div class="sub">RWY-A110 · logs kept</div></div>
+    <div class="inst"><div class="lbl">Queue</div><div class="v">1</div><div class="sub">SKIP LOCKED · postgres</div></div>
+  </div>
+
+  <div class="filters" id="filters">
+    <button class="chip on" data-f="all">All</button>
+    <button class="chip" data-f="climb">Climb</button>
+    <button class="chip" data-f="final">Final</button>
+    <button class="chip" data-f="landed">Landed</button>
+    <button class="chip" data-f="held">Held</button>
+    <button class="chip" data-f="diverted">Diverted</button>
+    <div class="search"><input id="q" placeholder="filter… (callsign, project, commit)"></div>
+  </div>
+
+  <div class="list" id="list"></div>
+</main>
+
+<script>
+const STAGES = ["QUEUE","TAXI","CLIMB","FINAL","LANDED"];
+const F = [
+  {id:"RWY-9C1E", proj:"api",       preset:"dockerfile", env:"production", branch:"main",       sha:"9c1e44d", commit:"fix: token refresh race",      st:"final",    dur:"48s",   alias:"api-devs-team.deploy.localhost",            health:"probe 200 OK · 214ms", when:"19:53", note:"alias swap -env-prod pending"},
+  {id:"RWY-77BD", proj:"docs",      preset:"vite",       env:"preview",    branch:"docs",       sha:"77bd08a", commit:"docs: self-hosting guide",     st:"climb",    dur:"31s",   alias:"docs-branch-docs.deploy.localhost",        health:"build 41%",            when:"19:54", note:"basicAuth on preview router"},
+  {id:"RWY-4F2A", proj:"storefront",preset:"nextjs",     env:"production", branch:"main",       sha:"4f2a9e1", commit:"feat: cart totals rework",     st:"landed",   dur:"2m04s", alias:"storefront-devs-team.deploy.localhost",    health:"healthy · p95 214ms",  when:"19:42", note:"rollback base — keep"},
+  {id:"RWY-B3F9", proj:"landing",   preset:"astro",      env:"production", branch:"main",       sha:"b3f97c2", commit:"chore: bump hero copy",        st:"landed",   dur:"38s",   alias:"landing-devs-team.deploy.localhost",       health:"static publish",       when:"18:11", note:"served from data/static"},
+  {id:"RWY-2E8C", proj:"storefront",preset:"nextjs",     env:"staging",    branch:"staging",    sha:"2e8c5b0", commit:"wip: checkout experiments",   st:"held",     dur:"—",     alias:"storefront-env-staging.deploy.localhost",  health:"queue depth 1",        when:"19:46", note:"waits on build slot"},
+  {id:"RWY-A110", proj:"api",       preset:"dockerfile", env:"preview",    branch:"retry-sched",sha:"a1104f9", commit:"feat: retry scheduler",       st:"diverted", dur:"1m31s", alias:"api-id-a1104f.deploy.localhost",           health:"runner OOM killed",    when:"19:39", note:"container stopped, strip kept"},
+  {id:"RWY-8C31", proj:"api",       preset:"dockerfile", env:"production", branch:"main",       sha:"8c31d02", commit:"chore: deps bump",             st:"landed",   dur:"1m12s", alias:"api-devs-team.deploy.localhost",           health:"retained for rollback",when:"16:03", note:""},
+  {id:"RWY-F044", proj:"docs",      preset:"vite",       env:"production", branch:"main",       sha:"f044caa", commit:"fix: nav anchors",             st:"landed",   dur:"26s",   alias:"docs-devs-team.deploy.localhost",          health:"superseded by 77BD",   when:"17:52", note:""},
+];
+
+/* stage index per status for the flight path */
+const stageIdx = { held:0, taxi:1, climb:2, final:3, landed:4, diverted:4 };
+
+function fpathSVG(f) {
+  const W = 220, y = 12, x0 = 8, x1 = W - 10, n = 5;
+  const cur = stageIdx[f.st];
+  const div = f.st === 'diverted';
+  const xs = [...Array(n)].map((_, i) => x0 + i * (x1 - x0) / (n - 1));
+  const done = xs[cur];
+  return `<svg class="fpath" viewBox="0 0 ${W} 26">
+    <line class="track" x1="${x0}" y1="${y}" x2="${x1}" y2="${y}"/>
+    ${!div ? `<line class="done" x1="${x0}" y1="${y}" x2="${done}" y2="${y}"/>` : ''}
+    ${xs.map((x, i) => `
+      <circle class="tick ${!div && i <= cur ? 'hit' : ''}" cx="${x}" cy="${y}" r="2.4"/>
+      <text class="lbl ${!div && i === cur ? 'cur' : ''}" x="${x}" y="${y + 11}" text-anchor="middle">${STAGES[i][0]}</text>`).join('')}
+    ${div
+      ? `<circle class="plane" cx="${x1 - 14}" cy="${y - 1}" r="3" fill="var(--bad)"/><text class="lbl" x="${x1 - 14}" y="${y + 11}" text-anchor="middle" fill="var(--bad)" style="fill:var(--bad)">DIV</text>`
+      : `<circle class="${cur === 4 ? 'end hit' : 'plane'}" cx="${done}" cy="${y}" r="${cur === 4 ? 3.4 : 3}"/>`
+    }
+  </svg>`;
+}
+
+const LOGS = {
+  default: [
+    ["19:53:02", "claim · SELECT … FOR UPDATE SKIP LOCKED · worker-0"],
+    ["19:53:04", "clone main@SHA · depth 1"],
+    ["19:53:19", "build · runner node:22"],
+    ["19:53:47", "probe :3000 · 200 OK · 214ms"],
+  ],
+};
+
+let filt = "all", q = "", open = -1;
+function render() {
+  const rows = F.map((f, i) => ({f, i})).filter(({f}) =>
+    (filt === 'all' || f.st === filt) &&
+    (!q || (f.id + f.proj + f.commit + f.env).toLowerCase().includes(q)));
+  document.getElementById('count').textContent = rows.length + ' of ' + F.length + ' flights';
+  document.getElementById('list').innerHTML = rows.map(({f, i}) => `
+    <div class="row ${i === open ? 'open' : ''}" data-i="${i}">
+      <div class="row-main">
+        <div class="cs">${f.id}<small>${f.sha} · ${f.branch}</small></div>
+        <div><span class="pill ${f.st}">${f.st === 'held' ? 'HELD' : f.st === 'diverted' ? 'DIVERTED' : f.st === 'final' ? 'ON FINAL' : f.st.toUpperCase()}</span></div>
+        <div class="route">${f.proj} <i>→</i> <span class="env">${f.env}</span></div>
+        <div class="commit">${f.commit}</div>
+        <div>${fpathSVG(f)}</div>
+        <div class="when">${f.when}<br>${f.dur}</div>
+      </div>
+      <div class="exp">
+        <div class="kv">
+          <div class="k">Route</div><div class="v">${f.proj} · ${f.branch} → ${f.env}</div>
+          <div class="k">Runner</div><div class="v">${f.preset} · node:22</div>
+          <div class="k">Health</div><div class="v">${f.health}</div>
+          <div class="k">Aliases</div><div class="alias-chips">
+            <span><b>-env</b> ${f.env}.deploy.localhost</span>
+            <span><b>-branch</b> ${f.branch}.deploy.localhost</span>
+            <span><b>-id</b> ${f.sha.slice(0,7)}.deploy.localhost</span>
+          </div>
+          ${f.note ? `<div class="k">Note</div><div class="v">${f.note}</div>` : ''}
+        </div>
+        <div class="logbox">${LOGS.default.map(l => `<div><span class="t">${l[0]}</span>${l[1]}</div>`).join('')}
+          <div><span class="t">${f.when}</span><span class="${f.st === 'diverted' ? 'err' : 'ok'}">${f.st === 'diverted' ? 'FATAL: OOM in runner — teardown complete' : 'status ' + f.st + ' · recorded'}</span></div>
+        </div>
+        <div class="actions">
+          <button class="btn">Open logs</button>
+          <button class="btn">Visit ${f.alias.split('.')[0]}</button>
+          <button class="btn">Redeploy</button>
+          <button class="btn">Rollback</button>
+        </div>
+      </div>
+    </div>`).join('');
+  [...document.querySelectorAll('.row')].forEach(el =>
+    el.addEventListener('click', e => {
+      if (e.target.tagName === 'BUTTON') return;
+      const i = +el.dataset.i; open = open === i ? -1 : i; render();
+    }));
+}
+document.getElementById('filters').addEventListener('click', e => {
+  const c = e.target.closest('.chip'); if (!c) return;
+  filt = c.dataset.f;
+  document.querySelectorAll('.chip').forEach(x => x.classList.toggle('on', x === c));
+  render();
+});
+document.getElementById('q').addEventListener('input', e => { q = e.target.value.toLowerCase(); render(); });
+render();
+</script>
+</body>
+</html>

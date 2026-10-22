@@ -16,7 +16,7 @@ cargo build
 docker compose -f compose/development.yml up -d --build
 
 # Dashboard (React + Vite)
-cd web && pnpm install && pnpm dev
+cd dashboard && pnpm install && pnpm dev
 ```
 
 ## Workflow
@@ -31,7 +31,7 @@ cd web && pnpm install && pnpm dev
 cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cd web && pnpm build        # if you touched web/
+cd dashboard && pnpm build        # if you touched dashboard/
 ```
 
 - **Migrations** live in `migrations/` — numbered, idempotent, additive.

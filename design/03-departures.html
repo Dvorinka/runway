@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RUNWAY — DEPARTURES</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --board: #0C0C0E;
+    --cell: #17171B;
+    --cell-edge: #000;
+    --text: #F2EFE6;
+    --dim: #6B6A63;
+    --brand: #FF4D00;
+    --amber: #FFB300;
+    --green: #3DDC74;
+    --red: #FF4747;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background:#0A0A0C; color:var(--text);
+    font-family:"IBM Plex Mono", ui-monospace, monospace;
+    min-height:100vh; display:flex; flex-direction:column;
+  }
+  ::selection { background:var(--brand); color:#fff; }
+
+  /* ===== WAYFINDING ===== */
+  .wayfinding {
+    padding:26px 4vw 0;
+  }
+  .wf-row { display:flex; align-items:flex-end; justify-content:space-between; gap:20px; flex-wrap:wrap; }
+  .wf-title {
+    font-family:Archivo,sans-serif; font-weight:900;
+    font-size:clamp(46px, 8.5vw, 120px);
+    line-height:.9; letter-spacing:-.02em; text-transform:uppercase;
+  }
+  .wf-title .arrow { color:var(--brand); font-weight:700; }
+  .wf-signs { display:flex; gap:10px; padding-bottom:10px; flex-wrap:wrap; }
+  .sign {
+    font-family:Archivo,sans-serif; font-weight:700; font-size:12px; letter-spacing:.14em;
+    text-transform:uppercase; padding:9px 14px 8px;
+    border:1.5px solid #2A2A2E; color:var(--dim); border-radius:3px;
+    text-decoration:none; transition:.15s;
+  }
+  .sign:hover { border-color:var(--brand); color:var(--text); }
+  .sign b { color:var(--brand); font-weight:700; margin-right:6px; }
+  .sign.right b { margin-right:0; margin-left:6px; }
+
+  .wf-bar {
+    margin-top:22px; display:flex; align-items:center; gap:0;
+    font-family:Archivo,sans-serif; font-weight:700; font-size:12px; letter-spacing:.16em; text-transform:uppercase;
+  }
+  .wf-bar .tab {
+    padding:11px 22px 10px; background:var(--brand); color:#fff; cursor:pointer; border:none;
+    font:inherit; display:flex; align-items:center; gap:10px;
+  }
+  .wf-bar .tab + .tab { background:#1C1C20; color:var(--dim); }
+  .wf-bar .tab + .tab:hover { color:var(--text); }
+  .wf-bar .fill { flex:1; height:4px; background:#1C1C20; align-self:center; }
+  .wf-bar .fill i { display:block; height:100%; width:34%; background:var(--brand); }
+
+  /* ===== BOARD ===== */
+  .board-wrap { padding:30px 4vw 20px; flex:1; }
+  .board {
+    background:var(--board);
+    border:1px solid #222227; border-radius:6px;
+    box-shadow:0 24px 60px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.05);
+    overflow:hidden;
+  }
+  .board-head, .row {
+    display:grid;
+    grid-template-columns: 150px 110px 1.6fr 1.5fr 1.4fr 200px;
+    align-items:stretch;
+  }
+  .board-head {
+    padding:14px 0 10px; border-bottom:2px solid #222227;
+    font-size:10px; letter-spacing:.24em; color:var(--dim);
+    font-family:Archivo,sans-serif; font-weight:600;
+  }
+  .board-head > div { padding:0 18px; }
+  .row { border-bottom:1px solid #1B1B20; }
+  .row:last-child { border-bottom:none; }
+  .row:hover { background:rgba(255,255,255,.025); }
+  .flap {
+    padding:13px 18px; font-size:14px; letter-spacing:.06em;
+    position:relative; overflow:hidden;
+    font-variant-numeric:tabular-nums; white-space:nowrap;
+  }
+  .flap::after { /* the split line */
+    content:""; position:absolute; left:0; right:0; top:50%; height:1px;
+    background:rgba(0,0,0,.85);
+  }
+  .flap.h { color:var(--dim); }
+  .flap .flight { font-weight:600; color:#fff; }
+  .flap .go { color:var(--brand); }
+  .status { font-weight:600; letter-spacing:.1em; display:flex; align-items:center; gap:9px; }
+  .status .dot { width:8px; height:8px; border-radius:50%; flex:none; }
+  .st-departed .dot { background:var(--green); box-shadow:0 0 8px var(--green); }
+  .st-departed { color:var(--green); }
+  .st-boarding .dot { background:var(--amber); box-shadow:0 0 8px var(--amber); animation:blk 1s steps(2) infinite; }
+  .st-boarding { color:var(--amber); }
+  @keyframes blk { 50% { opacity:.15; } }
+  .st-delayed .dot { background:var(--amber); opacity:.5; }
+  .st-delayed { color:#8a834f; }
+  .st-diverted .dot { background:var(--red); box-shadow:0 0 8px var(--red); }
+  .st-diverted { color:var(--red); }
+
+  .board-foot {
+    display:flex; justify-content:space-between; padding:10px 18px 12px;
+    font-size:10px; color:var(--dim); letter-spacing:.2em;
+  }
+
+  /* ===== ANNOUNCEMENTS ===== */
+  .announce {
+    margin:0 4vw 30px; padding:14px 0;
+    border-top:1px solid #1C1C20;
+    font-size:12px; color:var(--dim); letter-spacing:.04em;
+    overflow:hidden; white-space:nowrap;
+  }
+  .announce b { color:var(--brand); font-weight:600; }
+  .announce span { display:inline-block; animation:crawl 40s linear infinite; }
+  @keyframes crawl { from{transform:translateX(0);} to{transform:translateX(-50%);} }
+
+  @media (max-width: 1050px) {
+    .board-head { display:none; }
+    .board-head, .row { grid-template-columns:1fr 1fr; }
+    .flap:nth-child(n+3) { display:none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wayfinding">
+  <div class="wf-row">
+    <div class="wf-title"><span id="wf-word">Departures</span> <span class="arrow">→</span></div>
+    <nav class="wf-signs">
+      <a class="sign" href="#"><b>↑</b>Overview</a>
+      <a class="sign" href="#"><b>→</b>Projects</a>
+      <a class="sign" href="#"><b>→</b>Teams</a>
+      <a class="sign right" href="#">Settings<b>⌘K</b></a>
+    </nav>
+  </div>
+  <div class="wf-bar">
+    <button class="tab" id="tab-dep" onclick="setBoard('dep')">↗ Departures</button>
+    <button class="tab" id="tab-arr" onclick="setBoard('arr')">↘ Arrivals</button>
+    <div class="fill"><i id="fill"></i></div>
+  </div>
+</div>
+
+<div class="board-wrap">
+  <div class="board">
+    <div class="board-head">
+      <div>FLIGHT</div><div>TIME</div><div>DESTINATION</div><div>ALIAS / GATE</div><div>REMARKS</div><div>STATUS</div>
+    </div>
+    <div id="rows"></div>
+    <div class="board-foot">
+      <span>RUNWAY INTL · TERMINAL devs-team</span>
+      <span id="stamp"></span>
+    </div>
+  </div>
+</div>
+
+<div class="announce"><span id="ann"></span></div>
+
+<script>
+const BOARDS = {
+  dep: {
+    word: "Departures",
+    rows: [
+      ["RWY-9C1E","19:53","api · production","api-devs-team","fix: token refresh race","BOARDING","st-boarding"],
+      ["RWY-77BD","19:54","docs · preview","docs-branch-docs","docs: self-hosting guide","BOARDING","st-boarding"],
+      ["RWY-2E8C","19:46","storefront · staging","storefront-env-staging","wip: checkout experiments","DELAYED","st-delayed"],
+      ["RWY-4F2A","19:42","storefront · production","storefront-devs-team","feat: cart totals rework","DEPARTED","st-departed"],
+      ["RWY-B3F9","18:11","landing · production","landing-devs-team","chore: bump hero copy","DEPARTED","st-departed"],
+      ["RWY-A110","19:39","api · preview","api-id-a1104f","feat: retry scheduler","DIVERTED","st-diverted"],
+    ],
+    ann: "Flight <b>RWY-9C1E</b> now boarding at gate <b>ENV-PROD</b> · alias swap in progress ·· <b>RWY-2E8C</b> holding — build slot occupied ·· diverted flight <b>RWY-A110</b>: runner OOM, strip retained for rollback reference ·· the next free departure slot is <b>NOW</b>"
+  },
+  arr: {
+    word: "Arrivals",
+    rows: [
+      ["RWY-4F2A","19:42","storefront · production","storefront-devs-team","landed · healthy · p95 214ms","LANDED","st-departed"],
+      ["RWY-B3F9","18:11","landing · production","landing-devs-team","landed · static publish","LANDED","st-departed"],
+      ["RWY-F044","17:52","docs · production","docs-devs-team","landed · superseded by 77BD","LANDED","st-departed"],
+      ["RWY-A110","19:39","api · preview","api-id-a1104f","diverted to logs · OOM","DIVERTED","st-diverted"],
+      ["RWY-8C31","16:03","api · production","api-devs-team","landed · retained for rollback","LANDED","st-departed"],
+    ],
+    ann: "Arriving flight <b>RWY-9C1E</b> on final approach · expected touchdown on next probe cycle ·· rollback carousel open — last 5 arrivals retained per environment ·· collect deployments at <b>-env-prod</b>"
+  }
+};
+let board = 'dep';
+
+const CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789·-:/";
+function scramble(el, final, dur = 700) {
+  const start = performance.now();
+  (function frame(now) {
+    const p = Math.min(1, (now - start) / dur);
+    const lock = Math.floor(final.length * p);
+    let out = final.slice(0, lock);
+    for (let i = lock; i < final.length; i++)
+      out += final[i] === ' ' ? ' ' : CHARS[Math.random() * CHARS.length | 0];
+    el.textContent = out;
+    if (p < 1) requestAnimationFrame(frame);
+  })(start);
+}
+
+function render() {
+  const b = BOARDS[board];
+  const rows = document.getElementById('rows');
+  rows.innerHTML = b.rows.map(r => `
+    <div class="row">
+      <div class="flap"><span class="flight" data-t="${r[0]}"></span></div>
+      <div class="flap h" data-t="${r[1]}"></div>
+      <div class="flap" data-t="${r[2].toUpperCase()}"></div>
+      <div class="flap h" data-t="${r[3].toUpperCase()}"></div>
+      <div class="flap h" data-t="${r[4].toUpperCase()}"></div>
+      <div class="flap status ${r[6]}"><span class="dot"></span><span data-t="${r[5]}"></span></div>
+    </div>`).join('');
+  // staggered scramble, row by row
+  const cells = [...rows.querySelectorAll('[data-t]')];
+  cells.forEach((c, i) => setTimeout(() => scramble(c, c.dataset.t, 550), i * 55));
+  scramble(document.getElementById('wf-word'), b.word, 800);
+  const ann = b.ann;
+  document.getElementById('ann').innerHTML = ann + " ····· " + ann;
+  document.getElementById('fill').style.width = board === 'dep' ? '34%' : '78%';
+}
+function setBoard(b) {
+  board = b;
+  document.getElementById('tab-dep').style.background = b === 'dep' ? 'var(--brand)' : '#1C1C20';
+  document.getElementById('tab-dep').style.color = b === 'dep' ? '#fff' : 'var(--dim)';
+  document.getElementById('tab-arr').style.background = b === 'arr' ? 'var(--brand)' : '#1C1C20';
+  document.getElementById('tab-arr').style.color = b === 'arr' ? '#fff' : 'var(--dim)';
+  render();
+}
+render();
+setInterval(() => {
+  const d = new Date();
+  document.getElementById('stamp').textContent = 'LOCAL ' + d.toTimeString().slice(0,8) + ' · ZULU ' + d.toISOString().slice(11,19);
+}, 1000);
+</script>
+</body>
+</html>

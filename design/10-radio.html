@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RUNWAY — RADIO</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0B0D10;
+    --panel: #101318;
+    --line: #1E242C;
+    --text: #D5D9DF;
+    --dim: #76808D;
+    --faint: #4A5260;
+    --brand: #FF4D00;
+    --ok: #45D97A;
+    --warn: #FFB224;
+    --bad: #FF5252;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { height:100%; }
+  body {
+    background:var(--bg); color:var(--text);
+    font-family:"IBM Plex Mono", ui-monospace, monospace;
+    font-size:13px; display:flex; flex-direction:column; overflow:hidden;
+  }
+  ::selection { background:var(--brand); color:#fff; }
+
+  /* ===== FREQ BAR ===== */
+  .freqbar {
+    height:40px; flex:none; display:flex; align-items:center; gap:2px;
+    border-bottom:1px solid var(--line); padding:0 14px; font-size:11px;
+  }
+  .freqbar .call { font-weight:700; color:#fff; letter-spacing:.12em; margin-right:16px; display:flex; align-items:center; gap:8px; }
+  .chan {
+    padding:5px 11px; border-radius:4px; color:var(--dim); cursor:pointer; letter-spacing:.08em;
+    transition:.1s; border:1px solid transparent; font-size:11px;
+  }
+  .chan b { color:var(--faint); font-weight:600; margin-right:6px; }
+  .chan:hover { color:var(--text); }
+  .chan.on { color:#fff; border-color:var(--line); background:var(--panel); }
+  .chan.on b { color:var(--brand); }
+  .freqbar .sp { flex:1; }
+  .ptt { display:flex; align-items:center; gap:8px; color:var(--faint); font-size:10px; letter-spacing:.14em; }
+  .ptt i { width:7px; height:7px; border-radius:50%; background:var(--ok); box-shadow:0 0 7px var(--ok); font-style:normal; }
+
+  /* ===== TRANSMISSIONS ===== */
+  .feed { flex:1; overflow-y:auto; padding:10px 0; scroll-behavior:smooth; }
+  .feed::-webkit-scrollbar { width:6px; } .feed::-webkit-scrollbar-thumb { background:var(--line); }
+  .tx {
+    display:grid; grid-template-columns:64px 92px 1fr auto; gap:14px;
+    padding:6px 18px; cursor:pointer; line-height:1.5;
+    border-left:2px solid transparent;
+  }
+  .tx:hover { background:var(--panel); }
+  .tx.sel { background:var(--panel); border-left-color:var(--brand); }
+  .tx .time { color:var(--faint); font-variant-numeric:tabular-nums; }
+  .tx .cs { color:var(--brand); font-weight:600; }
+  .tx .msg { color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .tx .msg i { font-style:normal; color:var(--dim); }
+  .tx .msg b { font-weight:600; }
+  .tx .ack { color:var(--faint); font-size:11px; }
+  .tx.bad .cs { color:var(--bad); }
+  .tx.warn .cs { color:var(--warn); }
+  .tx.ok .cs { color:var(--ok); }
+  .tx.sys .cs { color:var(--dim); }
+  .tx.sys .msg { color:var(--dim); }
+
+  /* readback panel */
+  .readback {
+    flex:none; border-top:1px solid var(--line); background:var(--panel);
+    max-height:0; overflow:hidden; transition:max-height .18s ease;
+  }
+  .readback.show { max-height:190px; }
+  .readback .inner { padding:14px 18px; display:grid; grid-template-columns:1fr 1fr; gap:4px 30px; font-size:11.5px; }
+  .readback .k { color:var(--faint); font-size:9.5px; letter-spacing:.14em; text-transform:uppercase; }
+  .readback .v { color:var(--text); margin-bottom:6px; }
+  .readback .v a { color:var(--brand); text-decoration:none; }
+  .readback .ops { grid-column:1/-1; display:flex; gap:8px; margin-top:6px; }
+  .readback .ops button {
+    font:inherit; font-size:10px; letter-spacing:.1em; padding:4px 10px;
+    background:transparent; border:1px solid var(--line); color:var(--dim);
+    border-radius:4px; cursor:pointer; text-transform:uppercase;
+  }
+  .readback .ops button:hover { border-color:var(--brand); color:var(--brand); }
+
+  /* ===== COMMAND LINE ===== */
+  .cmdline {
+    flex:none; display:flex; align-items:center; gap:12px;
+    border-top:1px solid var(--line); padding:12px 18px; background:#090B0E;
+  }
+  .cmdline .prompt { color:var(--brand); font-weight:700; }
+  .cmdline input {
+    flex:1; background:transparent; border:none; outline:none;
+    font:inherit; color:#fff; font-size:13px; caret-color:var(--brand);
+  }
+  .cmdline input::placeholder { color:var(--faint); }
+  .cmdline .hint { color:var(--faint); font-size:10px; letter-spacing:.08em; }
+  .cmdline .hint kbd { border:1px solid var(--line); border-radius:3px; padding:0 4px; }
+
+  /* ===== STATUS FOOTER ===== */
+  .statbar {
+    flex:none; height:26px; display:flex; align-items:center; gap:20px;
+    padding:0 18px; font-size:10px; color:var(--faint); letter-spacing:.1em;
+    background:var(--panel); border-top:1px solid var(--line);
+  }
+  .statbar b { color:var(--dim); font-weight:600; }
+  .statbar .sp { flex:1; }
+  .statbar .ok { color:var(--ok); }
+</style>
+</head>
+<body>
+
+<div class="freqbar">
+  <div class="call">
+    <svg width="15" height="15" viewBox="0 0 240 240"><g transform="translate(0 -14) rotate(22.5 120 120)"><g fill="none" stroke="#D5D9DF" stroke-width="18" stroke-linecap="round"><path d="M56 204 L196 64"/><path d="M44 160 C 94 160 122 140 150 110"/></g><circle cx="150" cy="110" r="13" fill="#FF4D00"/></g></svg>
+    RUNWAY
+  </div>
+  <div class="chan on"><b>121.9</b>TRAFFIC</div>
+  <div class="chan"><b>118.3</b>GROUND</div>
+  <div class="chan"><b>119.1</b>TEAMS</div>
+  <div class="chan"><b>134.7</b>LOG</div>
+  <div class="sp"></div>
+  <div class="ptt"><i></i>RX LIVE · PTT READY</div>
+</div>
+
+<div class="feed" id="feed"></div>
+
+<div class="readback" id="rb"><div class="inner" id="rb-inner"></div></div>
+
+<div class="cmdline">
+  <span class="prompt">▸</span>
+  <input id="cmd" placeholder='transmit — try "deploy api", "rollback storefront", "logs 9c1e", or just filter…' autocomplete="off">
+  <span class="hint"><kbd>/</kbd> focus · <kbd>↑↓</kbd> select · <kbd>↵</kbd> readback</span>
+</div>
+
+<div class="statbar">
+  <span>POOL <b class="ok">sqlx 8/10</b></span>
+  <span>QUEUE <b>1 held</b></span>
+  <span>WORKER <b>worker-0 up</b></span>
+  <span>EDGE <b>traefik file-provider</b></span>
+  <span class="sp"></span>
+  <span id="z"></span>
+</div>
+
+<script>
+const TX = [
+  {t:"19:53", cs:"RWY-9C1E", cls:"",      msg:"<i>api</i> · established on final, <b>runway ENV-PROD</b>",                 ack:"probe 200"},
+  {t:"19:54", cs:"RWY-77BD", cls:"",      msg:"<i>docs</i> · cleared for takeoff, <b>runway BRANCH-DOCS</b> — climb 41%",  ack:"building"},
+  {t:"19:46", cs:"RWY-2E8C", cls:"warn",  msg:"<i>storefront</i> · hold at <b>ENV-STAGING</b> — build slot occupied",      ack:"hold"},
+  {t:"19:42", cs:"RWY-4F2A", cls:"ok",    msg:"<i>storefront</i> · landed <b>ENV-PROD</b> — vacated runway, p95 214ms",    ack:"healthy"},
+  {t:"19:39", cs:"RWY-A110", cls:"bad",   msg:"<i>api</i> · diverted — <b>runner OOM</b>, crew inspecting logs",            ack:"mayday"},
+  {t:"18:11", cs:"RWY-B3F9", cls:"ok",    msg:"<i>landing</i> · landed <b>ENV-PROD</b> — static publish complete",          ack:"parked"},
+  {t:"17:52", cs:"RWY-F044", cls:"ok",    msg:"<i>docs</i> · landed <b>ENV-PROD</b> — superseded by RWY-77BD",              ack:"parked"},
+  {t:"16:03", cs:"RWY-8C31", cls:"ok",    msg:"<i>api</i> · landed <b>ENV-PROD</b> — retained as rollback target",          ack:"parked"},
+  {t:"19:52", cs:"TOWER",    cls:"sys",   msg:"reconcile pass — <b>0 orphans</b>, 1 requeue · traefik.yml atomic write",    ack:"ok"},
+  {t:"19:50", cs:"TOWER",    cls:"sys",   msg:"retention sweep — <b>env-prod keeps last 5</b> rollback targets",            ack:"ok"},
+  {t:"19:48", cs:"RWY-9C1E", cls:"",      msg:"<i>api</i> · edge network <b>runway_edge_rwy-9c1e</b> established",          ack:"ok"},
+  {t:"19:41", cs:"RWY-4F2A", cls:"",      msg:"<i>storefront</i> · alias swap <b>-env-prod → 4f2a</b> — traffic switched",  ack:"swapped"},
+];
+
+const DETAIL = {
+  "RWY-9C1E": {route:"api · main@9c1e44d → production", alias:"api-devs-team.deploy.localhost", health:"probe 200 OK · 214ms", note:"alias swap -env-prod pending"},
+  "RWY-77BD": {route:"docs · docs@77bd08a → preview",   alias:"docs-branch-docs.deploy.localhost", health:"build 41% · vite", note:"basicAuth on router"},
+  "RWY-4F2A": {route:"storefront · main@4f2a9e1 → production", alias:"storefront-devs-team.deploy.localhost", health:"healthy · p95 214ms", note:"rollback base"},
+  "RWY-B3F9": {route:"landing · main@b3f97c2 → production", alias:"landing-devs-team.deploy.localhost", health:"static publish", note:""},
+  "RWY-2E8C": {route:"storefront · staging@2e8c5b0 → staging", alias:"storefront-env-staging.deploy.localhost", health:"queue depth 1", note:"held — build slot"},
+  "RWY-A110": {route:"api · retry-sched@a1104f9 → preview", alias:"api-id-a1104f.deploy.localhost", health:"runner OOM", note:"strip retained"},
+  "RWY-F044": {route:"docs · main@f044caa → production", alias:"docs-devs-team.deploy.localhost", health:"superseded", note:""},
+  "RWY-8C31": {route:"api · main@8c31d02 → production", alias:"api-devs-team.deploy.localhost", health:"rollback target", note:""},
+  "TOWER":    {route:"instance loop", alias:"—", health:"nominal", note:"system transmission"},
+};
+
+const feed = document.getElementById('feed');
+const cmd = document.getElementById('cmd');
+const rb = document.getElementById('rb');
+let sel = -1, q = '';
+
+function render() {
+  const rows = TX.filter(x => !q || (x.cs + x.msg.replace(/<[^>]+>/g,'')).toLowerCase().includes(q));
+  feed.innerHTML = rows.map((x, i) => `
+    <div class="tx ${x.cls} ${i === sel ? 'sel' : ''}" data-i="${i}">
+      <span class="time">${x.t}Z</span>
+      <span class="cs">${x.cs}</span>
+      <span class="msg">${x.msg}</span>
+      <span class="ack">[${x.ack}]</span>
+    </div>`).join('');
+  [...feed.children].forEach(el => el.onclick = () => { sel = +el.dataset.i; render(); readback(rows[sel].cs); });
+  return rows;
+}
+let view = render();
+
+function readback(cs) {
+  const d = DETAIL[cs]; if (!d) { rb.classList.remove('show'); return; }
+  document.getElementById('rb-inner').innerHTML = `
+    <div><div class="k">Route</div><div class="v">${d.route}</div></div>
+    <div><div class="k">Alias</div><div class="v"><a href="#">${d.alias}</a></div></div>
+    <div><div class="k">Health</div><div class="v">${d.health}</div></div>
+    <div><div class="k">Note</div><div class="v">${d.note || '—'}</div></div>
+    <div class="ops">
+      <button>readback logs</button><button>open</button><button>redeploy</button><button>rollback env</button>
+    </div>`;
+  rb.classList.add('show');
+}
+
+cmd.addEventListener('input', () => { q = cmd.value.toLowerCase().replace(/^(deploy|logs|rollback|show|status)\s*/,''); sel = -1; rb.classList.remove('show'); view = render(); });
+cmd.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && sel >= 0) readback(view[sel].cs);
+});
+document.addEventListener('keydown', e => {
+  if (e.key === '/') { e.preventDefault(); cmd.focus(); }
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    sel = e.key === 'ArrowDown' ? Math.min(sel + 1, view.length - 1) : Math.max(sel - 1, 0);
+    render();
+  }
+  if (e.key === 'Escape') { rb.classList.remove('show'); sel = -1; render(); }
+});
+
+setInterval(() => document.getElementById('z').textContent = new Date().toISOString().slice(11,19) + 'Z', 1000);
+document.querySelectorAll('.chan').forEach(c => c.onclick = () => {
+  document.querySelectorAll('.chan').forEach(x => x.classList.toggle('on', x === c));
+});
+</script>
+</body>
+</html>

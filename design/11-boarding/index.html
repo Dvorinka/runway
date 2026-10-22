@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RUNWAY — Overview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="theme.css">
+</head>
+<body>
+
+<header>
+  <a class="logo" href="index.html">
+    <svg width="19" height="19" viewBox="0 0 240 240"><g transform="translate(0 -14) rotate(22.5 120 120)"><g fill="none" stroke="#ECEDEF" stroke-width="18" stroke-linecap="round"><path d="M56 204 L196 64"/><path d="M44 160 C 94 160 122 140 150 110"/></g><circle cx="150" cy="110" r="13" fill="#FF4D00"/></g></svg>
+    RUNWAY
+  </a>
+  <nav>
+    <a href="index.html" class="on">Overview</a><a href="projects.html">Projects</a><a href="deployments.html">Departures</a><a href="#">Teams</a><a href="#">Settings</a>
+  </nav>
+  <div class="sp"></div>
+  <div class="cmdk">Search or command <kbd>⌘K</kbd></div>
+  <div class="avatar">D</div>
+</header>
+
+<main>
+  <div class="phead">
+    <h1>Overview</h1>
+    <span class="sub">devs-team · every push is a departure</span>
+    <div class="sp"></div>
+    <button class="btn primary">New deployment</button>
+  </div>
+
+  <div class="instruments">
+    <div class="inst"><div class="lbl live">In flight</div><div class="v">2</div><div class="sub">climbing · on final</div></div>
+    <div class="inst"><div class="lbl ok">Landed · 24h</div><div class="v">9</div><div class="sub">all environments</div></div>
+    <div class="inst"><div class="lbl bad">Diverted</div><div class="v">1 <small>runner OOM</small></div><div class="sub">RWY-A110 · logs kept</div></div>
+    <div class="inst"><div class="lbl">Queue</div><div class="v">1</div><div class="sub">SKIP LOCKED · postgres</div></div>
+  </div>
+
+  <!-- ============ CREATIVE SECTION: the board ============ -->
+  <div class="btabs">
+    <button class="tab" id="tab-dep">↗ Departures</button>
+    <button class="tab" id="tab-arr">↘ Arrivals</button>
+    <div class="fill"><i id="fill"></i></div>
+  </div>
+  <div class="board" style="margin-top:0">
+    <div class="board-head">
+      <div>FLIGHT</div><div>TIME</div><div>ROUTE</div><div>GATE</div><div>REMARKS</div><div>STATUS</div>
+    </div>
+    <div id="rows"></div>
+    <div class="board-foot">
+      <span>RUNWAY INTL · TERMINAL devs-team</span>
+      <span id="stamp"></span>
+    </div>
+  </div>
+  <div class="announce"><span id="ann"></span></div>
+  <!-- ============ /board ============ -->
+
+  <div class="phead" style="margin-top:44px">
+    <h1 style="font-size:17px">Latest departures</h1>
+    <span class="sub">coupons torn from project passes — <a href="deployments.html" style="color:var(--brand);text-decoration:none">all departures →</a></span>
+  </div>
+  <div class="rack" id="latest" style="max-width:920px"></div>
+
+  <div class="phead" style="margin-top:44px">
+    <h1 style="font-size:17px">Projects</h1>
+    <span class="sub">4 passes issued — <a href="projects.html" style="color:var(--brand);text-decoration:none">all projects →</a></span>
+  </div>
+  <div class="grid" id="gates" style="grid-template-columns:repeat(auto-fill,minmax(430px,1fr))"></div>
+</main>
+
+<script src="data.js"></script>
+<script>
+const BOARDS = {
+  dep: {
+    rows: FLIGHTS.slice(0, 6).map(f => [
+      f.id, f.when, `${f.proj} · ${f.env}`.toUpperCase(), gateOf(f),
+      f.commit.toUpperCase(),
+      f.st === 'landed' ? 'DEPARTED' : f.st === 'held' ? 'DELAYED' : f.st === 'diverted' ? 'DIVERTED' : 'BOARDING',
+      f.st === 'landed' ? 'st-departed' : f.st === 'held' ? 'st-delayed' : f.st === 'diverted' ? 'st-diverted' : 'st-boarding',
+    ]),
+    ann: "Flight <b>RWY-9C1E</b> now boarding at gate <b>ENV-PROD</b> · alias swap in progress ·· <b>RWY-2E8C</b> holding — build slot occupied ·· diverted flight <b>RWY-A110</b>: runner OOM, strip retained for rollback reference ·· the next free departure slot is <b>NOW</b>"
+  },
+  arr: {
+    rows: FLIGHTS.filter(f => f.st === 'landed' || f.st === 'diverted').map(f => [
+      f.id, f.when, `${f.proj} · ${f.env}`.toUpperCase(), gateOf(f),
+      (f.st === 'landed' ? `landed · ${f.health}` : 'diverted to logs · OOM').toUpperCase(),
+      f.st === 'landed' ? 'LANDED' : 'DIVERTED',
+      f.st === 'landed' ? 'st-departed' : 'st-diverted',
+    ]),
+    ann: "Arriving flight <b>RWY-9C1E</b> on final approach · expected touchdown on next probe cycle ·· rollback carousel open — last 5 arrivals retained per environment ·· collect deployments at <b>-env-prod</b>"
+  }
+};
+let board = 'dep';
+
+function renderBoard() {
+  const b = BOARDS[board];
+  const rows = document.getElementById('rows');
+  rows.innerHTML = b.rows.map(r => `
+    <div class="brow">
+      <div class="flap"><span class="flight" data-t="${r[0]}"></span></div>
+      <div class="flap h" data-t="${r[1]}"></div>
+      <div class="flap" data-t="${r[2]}"></div>
+      <div class="flap h" data-t="${r[3]}"></div>
+      <div class="flap h" data-t="${r[4]}"></div>
+      <div class="flap bstatus ${r[6]}"><span class="dot"></span><span data-t="${r[5]}"></span></div>
+    </div>`).join('');
+  [...rows.querySelectorAll('[data-t]')].forEach((c, i) =>
+    setTimeout(() => scramble(c, c.dataset.t, 550), i * 45));
+  document.getElementById('ann').innerHTML = b.ann + " ····· " + b.ann;
+  document.getElementById('fill').style.width = board === 'dep' ? '34%' : '78%';
+  document.getElementById('tab-dep').style.background = board === 'dep' ? 'var(--brand)' : 'var(--panel2)';
+  document.getElementById('tab-dep').style.color = board === 'dep' ? '#fff' : 'var(--dim)';
+  document.getElementById('tab-arr').style.background = board === 'arr' ? 'var(--brand)' : 'var(--panel2)';
+  document.getElementById('tab-arr').style.color = board === 'arr' ? '#fff' : 'var(--dim)';
+}
+document.getElementById('tab-dep').onclick = () => { board = 'dep'; renderBoard(); };
+document.getElementById('tab-arr').onclick = () => { board = 'arr'; renderBoard(); };
+renderBoard();
+
+setInterval(() => {
+  const d = new Date();
+  document.getElementById('stamp').textContent = 'LOCAL ' + d.toTimeString().slice(0,8) + ' · ZULU ' + d.toISOString().slice(11,19);
+}, 1000);
+
+document.getElementById('latest').innerHTML = FLIGHTS.slice(0, 4).map((f, i) => couponHTML(f, i)).join('');
+document.getElementById('gates').innerHTML = PROJECTS.map((p, i) => projectPassHTML(p, i)).join('');
+</script>
+</body>
+</html>

@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RUNWAY — RWY-9C1E</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="theme.css">
+</head>
+<body>
+
+<header>
+  <a class="logo" href="index.html">
+    <svg width="19" height="19" viewBox="0 0 240 240"><g transform="translate(0 -14) rotate(22.5 120 120)"><g fill="none" stroke="#ECEDEF" stroke-width="18" stroke-linecap="round"><path d="M56 204 L196 64"/><path d="M44 160 C 94 160 122 140 150 110"/></g><circle cx="150" cy="110" r="13" fill="#FF4D00"/></g></svg>
+    RUNWAY
+  </a>
+  <nav>
+    <a href="index.html">Overview</a><a href="projects.html">Projects</a><a href="deployments.html" class="on">Departures</a><a href="#">Teams</a><a href="#">Settings</a>
+  </nav>
+  <div class="sp"></div>
+  <div class="cmdk">Search or command <kbd>⌘K</kbd></div>
+  <div class="avatar">D</div>
+</header>
+
+<main>
+  <div class="phead">
+    <h1 style="font-size:18px"><a href="deployments.html" style="color:var(--faint);text-decoration:none">Departures</a> <span style="color:var(--faint)">/</span> RWY-9C1E</h1>
+    <span class="sub">flight record · live</span>
+    <div class="sp"></div>
+    <button class="btn">Visit URL</button>
+    <button class="btn">Redeploy</button>
+    <button class="btn primary">Rollback env</button>
+  </div>
+
+  <div id="pass" style="margin-top:18px"></div>
+
+  <div style="background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 22px 8px;margin-top:20px">
+    <div class="sect">Approach progress</div>
+    <div id="hero"></div>
+  </div>
+
+  <div class="detail-grid">
+    <div>
+      <div class="sect">Flight record</div>
+      <div class="kv">
+        <div class="k">Route</div><div class="v">api · main → production</div>
+        <div class="k">Commit</div><div class="v">fix: token refresh race · 9c1e44d</div>
+        <div class="k">Runner</div><div class="v">dockerfile · node:22</div>
+        <div class="k">Health</div><div class="v">probe 200 OK · 214ms</div>
+        <div class="k">Boarded</div><div class="v">19:53Z · push webhook</div>
+        <div class="k">Note</div><div class="v">alias swap -env-prod pending</div>
+        <div class="k">Aliases</div><div class="alias-chips">
+          <span><b>-id</b> api-id-9c1e44d</span>
+          <span><b>-branch</b> api-branch-main</span>
+          <span><b>-env</b> api-devs-team</span>
+        </div>
+      </div>
+    </div>
+    <div>
+      <div class="sect">Tower log · tail</div>
+      <div class="logbox" id="log"></div>
+    </div>
+  </div>
+</main>
+
+<script src="data.js"></script>
+<script>
+const f = FLIGHTS[0];
+document.getElementById('pass').innerHTML = couponHTML(f, 0, true);
+document.getElementById('hero').innerHTML = fpathHeroSVG(f);
+document.getElementById('log').innerHTML = LOG_TAIL.map(l =>
+  `<div><span class="t">${l[0]}</span>${l[1]}</div>`).join('') +
+  `<div><span class="t">19:53Z</span><span class="ok">ON FINAL · 48s · ENV-PROD — awaiting alias swap</span></div>` +
+  `<div><span class="t">…</span><span style="color:var(--faint)">streaming live</span></div>`;
+</script>
+</body>
+</html>

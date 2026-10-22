@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RUNWAY — TICKETS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #131417;
+    --panel: #1A1C20;
+    --line: #262A31;
+    --ticket: #F5F1E6;
+    --ticket-dim: #8A8371;
+    --ink: #191B1F;
+    --text: #ECEDEF;
+    --dim: #8B93A1;
+    --brand: #FF4D00;
+    --ok: #2E9E57;
+    --bad: #C23B2E;
+    --warn: #B8860B;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background:var(--bg); color:var(--text);
+    font-family:"IBM Plex Mono", ui-monospace, monospace;
+    min-height:100vh; font-size:13px;
+  }
+  ::selection { background:var(--brand); color:#fff; }
+
+  header {
+    height:50px; display:flex; align-items:center; gap:20px; padding:0 26px;
+    border-bottom:1px solid var(--line);
+  }
+  .logo { display:flex; align-items:center; gap:9px; font-family:Archivo,sans-serif; font-weight:700; font-size:14px; letter-spacing:.08em; }
+  header nav { display:flex; gap:4px; margin-left:10px; }
+  header nav a { color:var(--dim); text-decoration:none; font-size:12px; font-family:Archivo,sans-serif; font-weight:600; padding:5px 11px; border-radius:6px; }
+  header nav a.on { background:var(--panel); color:var(--text); }
+  header .sp { flex:1; }
+  .checkin {
+    font-family:Archivo,sans-serif; font-size:11px; font-weight:700; letter-spacing:.14em;
+    background:var(--brand); color:#fff; border:none; padding:8px 16px; border-radius:6px; cursor:pointer;
+  }
+
+  main { max-width:1220px; margin:0 auto; padding:30px 26px 80px; }
+  .phead { display:flex; align-items:baseline; gap:16px; flex-wrap:wrap; margin-bottom:8px; }
+  .phead h1 { font-family:Archivo,sans-serif; font-weight:800; font-size:24px; letter-spacing:-.01em; }
+  .phead .sub { color:var(--dim); font-size:12px; }
+  .phead .sp { flex:1; }
+
+  .bins { display:flex; gap:6px; margin:18px 0 24px; flex-wrap:wrap; }
+  .bin {
+    font-family:"IBM Plex Mono"; font-size:10.5px; letter-spacing:.1em; text-transform:uppercase;
+    color:var(--dim); background:transparent; border:1px solid var(--line); border-radius:20px;
+    padding:5px 13px; cursor:pointer; transition:.12s;
+  }
+  .bin:hover { color:var(--text); }
+  .bin.on { background:var(--text); color:var(--bg); border-color:var(--text); font-weight:600; }
+
+  /* ===== TICKETS ===== */
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(380px,1fr)); gap:20px; }
+  .ticket {
+    background:var(--ticket); color:var(--ink); border-radius:10px;
+    display:grid; grid-template-columns:86px 1fr;
+    position:relative; overflow:hidden; cursor:pointer;
+    box-shadow:0 8px 24px rgba(0,0,0,.4);
+    transition:transform .15s ease, box-shadow .15s ease;
+  }
+  .ticket:hover { transform:translateY(-3px); box-shadow:0 16px 34px rgba(0,0,0,.5); }
+  .ticket .edge { position:absolute; top:0; left:0; right:0; height:5px; }
+  .edge.landed { background:var(--ok); }
+  .edge.live { background:var(--brand); }
+  .edge.held { background:var(--warn); }
+  .edge.diverted { background:var(--bad); }
+
+  /* stub */
+  .stub {
+    border-right:2px dashed rgba(25,27,31,.3);
+    padding:16px 10px 12px; display:flex; flex-direction:column;
+    align-items:center; gap:8px; text-align:center;
+  }
+  .qr { width:44px; height:44px; image-rendering:pixelated; }
+  .stub .s-cs { font-size:9px; font-weight:600; letter-spacing:.08em; line-height:1.5; }
+  .stub .s-seat { font-size:8px; color:var(--ticket-dim); letter-spacing:.1em; }
+
+  /* body */
+  .tbody { padding:14px 16px 10px; min-width:0; }
+  .t-route { display:flex; align-items:baseline; gap:10px; margin:4px 0 2px; }
+  .t-route .from, .t-route .to { font-family:Archivo,sans-serif; font-weight:900; font-size:21px; letter-spacing:-.01em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .t-route .to { color:var(--brand); }
+  .t-route .arr { color:var(--ticket-dim); font-size:15px; flex:none; }
+  .t-names { font-size:9px; color:var(--ticket-dim); letter-spacing:.06em; display:flex; gap:14px; }
+  .t-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:4px 10px; margin-top:12px; }
+  .t-grid .k { font-size:7.5px; letter-spacing:.14em; color:var(--ticket-dim); text-transform:uppercase; }
+  .t-grid .v { font-size:10.5px; font-weight:600; margin-top:1px; }
+  .barcode {
+    margin-top:12px; height:26px;
+    background:repeating-linear-gradient(90deg, var(--ink) 0 var(--w,2px), transparent var(--w,2px) calc(var(--w,2px) + var(--g,1.5px)));
+  }
+  .barcode-num { font-size:8px; letter-spacing:.4em; color:var(--ticket-dim); margin-top:3px; }
+  .t-status {
+    position:absolute; right:14px; top:16px;
+    font-family:Archivo,sans-serif; font-weight:800; font-size:9px; letter-spacing:.14em;
+    border:1.5px solid currentColor; border-radius:3px; padding:2px 7px 1px; transform:rotate(3deg);
+  }
+  .t-status.landed { color:var(--ok); }
+  .t-status.live { color:var(--brand); }
+  .t-status.held { color:var(--warn); }
+  .t-status.diverted { color:var(--bad); }
+
+  /* tear detail */
+  .tear {
+    grid-column:1/-1; display:none;
+    background:var(--panel); border:1px dashed var(--line); border-radius:10px;
+    padding:16px 18px;
+  }
+  .ticket.open { border-radius:10px 10px 0 0; }
+  .ticket.open + .tear { display:block; border-radius:0 0 10px 10px; margin-top:-20px; border-top:none; }
+  .tear .lh { font-family:Archivo,sans-serif; font-weight:700; font-size:10px; letter-spacing:.16em; color:var(--dim); text-transform:uppercase; margin-bottom:10px; }
+  .tear .log { font-size:11px; color:var(--dim); line-height:1.9; }
+  .tear .log .t { color:var(--faint, #565E6C); margin-right:10px; }
+  .tear .log .o { color:var(--ok); } .tear .log .e { color:var(--bad); }
+  .tear .ops { display:flex; gap:8px; margin-top:12px; }
+  .tear .ops button {
+    font:inherit; font-size:10.5px; letter-spacing:.08em; padding:5px 12px; border-radius:5px;
+    border:1px solid var(--line); background:transparent; color:var(--text); cursor:pointer;
+  }
+  .tear .ops button:hover { border-color:var(--brand); color:var(--brand); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <svg width="19" height="19" viewBox="0 0 240 240"><g transform="translate(0 -14) rotate(22.5 120 120)"><g fill="none" stroke="#ECEDEF" stroke-width="18" stroke-linecap="round"><path d="M56 204 L196 64"/><path d="M44 160 C 94 160 122 140 150 110"/></g><circle cx="150" cy="110" r="13" fill="#FF4D00"/></g></svg>
+    RUNWAY
+  </div>
+  <nav><a href="#">Overview</a><a href="#">Projects</a><a href="#" class="on">Boarding</a><a href="#">Teams</a></nav>
+  <div class="sp"></div>
+  <button class="checkin">+ CHECK IN CODE</button>
+</header>
+
+<main>
+  <div class="phead">
+    <h1>Boarding</h1>
+    <span class="sub">every deploy gets a pass — keep them for rollback</span>
+    <div class="sp"></div>
+  </div>
+  <div class="bins" id="bins">
+    <button class="bin on" data-f="all">All passes</button>
+    <button class="bin" data-f="live">In transit</button>
+    <button class="bin" data-f="landed">Departed</button>
+    <button class="bin" data-f="held">Held</button>
+    <button class="bin" data-f="diverted">Diverted</button>
+  </div>
+  <div class="grid" id="grid"></div>
+</main>
+
+<script>
+const F = [
+  {id:"RWY-9C1E", proj:"API",       env:"PROD",    st:"live",     lbl:"ON FINAL", sha:"9c1e44d", branch:"main",       commit:"fix: token refresh race",   gate:"ENV-PROD",    seat:"3000/TCP", when:"19:53", dur:"48s"},
+  {id:"RWY-77BD", proj:"DOCS",      env:"PREVIEW", st:"live",     lbl:"CLIMBING", sha:"77bd08a", branch:"docs",       commit:"docs: self-hosting guide",  gate:"BRNCH-DOCS",  seat:"4173/TCP", when:"19:54", dur:"31s"},
+  {id:"RWY-4F2A", proj:"STOREFRONT",env:"PROD",    st:"landed",   lbl:"DEPARTED", sha:"4f2a9e1", branch:"main",       commit:"feat: cart totals rework",  gate:"ENV-PROD",    seat:"3000/TCP", when:"19:42", dur:"2m04s"},
+  {id:"RWY-B3F9", proj:"LANDING",   env:"PROD",    st:"landed",   lbl:"DEPARTED", sha:"b3f97c2", branch:"main",       commit:"chore: bump hero copy",     gate:"ENV-PROD",    seat:"STATIC",   when:"18:11", dur:"38s"},
+  {id:"RWY-2E8C", proj:"STOREFRONT",env:"STAGING", st:"held",     lbl:"HELD",     sha:"2e8c5b0", branch:"staging",    commit:"wip: checkout experiments", gate:"ENV-STG",     seat:"—",        when:"19:46", dur:"—"},
+  {id:"RWY-A110", proj:"API",       env:"PREVIEW", st:"diverted", lbl:"DIVERTED", sha:"a1104f9", branch:"retry-sched",commit:"feat: retry scheduler",     gate:"ID-A1104F",   seat:"—",        when:"19:39", dur:"1m31s"},
+  {id:"RWY-8C31", proj:"API",       env:"PROD",    st:"landed",   lbl:"DEPARTED", sha:"8c31d02", branch:"main",       commit:"chore: deps bump",          gate:"ENV-PROD",    seat:"3000/TCP", when:"16:03", dur:"1m12s"},
+  {id:"RWY-F044", proj:"DOCS",      env:"PROD",    st:"landed",   lbl:"DEPARTED", sha:"f044caa", branch:"main",       commit:"fix: nav anchors",          gate:"ENV-PROD",    seat:"STATIC",   when:"17:52", dur:"26s"},
+];
+let filt = 'all', open = -1;
+
+/* deterministic pseudo-QR from sha */
+function qr(sha) {
+  let h = 0; for (const c of sha) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  const cells = [...Array(49)].map((_, i) => { h = (h * 1103515245 + 12345) >>> 0; return (h >> (i % 16)) & 1; });
+  return `<svg class="qr" viewBox="0 0 7 7">${cells.map((v,i) => v ? `<rect x="${i%7}" y="${i/7|0}" width="1" height="1" fill="#191B1F"/>` : '').join('')}</svg>`;
+}
+/* barcode stripes from id+sha */
+function barcodeHTML(sha){
+  return `<div style="display:flex;align-items:stretch;gap:1px;height:26px;margin-top:12px">` +
+    [...sha].map(c => `<span style="display:block;background:#191B1F;width:${1 + parseInt(c,16)%3}px"></span>`).join('') +
+    `</div>`;
+}
+
+function render() {
+  const items = F.map((f,i)=>({f,i})).filter(({f}) => filt==='all' || f.st===filt);
+  document.getElementById('grid').innerHTML = items.map(({f,i}) => `
+    <div class="ticket ${i===open?'open':''}" data-i="${i}">
+      <div class="edge ${f.st}"></div>
+      <div class="stub">
+        ${qr(f.sha)}
+        <div class="s-cs">${f.id}<br><span style="color:var(--ticket-dim)">${f.sha}</span></div>
+        <div class="s-seat">SEQ<br>${String(i+1).padStart(3,'0')}</div>
+      </div>
+      <div class="tbody">
+        <span class="t-status ${f.st}">${f.lbl}</span>
+        <div class="t-names"><span>FROM — REPO/${f.branch.toUpperCase()}</span><span>TO — ${f.env}</span></div>
+        <div class="t-route"><span class="from">${f.proj}</span><span class="arr">✈</span><span class="to">${f.env}</span></div>
+        <div class="t-grid">
+          <div><div class="k">Gate</div><div class="v">${f.gate}</div></div>
+          <div><div class="k">Seat</div><div class="v">${f.seat}</div></div>
+          <div><div class="k">Boarded</div><div class="v">${f.when}Z</div></div>
+          <div><div class="k">Flight time</div><div class="v">${f.dur}</div></div>
+        </div>
+        ${barcodeHTML(f.id + f.sha)}
+        <div class="barcode-num">${f.id} · ${f.alias || ''}</div>
+      </div>
+    </div>
+    <div class="tear" data-t="${i}">
+      <div class="lh">Stub torn — flight record</div>
+      <div class="log">
+        <div><span class="t">${f.when}:01Z</span>push webhook received · signature ok</div>
+        <div><span class="t">${f.when}:03Z</span>claimed by worker-0 · SKIP LOCKED</div>
+        <div><span class="t">${f.when}:07Z</span>clone ${f.branch}@${f.sha} · build ${f.proj.toLowerCase()}</div>
+        <div><span class="t">${f.when}Z</span><span class="${f.st==='diverted'?'e':'o'}">${f.lbl} · ${f.dur} · ${f.gate}</span></div>
+      </div>
+      <div class="ops">
+        <button>FULL LOG</button><button>VISIT</button><button>REDEPLOY</button><button>ROLLBACK</button>
+      </div>
+    </div>`).join('');
+  [...document.querySelectorAll('.ticket')].forEach(el =>
+    el.onclick = () => {
+      const i = +el.dataset.i;
+      const tear = document.querySelector(`.tear[data-t="${i}"]`);
+      el.classList.toggle('open');
+      if (tear) tear.classList.toggle('open', el.classList.contains('open'));
+      tear.style.display = el.classList.contains('open') ? 'block' : 'none';
+    });
+}
+document.getElementById('bins').onclick = e => {
+  const b = e.target.closest('.bin'); if (!b) return;
+  filt = b.dataset.f;
+  document.querySelectorAll('.bin').forEach(x => x.classList.toggle('on', x === b));
+  render();
+};
+render();
+</script>
+</body>
+</html>

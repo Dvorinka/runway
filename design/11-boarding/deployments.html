@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RUNWAY — Departures</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="theme.css">
+</head>
+<body>
+
+<header>
+  <a class="logo" href="index.html">
+    <svg width="19" height="19" viewBox="0 0 240 240"><g transform="translate(0 -14) rotate(22.5 120 120)"><g fill="none" stroke="#ECEDEF" stroke-width="18" stroke-linecap="round"><path d="M56 204 L196 64"/><path d="M44 160 C 94 160 122 140 150 110"/></g><circle cx="150" cy="110" r="13" fill="#FF4D00"/></g></svg>
+    RUNWAY
+  </a>
+  <nav>
+    <a href="index.html">Overview</a><a href="projects.html">Projects</a><a href="deployments.html" class="on">Departures</a><a href="#">Teams</a><a href="#">Settings</a>
+  </nav>
+  <div class="sp"></div>
+  <div class="cmdk">Search or command <kbd>⌘K</kbd></div>
+  <div class="avatar">D</div>
+</header>
+
+<main>
+  <div class="phead">
+    <h1>Departures</h1>
+    <span class="count" id="count"></span>
+    <span class="sub">one coupon per deploy, torn off the project pass — keep them for rollback</span>
+    <div class="sp"></div>
+    <button class="btn primary">New deployment</button>
+  </div>
+
+  <div class="filters" id="filters">
+    <button class="chip on" data-f="all">All coupons</button>
+    <button class="chip" data-f="live">In transit</button>
+    <button class="chip" data-f="landed">Departed</button>
+    <button class="chip" data-f="held">Held</button>
+    <button class="chip" data-f="diverted">Diverted</button>
+    <div class="search"><input id="q" placeholder="filter… (callsign, project, commit)"></div>
+  </div>
+
+  <div class="rack" id="grid"></div>
+</main>
+
+<script src="data.js"></script>
+<script>
+let filt = 'all', q = '';
+function render() {
+  const items = FLIGHTS.map((f, i) => ({f, i})).filter(({f}) =>
+    (filt === 'all' || GROUP(f) === filt) &&
+    (!q || (f.id + f.proj + f.commit + f.env + f.branch).toLowerCase().includes(q)));
+  document.getElementById('count').textContent = items.length + ' of ' + FLIGHTS.length + ' flights';
+  document.getElementById('grid').innerHTML = items.map(({f, i}) => couponHTML(f, i)).join('');
+}
+document.getElementById('filters').addEventListener('click', e => {
+  const c = e.target.closest('.chip'); if (!c) return;
+  filt = c.dataset.f;
+  document.querySelectorAll('.chip').forEach(x => x.classList.toggle('on', x === c));
+  render();
+});
+document.getElementById('q').addEventListener('input', e => { q = e.target.value.toLowerCase(); render(); });
+render();
+</script>
+</body>
+</html>

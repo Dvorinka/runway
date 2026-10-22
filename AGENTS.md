@@ -5,6 +5,14 @@ codebase at `~/Desktop/PROG+HTML/devpush` is the **reference
 implementation and spec** — when porting behavior, read it; don't
 redesign from memory.
 
+- `DESIGN.md` — numbered platform bets. Name each bet a change touches
+  in the PR body; crossing a flag is argued there first.
+- `CONTEXT.md` — canonical terms; use them, not synonyms.
+- `dashboard/DESIGN.md` — dashboard design system. UI changes follow it.
+- `scripts/verify/up.sh` runs a seeded, sign-in-able dashboard for this
+  checkout. Verify UI changes in a browser with the `verify-dashboard`
+  skill. `RESTRUCTURE.md` — the Ployz-parity plan and its phases.
+
 ## Principles
 
 1. **Single binary.** API, workers, and CLI ship in `runway`. Workers are
@@ -38,7 +46,7 @@ redesign from memory.
 - `crates/worker` — deploy pipeline, monitor, cron, reconcile
 - `crates/cli` — the `runway` binary (serve + user CLI)
 - `migrations/` — sqlx migrations
-- `web/` — React dashboard
+- `dashboard/` — React dashboard
 
 ## Verification
 
