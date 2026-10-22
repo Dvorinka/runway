@@ -521,8 +521,9 @@ pub async fn open_graph(
 
 /// `GET /api/v1/deployments/{id}/files` — inventory of the deployed
 /// static output (`data/static/<id>/`), Vercel's Resources tab.
-/// Always 200: `{ok:false}` when the deployment has no file payload
-/// (server/image deploys keep their artifact inside the container).
+/// Always 200: `reason` distinguishes a static deploy whose published
+/// artifact is gone (`static_output_missing`) from a server/image deploy
+/// that never had a file payload (`no_file_payload`).
 pub async fn files(
     user: AuthUser,
     State(state): State<AppState>,
@@ -544,10 +545,14 @@ pub async fn files(
                 .collect::<Vec<_>>(),
         }))
         .into_response()),
-        None => Ok(
-            Json(json!({ "ok": false, "reason": "no static output for this deployment" }))
-                .into_response(),
-        ),
+        None => {
+            let reason = if dep.is_static() {
+                "static_output_missing"
+            } else {
+                "no_file_payload"
+            };
+            Ok(Json(json!({ "ok": false, "reason": reason })).into_response())
+        }
     }
 }
 
