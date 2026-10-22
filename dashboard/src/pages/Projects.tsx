@@ -45,7 +45,7 @@ function ConnectGuide({
 }) {
   const guide = PROVIDER_GUIDES[provider];
   return (
-    <div className="grid gap-2 rounded-md border border-border p-3">
+    <div className="grid grid-cols-1 gap-2 rounded-md border border-border p-3">
       <div className="flex items-center gap-2">
         <BookOpen className="h-3.5 w-3.5 text-muted-foreground" />
         <p className="text-xs font-medium">Connect {providerLabel(provider)}</p>
@@ -58,7 +58,7 @@ function ConnectGuide({
           {guide.docsLabel}
         </a>
       </div>
-      <ol className="grid gap-1 text-xs text-muted-foreground">
+      <ol className="grid grid-cols-1 gap-1 text-xs text-muted-foreground">
         {guide.steps.map((s, i) => (
           <li key={i} className="flex gap-2">
             <span className="font-mono text-muted-foreground/70">{i + 1}.</span>
@@ -214,7 +214,7 @@ function NewProject({ onDone }: { onDone: () => void }) {
   return (
     <Card className="mb-6 p-5">
       <SectionHead icon={Plus} title="New project" />
-      <form onSubmit={create} className="grid gap-3">
+      <form onSubmit={create} className="grid grid-cols-1 gap-3">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div className="grid grid-cols-6 gap-1 rounded-lg border border-border p-1">
             {([...GIT_PROVIDERS, "upload"] as Provider[]).map((p) => (
@@ -472,7 +472,7 @@ export default function Projects() {
       {creating && <NewProject onDone={() => setCreating(false)} />}
       {error && <p className="text-sm text-destructive">{error}</p>}
       {projects === null && !error && (
-        <div className={view === "grid" ? "grid gap-3 sm:grid-cols-2 lg:grid-cols-3" : "grid gap-3"}>
+        <div className={view === "grid" ? "grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3" : "grid grid-cols-1 gap-3"}>
           {[0, 1, 2].map((i) => (
             <Skeleton key={i} className="h-[104px]" />
           ))}

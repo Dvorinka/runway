@@ -514,7 +514,7 @@ function Audit({ teamId }: { teamId: string }) {
     <Card className="p-5">
       <SectionHead icon={ScrollText} title="Audit log" />
       <Err msg={error} />
-      <div className="grid gap-1 font-mono text-xs">
+      <div className="grid grid-cols-1 gap-1 font-mono text-xs">
         {entries.map((e) => (
           <div key={e.id} className="flex items-baseline justify-between gap-4">
             <span className="text-muted-foreground">
@@ -610,7 +610,7 @@ export default function TeamPage({ me }: { me: Me }) {
         </div>
       </div>
       <Err msg={error} />
-      <div className="grid gap-4">
+      <div className="grid grid-cols-1 gap-4">
         {admin && (
           <Card className="p-5">
             <h2 className="mb-3 text-sm font-medium">Avatar</h2>

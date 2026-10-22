@@ -66,7 +66,7 @@ export default function Login() {
   const label = "mb-1.5 block text-xs font-medium text-muted-foreground";
 
   return (
-    <div className="grid min-h-screen lg:grid-cols-[1.1fr_1fr]">
+    <div className="grid min-h-screen grid-cols-1 lg:grid-cols-[1.1fr_1fr]">
       {/* Brand panel */}
       <div className="relative hidden flex-col justify-between overflow-hidden border-r border-border bg-gradient-to-b from-zinc-900 to-zinc-950 p-10 lg:flex">
         <div

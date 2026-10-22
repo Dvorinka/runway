@@ -157,7 +157,7 @@ function DeployInfo({ dep, active }: { dep: Deployment; active: boolean }) {
 
   return (
     <>
-    <div className="mb-4 grid gap-2 sm:grid-cols-2">
+    <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
       <div className="rounded-md border border-border p-3">
         <div className="mb-1 text-[10px] uppercase tracking-wide text-muted-foreground">
           Production deployment

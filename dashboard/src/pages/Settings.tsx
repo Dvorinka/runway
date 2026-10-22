@@ -93,7 +93,7 @@ function GitProviders() {
             <BookOpen className="h-3.5 w-3.5" />
             How to connect {providerLabel(provider)}
           </summary>
-          <ol className="mt-2 grid gap-1 text-muted-foreground">
+          <ol className="mt-2 grid grid-cols-1 gap-1 text-muted-foreground">
             {PROVIDER_GUIDES[provider as keyof typeof PROVIDER_GUIDES].steps.map((s, i) => (
               <li key={i} className="flex gap-2">
                 <span className="font-mono text-muted-foreground/70">{i + 1}.</span>
@@ -112,7 +112,7 @@ function GitProviders() {
         </details>
       )}
       {error && <p className="mb-3 text-xs text-destructive">{error}</p>}
-      <div className="grid gap-2">
+      <div className="grid grid-cols-1 gap-2">
         {Object.entries(connections).flatMap(([p, conns]) =>
           conns.map((c) => (
             <div
@@ -148,7 +148,7 @@ function GithubApp() {
       {st === null ? (
         <p className="text-xs text-muted-foreground">Loading…</p>
       ) : st.configured ? (
-        <div className="grid gap-2">
+        <div className="grid grid-cols-1 gap-2">
           <div className="flex items-center gap-2">
             <Badge variant="success">configured</Badge>
             <span className="text-xs text-muted-foreground">
@@ -168,7 +168,7 @@ function GithubApp() {
           )}
         </div>
       ) : (
-        <div className="grid gap-2">
+        <div className="grid grid-cols-1 gap-2">
           <a href="/api/v1/github/app/register" className="w-fit">
             <Button size="sm">Register with GitHub</Button>
           </a>
@@ -233,7 +233,7 @@ function Allowlist() {
         </Button>
       </form>
       {error && <p className="mb-3 text-xs text-destructive">{error}</p>}
-      <div className="grid gap-2">
+      <div className="grid grid-cols-1 gap-2">
         {rules.map((r) => (
           <div
             key={r.id}
@@ -335,7 +335,7 @@ function JobQueue() {
           <p className="text-xs text-muted-foreground">Queue is clear — nothing pending.</p>
         </div>
       ) : (
-        <div className="grid gap-1.5">
+        <div className="grid grid-cols-1 gap-1.5">
           {jobs.map((j) => (
             <div
               key={j.id}
@@ -482,7 +482,7 @@ function Nodes() {
         </Button>
       </form>
       {error && <p className="mb-3 text-xs text-destructive">{error}</p>}
-      <div className="grid gap-2">
+      <div className="grid grid-cols-1 gap-2">
         {nodes.map((n) => (
           <div
             key={n.id}
@@ -617,7 +617,7 @@ function Account({ me }: { me: Me }) {
           hasAvatar={me.has_avatar}
           onChanged={() => location.reload()}
         />
-        <form onSubmit={saveProfile} className="grid gap-3 sm:grid-cols-3">
+        <form onSubmit={saveProfile} className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <Input
             placeholder="Display name"
             value={name}
@@ -666,7 +666,7 @@ function Account({ me }: { me: Me }) {
       </Card>
       <Card className="p-5">
         <SectionHead icon={KeyRound} title="Change password" />
-        <form onSubmit={savePassword} className="mt-3 grid gap-3 sm:grid-cols-3">
+        <form onSubmit={savePassword} className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
           <Input
             type="password"
             placeholder="current password"
@@ -796,7 +796,7 @@ function TwoFactor({ enabled: initiallyEnabled }: { enabled: boolean }) {
         ))}
 
       {phase === "enroll" && (
-        <form onSubmit={verify} className="grid gap-3">
+        <form onSubmit={verify} className="grid grid-cols-1 gap-3">
           <div className="flex items-start gap-4">
             {qrUrl && (
               <img src={qrUrl} alt="TOTP QR code" className="rounded-md border border-border" />
@@ -827,7 +827,7 @@ function TwoFactor({ enabled: initiallyEnabled }: { enabled: boolean }) {
       )}
 
       {phase === "codes" && (
-        <div className="grid gap-3">
+        <div className="grid grid-cols-1 gap-3">
           <p className="text-xs text-amber-400">
             Save these recovery codes — each works once in place of an
             authenticator code. They are shown only now.
@@ -875,7 +875,7 @@ export default function SettingsPage({ me }: { me: Me }) {
       <p className="mb-6 mt-1 text-sm text-muted-foreground">
         Your account, providers, access control, and instance infrastructure.
       </p>
-      <div className="grid gap-4">
+      <div className="grid grid-cols-1 gap-4">
         <Account me={me} />
         <GitProviders />
         {me.id === 1 && (

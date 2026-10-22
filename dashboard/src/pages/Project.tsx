@@ -117,7 +117,7 @@ function Analytics({ id }: { id: string }) {
           Injects a tracking snippet into every HTML page on the next static deploy.
           Works with Umami, Rybbit, Plausible, or any provider's script tag.
         </p>
-      <div className="grid gap-3">
+      <div className="grid grid-cols-1 gap-3">
         <ComboBox
           value={provider}
           onChange={(v) => setProvider(v as AnalyticsProvider)}
@@ -240,7 +240,7 @@ function WebAnalytics({ id }: { id: string }) {
         </button>
       </div>
       {data && data.views > 0 && (
-        <div className="mt-4 grid gap-4">
+        <div className="mt-4 grid grid-cols-1 gap-4">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="rounded-md border border-border p-3">
               <div className="text-2xl font-semibold">{data.views.toLocaleString()}</div>
@@ -728,7 +728,7 @@ function Environment({ id }: { id: string }) {
   return (
     <>
       {bulk ? (
-        <form onSubmit={addBulk} className="mb-4 grid gap-2">
+        <form onSubmit={addBulk} className="mb-4 grid grid-cols-1 gap-2">
           <textarea
             value={bulkText}
             onChange={(e) => setBulkText(e.target.value)}
@@ -1284,7 +1284,7 @@ function Settings({ id, project }: { id: string; project: Project | null }) {
 
   const [avatarKey, setAvatarKey] = useState(0);
   return (
-    <div className="grid gap-4">
+    <div className="grid grid-cols-1 gap-4">
       {project && (
         <Card className="p-4">
           <h3 className="mb-2 text-sm font-medium">Avatar</h3>
@@ -1460,7 +1460,7 @@ function Environments({ id, project }: { id: string; project: Project | null }) 
           </span>
         </span>
       </label>
-      <div className="mb-3 grid gap-2">
+      <div className="mb-3 grid grid-cols-1 gap-2">
         {envs.map((env) => (
           <div
             key={env.id}
@@ -1564,7 +1564,7 @@ function DockerBuild({ id, project }: { id: string; project: Project | null }) {
         the image's own command serves the app. Path is relative to the repo root (or the root
         directory if set).
       </p>
-      <div className="grid gap-3">
+      <div className="grid grid-cols-1 gap-3">
         <Input
           placeholder="Dockerfile"
           value={df}
@@ -1684,7 +1684,7 @@ function DeployRules({ id, project }: { id: string; project: Project | null }) {
         pushes touching matching files — glob list like{" "}
         <code className="font-mono">apps/web/**,packages/shared/**</code> (monorepo filtering).
       </p>
-      <div className="grid gap-3">
+      <div className="grid grid-cols-1 gap-3">
         <label className="flex items-center gap-2 text-xs">
           <input
             type="checkbox"
@@ -2011,7 +2011,7 @@ function Firewall({ id, project }: { id: string; project: Project | null }) {
         Applied at the edge (Traefik) — blocked traffic never reaches the app. One IP/CIDR per
         line; leave empty to allow everyone.
       </p>
-      <div className="grid gap-3">
+      <div className="grid grid-cols-1 gap-3">
         <textarea
           value={allow}
           onChange={(e) => setAllow(e.target.value)}
@@ -2077,7 +2077,7 @@ function Protection({ id, project }: { id: string; project: Project | null }) {
   }
 
   return (
-    <div className="grid gap-2 border-t border-border pt-3">
+    <div className="grid grid-cols-1 gap-2 border-t border-border pt-3">
       <div className="flex items-center justify-between">
         <span className="text-sm">Deployment protection</span>
         {enabled && <Badge variant="success">on</Badge>}

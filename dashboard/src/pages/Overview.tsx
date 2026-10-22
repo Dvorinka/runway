@@ -93,7 +93,7 @@ export default function Overview() {
       {down.length > 0 && (
         <section className="mb-8">
           <h2 className="mb-3 text-sm font-medium text-destructive">Needs attention</h2>
-          <div className="grid gap-2">
+          <div className="grid grid-cols-1 gap-2">
             {down.map((d) => (
               <DeploymentRow key={d.id} d={d} showProject />
             ))}
@@ -103,7 +103,7 @@ export default function Overview() {
       {running.length > 0 && (
         <section className="mb-8">
           <h2 className="mb-3 text-sm font-medium text-muted-foreground">Deploying now</h2>
-          <div className="grid gap-2">
+          <div className="grid grid-cols-1 gap-2">
             {running.map((d) => (
               <DeploymentRow key={d.id} d={d} showProject />
             ))}
@@ -118,7 +118,7 @@ export default function Overview() {
           </Link>
         </div>
         {projects === null ? (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {[0, 1, 2].map((i) => (
               <Skeleton key={i} className="h-[104px]" />
             ))}
@@ -137,7 +137,7 @@ export default function Overview() {
             </Link>
           </EmptyState>
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {projects.slice(0, 6).map((p) => (
               <ProjectCard key={p.id} p={p} />
             ))}
@@ -152,13 +152,13 @@ export default function Overview() {
           </Link>
         </div>
         {deployments === null ? (
-          <div className="grid gap-2">
+          <div className="grid grid-cols-1 gap-2">
             {[0, 1].map((i) => (
               <Skeleton key={i} className="h-[64px]" />
             ))}
           </div>
         ) : (
-          <div className="grid gap-2">
+          <div className="grid grid-cols-1 gap-2">
             {deployments.slice(0, 8).map((d) => (
               <DeploymentRow key={d.id} d={d} showProject />
             ))}
