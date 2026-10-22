@@ -14,7 +14,7 @@ import { Avatar, AvatarRow, Badge, Button, Card, CardFooter, ComboBox, EmptyStat
 import { DeploymentRow } from "@/components/DeploymentRow";
 import { filesToTarGz } from "@/lib/tarball";
 import { timeAgo } from "@/lib/utils";
-import { Globe, Link2, Rocket, Webhook as WebhookIcon, ArrowRightLeft, ListFilter, CheckCircle2, Circle } from "lucide-react";
+import { Globe, Link2, Rocket, Webhook as WebhookIcon, ArrowRightLeft, ListFilter, CheckCircle2, Circle, KeyRound, Clock } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
@@ -792,7 +792,11 @@ function Environment({ id }: { id: string }) {
           </Card>
         ))}
         {vars.length === 0 && (
-          <p className="text-sm text-muted-foreground">No environment variables yet.</p>
+          <EmptyState
+            icon={KeyRound}
+            title="No environment variables yet"
+            hint="Add a key above, or paste a .env file."
+          />
         )}
       </div>
     </>
@@ -895,7 +899,11 @@ function Cron({ id }: { id: string }) {
           </Card>
         ))}
         {jobs.length === 0 && (
-          <p className="text-sm text-muted-foreground">No cron jobs yet.</p>
+          <EmptyState
+            icon={Clock}
+            title="No cron jobs yet"
+            hint="Schedule deployments of a branch on an interval."
+          />
         )}
       </div>
     </>
