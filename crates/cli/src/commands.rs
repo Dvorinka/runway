@@ -320,7 +320,9 @@ pub async fn logs(deployment: Option<String>, follow: bool, project: bool) -> an
         let text = client
             .get_text(&format!("/api/v1/projects/{}/logs", link.project_id))
             .await?;
-        print!("{text}");
+        for line in text.lines() {
+            print_log_line(line);
+        }
         return Ok(());
     }
     let dep_id = match deployment {
@@ -427,6 +429,26 @@ pub async fn rollback(environment: String) -> anyhow::Result<()> {
         .await?;
     let dep = res["deployment_id"].as_str().unwrap_or("?");
     println!("{environment} rolled back to deployment {dep}");
+    Ok(())
+}
+
+/// `runway promote [deployment] [--environment prod]` — point an
+/// environment's alias at a deployment (Vercel's "Promote to production").
+pub async fn promote(deployment: Option<String>, environment: String) -> anyhow::Result<()> {
+    let client = Client::from_config()?;
+    let id = match deployment {
+        Some(id) => id,
+        None => latest_deployment(&client).await?,
+    };
+    let res = client
+        .post(
+            &format!("/api/v1/deployments/{id}/promote"),
+            &json!({ "environment_id": &environment }),
+        )
+        .await?;
+    let env = res["environment_id"].as_str().unwrap_or(&environment);
+    let dep = res["deployment_id"].as_str().unwrap_or(&id);
+    println!("{env} now serves deployment {dep}");
     Ok(())
 }
 
@@ -743,6 +765,16 @@ async fn latest_deployment(client: &Client) -> anyhow::Result<String> {
         .context("no deployments for linked project")
 }
 
+/// Print one stored log line; `step` markers render as section headers
+/// instead of the raw `<ts>\tstep\t<name>` triple.
+fn print_log_line(line: &str) {
+    let mut parts = line.splitn(3, '\t');
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some(_), Some("step"), Some(name)) => println!("--- {name} ---"),
+        _ => println!("{line}"),
+    }
+}
+
 /// Print log lines after `skip`; returns the new line count.
 async fn print_logs(client: &Client, dep_id: &str, skip: usize) -> anyhow::Result<usize> {
     let text = client
@@ -750,7 +782,7 @@ async fn print_logs(client: &Client, dep_id: &str, skip: usize) -> anyhow::Resul
         .await?;
     let lines: Vec<&str> = text.lines().collect();
     for line in lines.iter().skip(skip) {
-        println!("{line}");
+        print_log_line(line);
     }
     Ok(lines.len())
 }

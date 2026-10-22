@@ -89,6 +89,13 @@ fn tools() -> Value {
                                   "environment_id": {"type": "string", "default": "prod"}}})
         ),
         tool(
+            "promote_deployment",
+            "Point an environment's alias at a successful deployment",
+            json!({"type": "object", "required": ["deployment_id"],
+                   "properties": {"deployment_id": {"type": "string"},
+                                  "environment_id": {"type": "string", "default": "prod"}}})
+        ),
+        tool(
             "list_env",
             "List a project's env vars (values masked)",
             json!({"type": "object", "required": ["project_id"],
@@ -372,6 +379,15 @@ async fn call(state: &AppState, user_id: i64, name: &str, args: &Value) -> ApiRe
             let env = args["environment_id"].as_str().unwrap_or("prod");
             let alias =
                 runway_core::deploy::rollback(&state.db, &state.bus, &state.settings, &p, env)
+                    .await
+                    .map_err(|e| ApiError::bad_request(e.to_string()))?;
+            Ok(json!({ "environment_id": env, "deployment_id": alias.deployment_id }))
+        }
+        "promote_deployment" => {
+            let (d, p) = deployment_for(state, user_id, arg(args, "deployment_id")?).await?;
+            let env = args["environment_id"].as_str().unwrap_or("prod");
+            let alias =
+                runway_core::deploy::promote(&state.db, &state.bus, &state.settings, &p, env, &d)
                     .await
                     .map_err(|e| ApiError::bad_request(e.to_string()))?;
             Ok(json!({ "environment_id": env, "deployment_id": alias.deployment_id }))

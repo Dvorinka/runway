@@ -107,7 +107,7 @@ pub struct Settings {
     pub smtp_from: Option<String>,
     pub smtp_tls: bool,
 
-    /// Directory holding the built React SPA (`web/dist` in dev).
+    /// Directory holding the built React SPA (`dashboard/dist` in dev).
     pub web_dir: String,
 
     /// Instance-level Cloudflare API token (CGNAT path). Needs
@@ -191,7 +191,7 @@ impl Settings {
             smtp_password: opt("SMTP_PASSWORD"),
             smtp_from: opt("SMTP_FROM"),
             smtp_tls: env_bool("SMTP_TLS", true),
-            web_dir: env_or("WEB_DIR", "./web/dist"),
+            web_dir: env_or("WEB_DIR", "./dashboard/dist"),
             cf_api_token: opt("CF_API_TOKEN").or_else(|| opt("CLOUDFLARE_API_TOKEN")),
             cf_account_id: opt("CF_ACCOUNT_ID").or_else(|| opt("CLOUDFLARE_ACCOUNT_ID")),
         })
@@ -332,7 +332,7 @@ pub(crate) fn test_settings() -> Settings {
         smtp_password: None,
         smtp_from: None,
         smtp_tls: true,
-        web_dir: "./web/dist".into(),
+        web_dir: "./dashboard/dist".into(),
         cf_api_token: None,
         cf_account_id: None,
     }

@@ -127,6 +127,14 @@ enum Command {
         #[arg(default_value = "prod")]
         environment: String,
     },
+    /// Promote a deployment so an environment's alias serves it.
+    Promote {
+        /// Deployment ID (defaults to the latest of the linked project).
+        deployment: Option<String>,
+        /// Environment slug (default: prod).
+        #[arg(long, default_value = "prod")]
+        environment: String,
+    },
     /// Open the project's deployment URL in the browser.
     Open {
         /// Print the URL instead of opening a browser.
@@ -265,6 +273,10 @@ async fn main() -> anyhow::Result<()> {
         Command::Stats { deployment } => commands::stats(deployment).await?,
         Command::Deployments { limit } => commands::deployments(limit).await?,
         Command::Rollback { environment } => commands::rollback(environment).await?,
+        Command::Promote {
+            deployment,
+            environment,
+        } => commands::promote(deployment, environment).await?,
         Command::Open { print } => commands::open(print).await?,
     }
 

@@ -22,6 +22,7 @@ pub mod logs;
 pub mod mail;
 pub mod models;
 pub mod node_tls;
+pub mod opengraph;
 pub mod password;
 pub mod pathmatch;
 pub mod presets;
