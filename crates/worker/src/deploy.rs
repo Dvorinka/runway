@@ -1186,6 +1186,10 @@ pub async fn finalize(ctx: &Ctx, deployment_id: &str) -> anyhow::Result<()> {
         }
     }
     ctx.logs.info(deployment_id, "Deployment succeeded").await;
+    // Boundary marker: everything after `live` is post-deploy output
+    // (container stdout + lifecycle events) — the dashboard splits the
+    // log pane into build vs runtime on this marker.
+    ctx.logs.step(deployment_id, "live").await;
     post_commit_status(ctx, &deployment, &project, "success", "Deployment ready").await;
     let dep_now = deploy::get(&ctx.db, deployment_id)
         .await?
