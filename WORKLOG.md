@@ -328,3 +328,40 @@ throwaway `data-run` DB; production `~/.config/runway` was untouched
   would need tarball/image inspection for the same list.
 - Audit continues: remaining routes/interactions (new-project flow,
   promote/rollback dialog, palette `f`, mobile pass per route).
+
+## Phase 1b — interaction fixes + mobile sweep (PR #19 branch)
+
+- Notification links emitted `/projects/:id/deployments/:id` (not a
+  route) — all three emitters corrected to `/deployments/:id`; seeded
+  rows fixed in-place. Verified: feed click lands on the deployment.
+- `/login` now redirects to `/` when already signed in (was 404).
+- Command palette matching is subsequence-fuzzy (`dmo` → `demo-app`).
+- Upload provider is a first-class New-project path (name instead of
+  repo, upload copy, no connection/repo fetches). Verified end-to-end:
+  `audit-upload` created via UI and present in DB.
+- Project-scope rail (issue #25): `/projects/:id` swaps the sidebar to
+  back-link + project identity + tab links driving `?tab=`; in-page
+  strip hidden on lg+, kept on mobile.
+- Empty states on Environment + Cron tabs are card-contained (#30
+  partially; other routes still to sweep).
+- Mobile 390px sweep found a systemic defect: every bare `grid`
+  (implicit auto column) sized its track to max-content, so long mono
+  strings (URLs, image refs) overflowed the viewport and `truncate`
+  never engaged — Settings rendered at 1036px. Fixed globally:
+  `grid-cols-1` base on all single-column grids, `min-w-0` on flex
+  chains, stepper connectors `w-4 sm:w-10`, domain-row anchors
+  `min-w-0 flex-1 truncate`, header meta `flex-wrap`. All routes now
+  report `scrollWidth=390`.
+- API keys UI (#23): Settings card with create (one-time reveal +
+  copy), list (created/last-used metadata), revoke — verified
+  end-to-end against `/api/v1/keys`.
+- Build/runtime log split (#24): worker emits `step live` at
+  conclusion (PR #18); the pane splits into build|runtime tabs —
+  build keeps grouped step sections, runtime shows post-deploy
+  container stdout/lifecycle; static deploys show an honest empty
+  state. Old logs fall back to runtime-stream lines after `finalize`.
+- Issue dispositions: #21 Delete — devpush has no user-facing
+  deployment DELETE (internal cleanup task only); kept open as
+  design-pending. #22 devpushhq namespace — closed won't-fix: the
+  image ref is real pull evidence and devpush logs the identical
+  line; `runner-overrides.json` is the supported remap.
