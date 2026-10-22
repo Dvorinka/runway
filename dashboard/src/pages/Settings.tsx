@@ -1,6 +1,7 @@
 import {
   api,
   type AllowlistRule,
+  type ApiKey,
   type GitConnection,
   type Me,
   type NodeTlsProvision,
@@ -179,6 +180,115 @@ function GithubApp() {
           </p>
         </div>
       )}
+    </Card>
+  );
+}
+
+function ApiKeys() {
+  const [keys, setKeys] = useState<ApiKey[]>([]);
+  const [name, setName] = useState("");
+  const [created, setCreated] = useState<{ id: string; token: string } | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState("");
+
+  const load = () =>
+    api.apiKeys().then((r) => setKeys(r.keys)).catch((e) => setError(e.message));
+  useEffect(() => {
+    load();
+  }, []);
+
+  async function create(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    setCopied(false);
+    try {
+      const res = await api.createApiKey(name.trim());
+      setCreated(res);
+      setName("");
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "failed");
+    }
+  }
+
+  function copyToken() {
+    if (!created) return;
+    navigator.clipboard.writeText(created.token).then(() => setCopied(true));
+  }
+
+  return (
+    <Card className="p-5">
+      <SectionHead icon={KeyRound} title="API keys">
+        Personal access tokens for the REST API and CLI (`runway login --key`).
+      </SectionHead>
+      <form onSubmit={create} className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto]">
+        <Input
+          placeholder="token name — e.g. laptop, ci"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          required
+        />
+        <Button type="submit" size="sm">
+          Create key
+        </Button>
+      </form>
+      {created && (
+        <div className="mb-4 rounded-md border border-border bg-black/40 p-3">
+          <p className="mb-2 text-xs text-amber-400">
+            This token is shown only once — store it somewhere safe.
+          </p>
+          <div className="flex items-center gap-2">
+            <code className="min-w-0 flex-1 truncate font-mono text-xs">
+              {created.token}
+            </code>
+            <Button type="button" variant="outline" size="sm" onClick={copyToken}>
+              {copied ? "Copied" : "Copy"}
+            </Button>
+          </div>
+        </div>
+      )}
+      {error && <p className="mb-3 text-xs text-destructive">{error}</p>}
+      <div className="grid grid-cols-1 gap-2">
+        {keys.map((k) => (
+          <div
+            key={k.id}
+            className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2"
+          >
+            <div className="min-w-0">
+              <div className="truncate text-sm">
+                {k.name}
+                {k.status === "revoked" && (
+                  <Badge variant="outline" className="ml-2 text-[10px]">
+                    revoked
+                  </Badge>
+                )}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                created {timeAgo(k.created_at)}
+                {k.last_used_at
+                  ? ` · last used ${timeAgo(k.last_used_at)}`
+                  : " · never used"}
+              </div>
+            </div>
+            {k.status !== "revoked" && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() =>
+                  api.revokeApiKey(k.id).then(load).catch((e) => setError(e.message))
+                }
+              >
+                Revoke
+              </Button>
+            )}
+          </div>
+        ))}
+        {keys.length === 0 && (
+          <p className="text-sm text-muted-foreground">
+            No keys yet — create one to deploy from CI or drive the API.
+          </p>
+        )}
+      </div>
     </Card>
   );
 }
@@ -877,6 +987,7 @@ export default function SettingsPage({ me }: { me: Me }) {
       </p>
       <div className="grid grid-cols-1 gap-4">
         <Account me={me} />
+        <ApiKeys />
         <GitProviders />
         {me.id === 1 && (
           <>
