@@ -34,6 +34,16 @@ export interface Deployment {
   error?: string | { message?: string; status?: string } | null;
   url?: string;
   urls?: { immutable?: string | null; environment?: string | null; branch?: string | null };
+  env_state?: {
+    subdomain: string;
+    current_deployment_id: string | null;
+    previous_deployment_id: string | null;
+  } | null;
+  prod_state?: {
+    subdomain: string;
+    current_deployment_id: string | null;
+    previous_deployment_id: string | null;
+  } | null;
   concluded_at?: string | null;
   created_at: string;
 }
@@ -359,6 +369,23 @@ export const api = {
       net_tx?: number;
       pids?: number;
     }>(`/api/v1/deployments/${id}/stats`),
+  deploymentOg: (id: string, path = "/") =>
+    req<{
+      ok: boolean;
+      url: string;
+      reason?: string;
+      report?: {
+        title?: string;
+        description?: string;
+        og: Record<string, string>;
+        twitter: Record<string, string>;
+        favicon?: string;
+      };
+    }>(`/api/v1/deployments/${id}/og?path=${encodeURIComponent(path)}`),
+  deploymentFiles: (id: string) =>
+    req<{ ok: boolean; files?: { path: string; size: number }[]; reason?: string }>(
+      `/api/v1/deployments/${id}/files`,
+    ),
   deploymentMetrics: (id: string) =>
     req<{
       samples: {
@@ -380,6 +407,23 @@ export const api = {
     }).then((r) => r.text()),
   redeploy: (id: string) =>
     req<Deployment>(`/api/v1/deployments/${id}/redeploy`, { method: "POST" }),
+  rollback: (projectId: string, envId: string) =>
+    req<{ subdomain: string; deployment_id: string; previous_deployment_id: string | null }>(
+      `/api/v1/projects/${projectId}/environments/${envId}/rollback`,
+      { method: "POST" },
+    ),
+  promote: (id: string, environmentId = "prod") =>
+    req<{
+      subdomain: string;
+      environment_id: string;
+      deployment_id: string;
+      previous_deployment_id: string | null;
+    }>(`/api/v1/deployments/${id}/promote`, {
+      method: "POST",
+      body: JSON.stringify({ environment_id: environmentId }),
+    }),
+  skip: (id: string) =>
+    req<{ ok: boolean }>(`/api/v1/deployments/${id}/skip`, { method: "POST" }),
   uploadDeploy: (projectId: string, body: Blob) =>
     fetch(`/api/v1/projects/${projectId}/deployments/upload`, {
       method: "POST",

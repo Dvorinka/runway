@@ -2,7 +2,7 @@
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn, timeAgo } from "@/lib/utils";
 import { api } from "@/lib/api";
-import { Check, ChevronsUpDown, Search } from "lucide-react";
+import { ArrowUpRight, Check, ChevronsUpDown, MoreHorizontal, Search } from "lucide-react";
 import { forwardRef, useEffect, useRef, useState } from "react";
 
 const buttonVariants = cva(
@@ -276,6 +276,96 @@ export function TimeAgo({ at, className }: { at: string; className?: string }) {
   );
 }
 
+// Actions dropdown — a trigger button plus an anchored panel of items.
+// Items render as menu rows; `danger` marks destructive entries.
+export interface MenuItem {
+  label: React.ReactNode;
+  icon?: React.ReactNode;
+  onSelect: () => void;
+  danger?: boolean;
+  disabled?: boolean;
+  hint?: string;
+}
+
+export function Menu({
+  items,
+  trigger,
+  align = "end",
+  title = "Actions",
+}: {
+  items: MenuItem[];
+  trigger?: React.ReactNode;
+  align?: "start" | "end";
+  title?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        aria-label={title}
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-border px-2.5 text-sm transition-colors hover:bg-accent"
+      >
+        {trigger ?? <MoreHorizontal className="h-4 w-4" />}
+      </button>
+      {open && (
+        <div
+          className={cn(
+            "absolute z-50 mt-1 min-w-44 overflow-hidden rounded-md border border-border bg-card p-1 shadow-xl",
+            align === "end" ? "right-0" : "left-0",
+          )}
+        >
+          {items.map((item, i) => (
+            <button
+              key={i}
+              type="button"
+              disabled={item.disabled}
+              onClick={() => {
+                setOpen(false);
+                item.onSelect();
+              }}
+              className={cn(
+                "flex w-full items-center justify-between gap-3 rounded px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent disabled:opacity-50",
+                item.danger ? "text-red-400" : "text-foreground",
+              )}
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                {item.icon}
+                <span className="truncate">{item.label}</span>
+              </span>
+              {item.hint && (
+                <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
+                  {item.hint}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Searchable dropdown — replaces native <select> (whose popup ignores the
 // dark theme and can't filter). Controlled via value/onChange with string
 // values; map numbers/ids at the call site.
@@ -410,7 +500,7 @@ export function ComboBox({
                   <Check
                     className={cn(
                       "h-4 w-4 shrink-0",
-                      isSel ? "text-brand" : "text-transparent",
+                      isSel ? "text-foreground" : "text-transparent",
                     )}
                   />
                   <span className="min-w-0 flex-1 truncate">{o.label}</span>
@@ -429,7 +519,64 @@ export function ComboBox({
   );
 }
 
-// Section header with a brand-medallion icon — one visual language for
+/** Empty state — muted icon in a bordered box, title, subtext, actions.
+ *  The one pattern for "nothing here yet" across the dashboard. */
+export function EmptyState({
+  icon: Icon,
+  title,
+  children,
+  hint,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  children?: React.ReactNode;
+  hint?: string;
+}) {
+  return (
+    <div className="flex flex-col items-center rounded-lg border border-dashed border-border px-8 py-12 text-center">
+      <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-lg border border-border bg-card">
+        <Icon className="h-5 w-5 text-muted-foreground" />
+      </div>
+      <p className="text-sm font-medium">{title}</p>
+      {hint && <p className="mt-1 max-w-sm text-sm text-muted-foreground">{hint}</p>}
+      {children && <div className="mt-5">{children}</div>}
+    </div>
+  );
+}
+
+// Settings card footer (Vercel's pattern): a divided row — "Learn more"
+// doc link left, status text + actions right. `doc` is the only honest
+// part: omit it rather than link to docs that don't exist.
+export function CardFooter({
+  doc,
+  docLabel,
+  children,
+}: {
+  doc?: string;
+  docLabel?: string;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div className="-mx-4 mt-4 flex items-center justify-between gap-3 border-t border-border px-4 pt-3">
+      {doc ? (
+        <a
+          href={doc}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+        >
+          {docLabel ?? "Learn more"}
+          <ArrowUpRight className="h-3 w-3" />
+        </a>
+      ) : (
+        <span />
+      )}
+      <div className="flex items-center gap-3">{children}</div>
+    </div>
+  );
+}
+
+// Section header with a neutral medallion icon — one visual language for
 // card sections across Settings, Teams, and project flows.
 export function SectionHead({
   icon: Icon,
@@ -442,8 +589,8 @@ export function SectionHead({
 }) {
   return (
     <div className="mb-4 flex items-start gap-2.5">
-      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-brand/30 bg-brand/10">
-        <Icon className="h-4 w-4 text-brand" />
+      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border bg-accent/50">
+        <Icon className="h-4 w-4 text-muted-foreground" />
       </div>
       <div className="min-w-0 pt-0.5">
         <h2 className="text-sm font-medium">{title}</h2>

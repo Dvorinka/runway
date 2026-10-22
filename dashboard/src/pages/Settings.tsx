@@ -89,20 +89,20 @@ function GitProviders() {
       </form>
       {provider !== "github" && (
         <details className="mb-4 text-xs">
-          <summary className="flex w-fit cursor-pointer items-center gap-1.5 text-muted-foreground hover:text-brand">
+          <summary className="flex w-fit cursor-pointer items-center gap-1.5 text-muted-foreground hover:text-foreground">
             <BookOpen className="h-3.5 w-3.5" />
             How to connect {providerLabel(provider)}
           </summary>
           <ol className="mt-2 grid gap-1 text-muted-foreground">
             {PROVIDER_GUIDES[provider as keyof typeof PROVIDER_GUIDES].steps.map((s, i) => (
               <li key={i} className="flex gap-2">
-                <span className="font-mono text-brand">{i + 1}.</span>
+                <span className="font-mono text-muted-foreground/70">{i + 1}.</span>
                 <span>{s}</span>
               </li>
             ))}
           </ol>
           <a
-            className="mt-1.5 inline-block underline-offset-2 hover:text-brand hover:underline"
+            className="mt-1.5 inline-block underline-offset-2 hover:text-foreground hover:underline"
             href={PROVIDER_GUIDES[provider as keyof typeof PROVIDER_GUIDES].docsUrl}
             target="_blank"
             rel="noreferrer"
@@ -279,7 +279,7 @@ function JobQueue() {
     status === "failed"
       ? "bg-red-500"
       : status === "running"
-        ? "bg-brand animate-pulse"
+        ? "bg-amber-400 animate-pulse"
         : status === "done" || status === "succeeded" || status === "completed"
           ? "bg-emerald-500"
           : "bg-zinc-500";
@@ -401,7 +401,7 @@ function JobQueue() {
                 </span>
                 {jobs.length < total && (
                   <button
-                    className="underline-offset-2 hover:text-brand hover:underline"
+                    className="underline-offset-2 hover:text-foreground hover:underline"
                     onClick={() => {
                       const next = Math.min(limit + 25, 200);
                       setLimit(next);
