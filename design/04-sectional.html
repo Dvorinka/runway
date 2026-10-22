@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RUNWAY — SECTIONAL</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Archivo:wght@500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --parch: #EFE8D3;
+    --parch-dk: #E4DCC2;
+    --ink: #2C2920;
+    --ink-dim: #7A7260;
+    --blue: #3A6390;
+    --blue-faint: rgba(58,99,144,.16);
+    --brand: #FF4D00;
+    --brand-faint: rgba(255,77,0,.14);
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background:var(--parch); color:var(--ink);
+    font-family:"IBM Plex Mono", ui-monospace, monospace;
+    height:100vh; display:flex; overflow:hidden;
+  }
+  ::selection { background:var(--brand); color:#fff; }
+
+  /* ===== CHART ===== */
+  .chart { flex:1; position:relative; min-width:0; }
+  .chart svg#map { position:absolute; inset:0; width:100%; height:100%; }
+  .grid-label { position:absolute; font-size:9px; letter-spacing:.1em; color:var(--ink-dim); }
+
+  .cartouche {
+    position:absolute; top:22px; left:26px; z-index:3;
+    background:rgba(246,241,227,.92);
+    border:2px solid var(--ink); padding:12px 18px 10px;
+    box-shadow:4px 4px 0 rgba(44,41,32,.18);
+  }
+  .cartouche h1 {
+    font-family:Archivo,sans-serif; font-weight:800; font-size:19px;
+    letter-spacing:.1em; text-transform:uppercase;
+  }
+  .cartouche h1 i { font-style:normal; color:var(--brand); }
+  .cartouche p { font-size:9.5px; letter-spacing:.14em; color:var(--ink-dim); margin-top:4px; line-height:1.7; }
+
+  .compass {
+    position:absolute; top:24px; right:24px; width:92px; height:92px; z-index:3;
+  }
+
+  .field-tip {
+    position:absolute; z-index:4; pointer-events:none;
+    background:#FBF7EA; border:1.5px solid var(--ink);
+    padding:7px 11px; font-size:10px; line-height:1.6;
+    box-shadow:3px 3px 0 rgba(44,41,32,.2);
+    opacity:0; transition:opacity .15s; white-space:nowrap;
+  }
+  .field-tip b { font-size:11px; }
+  .field-tip .sqk { color:var(--brand); font-weight:600; }
+
+  .scale-bar {
+    position:absolute; bottom:30px; left:28px; z-index:3;
+    font-size:9px; letter-spacing:.14em; color:var(--ink-dim);
+  }
+  .scale-bar .bar { display:flex; margin-top:4px; }
+  .scale-bar .bar i { width:52px; height:7px; border:1px solid var(--ink); }
+  .scale-bar .bar i:nth-child(odd) { background:var(--ink); }
+
+  .notam {
+    position:absolute; bottom:30px; right:26px; z-index:3;
+    max-width:300px; font-size:9px; line-height:1.8; letter-spacing:.08em;
+    color:var(--ink-dim); text-align:right;
+  }
+
+  /* ===== SUPPLEMENT RAIL ===== */
+  .rail {
+    width:340px; flex:none; overflow-y:auto;
+    background:#F7F3E5; border-left:2px solid var(--ink);
+    padding:0;
+  }
+  .rail::-webkit-scrollbar { width:5px; } .rail::-webkit-scrollbar-thumb { background:#C9C0A4; }
+  .rail-head {
+    padding:16px 20px 12px; border-bottom:2px solid var(--ink);
+    font-family:Archivo,sans-serif; font-weight:800; font-size:13px; letter-spacing:.16em;
+    display:flex; justify-content:space-between; align-items:baseline;
+  }
+  .rail-head span { font-family:"IBM Plex Mono"; font-weight:500; font-size:9px; color:var(--ink-dim); letter-spacing:.12em; }
+  .legend { padding:12px 20px; border-bottom:1px solid rgba(44,41,32,.25); font-size:10px; line-height:2.1; }
+  .legend .sw { display:inline-block; width:22px; height:0; border-top:2px dashed var(--brand); vertical-align:middle; margin-right:8px; }
+  .legend .sw.blue { border-color:var(--blue); }
+  .legend .sw.solid { border-top-style:solid; border-color:var(--ink); }
+  .af {
+    padding:12px 20px; border-bottom:1px solid rgba(44,41,32,.2);
+    font-size:10.5px; line-height:1.9; cursor:pointer; transition:background .15s;
+  }
+  .af:hover { background:rgba(255,77,0,.06); }
+  .af .n { font-family:Archivo,sans-serif; font-weight:700; font-size:12px; letter-spacing:.08em; display:flex; justify-content:space-between; }
+  .af .n em { font-style:normal; font-family:"IBM Plex Mono"; font-weight:600; font-size:9.5px; color:var(--brand); }
+  .af .d { color:var(--ink-dim); }
+  .af .d b { color:var(--ink); font-weight:600; }
+  .af .freq { color:var(--blue); }
+  .af.landed { border-left:3px solid transparent; }
+  .af.active { border-left:3px solid var(--brand); }
+  .af.div { border-left:3px solid var(--brand); opacity:.65; }
+
+  @media (max-width: 900px) {
+    body { flex-direction:column; }
+    .rail { width:100%; border-left:none; border-top:2px solid var(--ink); height:45vh; }
+  }
+</style>
+</head>
+<body>
+
+<div class="chart" id="chart">
+  <div class="cartouche">
+    <h1>RUNWAY <i>SECTIONAL</i></h1>
+    <p>DEVS-TEAM CONTROL AREA · SCALE: TEAM AIRSPACE<br>DEPLOY.LOCALHOST TMA · EDITION 0.2.0 · 10 OCT 2026</p>
+  </div>
+
+  <svg class="compass" viewBox="0 0 100 100">
+    <circle cx="50" cy="50" r="44" fill="rgba(246,241,227,.9)" stroke="#2C2920" stroke-width="1.5"/>
+    <circle cx="50" cy="50" r="30" fill="none" stroke="#2C2920" stroke-width=".75" stroke-dasharray="2 3"/>
+    <path d="M50 12 L56 50 L50 88 L44 50 Z" fill="#FF4D00"/>
+    <text x="50" y="24" text-anchor="middle" font-size="11" font-weight="700" fill="#2C2920" font-family="Archivo">N</text>
+    <text x="50" y="80" text-anchor="middle" font-size="8" fill="#7A7260" font-family="IBM Plex Mono">MAG</text>
+  </svg>
+
+  <svg viewBox="0 0 1000 700" preserveAspectRatio="xMidYMid slice" id="map">
+    <defs>
+      <pattern id="gridp" width="50" height="50" patternUnits="userSpaceOnUse">
+        <path d="M50 0V50M0 50H50" fill="none" stroke="rgba(58,99,144,.10)" stroke-width="1"/>
+      </pattern>
+    </defs>
+    <rect width="1000" height="700" fill="url(#gridp)"/>
+
+    <!-- contour hachures -->
+    <g fill="none" stroke="rgba(44,41,32,.20)" stroke-width="1">
+      <path d="M120 540 C 200 500 260 560 340 530 C 420 500 430 570 520 550 C 610 530 640 590 730 560"/>
+      <path d="M140 580 C 230 540 300 600 390 570 C 480 540 500 610 600 585 C 700 560 760 620 860 580"/>
+      <path d="M90 490 C 170 450 250 510 330 480"/>
+      <path d="M640 180 C 720 140 800 200 880 165 C 920 148 960 160 990 145"/>
+      <path d="M660 225 C 740 190 810 245 900 210"/>
+    </g>
+    <g font-family="IBM Plex Mono" font-size="9" fill="rgba(44,41,32,.45)">
+      <text x="330" y="522">1240</text><text x="560" y="575">980</text><text x="800" y="196">870</text>
+    </g>
+
+    <!-- water feature -->
+    <path d="M0 640 C 150 620 260 660 420 645 C 600 628 760 672 1000 640 L1000 700 L0 700 Z"
+      fill="rgba(58,99,144,.10)" stroke="rgba(58,99,144,.35)" stroke-width="1.5"/>
+    <text x="480" y="676" font-family="IBM Plex Mono" font-size="10" fill="#3A6390" letter-spacing="6">CGNAT BAY — NO PUBLIC IP BEYOND THIS LINE</text>
+
+    <!-- airspace -->
+    <circle cx="560" cy="330" r="265" fill="var(--blue-faint)" stroke="#3A6390" stroke-width="2" stroke-dasharray="14 8"/>
+    <circle cx="560" cy="330" r="150" fill="none" stroke="#3A6390" stroke-width="1.5" stroke-dasharray="8 6"/>
+    <circle cx="330" cy="500" r="105" fill="var(--brand-faint)" stroke="#FF4D00" stroke-width="2" stroke-dasharray="10 7"/>
+    <g font-family="IBM Plex Mono" font-size="10" font-weight="600">
+      <text x="560" y="82" text-anchor="middle" fill="#3A6390">CLASS D · TEAM AIRSPACE · devs-team</text>
+      <text x="560" y="196" text-anchor="middle" fill="#3A6390" font-size="8.5">PRODUCTION ZONE — SFC-FL390</text>
+      <text x="330" y="408" text-anchor="middle" fill="#FF4D00">RESTRICTED · PREVIEW/FAILED</text>
+    </g>
+
+    <!-- git origin sector -->
+    <g>
+      <rect x="58" y="66" width="150" height="74" fill="#F7F3E5" stroke="#2C2920" stroke-width="1.5"/>
+      <text x="133" y="88" text-anchor="middle" font-family="Archivo" font-weight="800" font-size="11" fill="#2C2920">GIT SECTOR</text>
+      <text x="133" y="104" text-anchor="middle" font-family="IBM Plex Mono" font-size="8.5" fill="#7A7260">REPO HEAD · main</text>
+      <text x="133" y="118" text-anchor="middle" font-family="IBM Plex Mono" font-size="8.5" fill="#FF4D00">PUSH = DEPARTURE</text>
+      <circle cx="133" cy="150" r="5" fill="#2C2920"/>
+    </g>
+
+    <!-- route arcs (departure corridors) -->
+    <g fill="none" stroke-width="1.6">
+      <path id="r1" d="M133 155 C 250 200 380 240 560 300" stroke="#FF4D00" stroke-dasharray="7 6" class="route live"/>
+      <path id="r2" d="M133 155 C 300 260 420 380 330 470" stroke="#FF4D00" stroke-dasharray="7 6" class="route live" style="animation-delay:-2s"/>
+      <path id="r3" d="M133 155 C 350 150 560 170 720 250" stroke="#3A6390" stroke-dasharray="5 7" class="route live" style="animation-delay:-4s"/>
+      <path id="r4" d="M133 155 C 200 300 240 380 470 430" stroke="#3A6390" stroke-dasharray="5 7" class="route live" style="animation-delay:-1s"/>
+      <path id="r5" d="M133 155 C 260 340 300 420 355 540" stroke="#FF4D00" stroke-dasharray="7 6" class="route live" style="animation-delay:-3s"/>
+    </g>
+    <style>
+      .route { animation: flow 6s linear infinite; }
+      @keyframes flow { to { stroke-dashoffset:-130; } }
+    </style>
+
+    <!-- airfields = projects (runway glyph) -->
+    <g id="fields" font-family="IBM Plex Mono"></g>
+  </svg>
+
+  <div class="field-tip" id="tip"></div>
+
+  <div class="scale-bar">
+    AIRSPACE SCALE — DEPLOYMENTS
+    <div class="bar"><i></i><i></i><i></i><i></i></div>
+    <span>0 ········· 3 ········· 6 ········· 9 FLIGHTS</span>
+  </div>
+
+  <div class="notam">
+    NOTAM: ALL DATA DERIVED FROM POSTGRES JOB QUEUE.<br>
+    POSITIONS SYMBOLIC — READ SUPPLEMENT FOR TRUTH.<br>
+    CHART FOR OPERATIONAL USE. SQUAWK 4F2A ON CONTACT.
+  </div>
+</div>
+
+<aside class="rail">
+  <div class="rail-head">CHART SUPPLEMENT <span>AFD · 10OCT26</span></div>
+  <div class="legend">
+    <div><span class="sw"></span>ACTIVE DEPARTURE CORRIDOR</div>
+    <div><span class="sw blue"></span>ESTABLISHED ROUTE (LANDED)</div>
+    <div><span class="sw solid"></span>TEAM BOUNDARY — runway_ws_</div>
+    <div>◉ AIRFIELD (PROJECT) &nbsp; ▲ FLIGHT IN CORRIDOR</div>
+  </div>
+  <div id="af-list"></div>
+</aside>
+
+<script>
+const FIELDS = [
+  { id:"RWY-4F2A", name:"STOREFRONT FLD", sub:"nextjs · prod", x:560, y:300, hdg:27, st:"LANDED", cls:"landed",
+    freq:"storefront-devs-team.deploy.localhost", meta:"p95 214ms · container healthy · edge net rwy-4f2a" },
+  { id:"RWY-9C1E", name:"API FLD", sub:"dockerfile · prod", x:720, y:250, hdg:9, st:"ON FINAL", cls:"active",
+    freq:"api-devs-team.deploy.localhost", meta:"probe 200 OK · alias swap pending" },
+  { id:"RWY-77BD", name:"DOCS FLD", sub:"vite · preview", x:470, y:430, hdg:18, st:"CLIMB", cls:"active",
+    freq:"docs-branch-docs.deploy.localhost", meta:"build 41% · basicAuth protected" },
+  { id:"RWY-B3F9", name:"LANDING FLD", sub:"astro · static", x:610, y:470, hdg:36, st:"LANDED", cls:"landed",
+    freq:"landing-devs-team.deploy.localhost", meta:"static publish · data/static/b3f9" },
+  { id:"RWY-A110", name:"API HOLDING PT", sub:"preview · diverted", x:355, y:540, hdg:0, st:"DIVERTED", cls:"div",
+    freq:"api-id-a1104f.deploy.localhost", meta:"runner OOM · strip retained" },
+  { id:"RWY-2E8C", name:"STOREFRONT STAGING", sub:"queued", x:330, y:455, hdg:0, st:"HOLDING", cls:"div",
+    freq:"storefront-env-staging.deploy.localhost", meta:"queue depth 1 · SKIP LOCKED" },
+];
+
+const g = document.getElementById('fields');
+const NS = "http://www.w3.org/2000/svg";
+FIELDS.forEach((f, i) => {
+  const fg = document.createElementNS(NS, 'g');
+  fg.setAttribute('transform', `translate(${f.x} ${f.y})`);
+  fg.style.cursor = 'pointer';
+  fg.innerHTML = `
+    <circle r="16" fill="#F7F3E5" stroke="#2C2920" stroke-width="1.5"/>
+    <g transform="rotate(${f.hdg * 10})">
+      <line x1="0" y1="-10" x2="0" y2="10" stroke="#2C2920" stroke-width="2.5"/>
+      <line x1="-4" y1="-10" x2="4" y2="-10" stroke="#2C2920" stroke-width="1.5"/>
+      <line x1="-4" y1="10" x2="4" y2="10" stroke="#2C2920" stroke-width="1.5"/>
+    </g>
+    <circle cx="11" cy="-11" r="4" fill="${f.cls === 'active' ? '#FF4D00' : f.cls === 'div' ? '#B3321F' : '#3D6B33'}"/>
+    <text y="34" text-anchor="middle" font-size="10" font-weight="600" fill="#2C2920">${f.name}</text>
+    <text y="46" text-anchor="middle" font-size="8" fill="#7A7260">${f.sub}</text>`;
+  fg.addEventListener('mousemove', e => {
+    const tip = document.getElementById('tip');
+    tip.style.opacity = 1;
+    tip.style.left = (e.offsetX + 18) + 'px';
+    tip.style.top = (e.offsetY - 10) + 'px';
+    tip.innerHTML = `<b>${f.id}</b> · <span class="sqk">${f.st}</span><br>${f.name}<br>${f.meta}`;
+  });
+  fg.addEventListener('mouseleave', () => document.getElementById('tip').style.opacity = 0);
+  fg.addEventListener('click', () => {
+    document.querySelectorAll('.af').forEach(el => el.style.background = '');
+    const el = document.getElementById('af-' + i);
+    el.style.background = 'rgba(255,77,0,.10)';
+    el.scrollIntoView({behavior:'smooth', block:'center'});
+  });
+  g.appendChild(fg);
+});
+
+document.getElementById('af-list').innerHTML = FIELDS.map((f, i) => `
+  <div class="af ${f.cls}" id="af-${i}">
+    <div class="n">${f.name} <em>${f.st}</em></div>
+    <div class="d">FLIGHT <b>${f.id}</b> · ${f.sub}</div>
+    <div class="d freq">FREQ ${f.freq}</div>
+    <div class="d">RMK — ${f.meta}</div>
+  </div>`).join('');
+</script>
+</body>
+</html>

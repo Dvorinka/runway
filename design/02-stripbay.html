@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RUNWAY — STRIP BAY</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Archivo:wght@500;600;700;800&family=Caveat:wght@500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #EDE6D4;
+    --paper-hi: #F6F1E3;
+    --strip: #FBF8EF;
+    --ink: #221F1A;
+    --ink-dim: #6E6656;
+    --stamp: #FF4D00;
+    --stamp-red: #B3321F;
+    --pencil: #2E4A6B;
+    --rail: #B9B2A0;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background:
+      radial-gradient(ellipse at 20% 0%, rgba(255,255,255,.5), transparent 55%),
+      repeating-linear-gradient(0deg, transparent 0 3px, rgba(120,105,75,.018) 3px 4px),
+      var(--paper);
+    color: var(--ink);
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    min-height:100vh;
+    padding-bottom:80px;
+  }
+  ::selection { background: var(--stamp); color:#fff; }
+
+  /* ===== HEADER ===== */
+  header {
+    display:flex; align-items:center; gap:22px;
+    padding:18px 34px 14px;
+    border-bottom:2px solid rgba(34,31,26,.7);
+    flex-wrap:wrap;
+  }
+  .tape {
+    background:#2B2B28; color:#F2ECDC;
+    font-family:Archivo,sans-serif; font-weight:700; font-size:14px;
+    letter-spacing:.22em; padding:7px 16px 6px;
+    box-shadow:0 2px 0 rgba(34,31,26,.25);
+    text-transform:uppercase;
+  }
+  .tape.orange { background:var(--stamp); color:#fff; }
+  .head-meta { font-size:11px; color:var(--ink-dim); letter-spacing:.12em; line-height:1.7; }
+  .head-meta b { color:var(--ink); }
+  header .spacer { flex:1; }
+  .zclock { text-align:right; }
+  .zclock .z { font-family:Archivo,sans-serif; font-weight:800; font-size:22px; letter-spacing:.06em; font-variant-numeric:tabular-nums; }
+  .zclock small { display:block; font-size:9px; letter-spacing:.3em; color:var(--ink-dim); }
+
+  /* ===== BAYS ===== */
+  .bay { margin:34px 34px 0; }
+  .bay-label {
+    display:inline-block;
+    font-family:Archivo,sans-serif; font-weight:700; font-size:12px; letter-spacing:.18em;
+    background:#DCD3BC; color:#3A362D;
+    padding:5px 14px; text-transform:uppercase;
+    border:1px solid rgba(34,31,26,.35);
+    box-shadow:0 1px 0 rgba(255,255,255,.6) inset, 0 2px 3px rgba(34,31,26,.15);
+    margin-bottom:0; position:relative; z-index:2;
+  }
+  .bay-label em { font-style:normal; color:var(--stamp); margin-left:10px; }
+  .rack {
+    background:linear-gradient(#C9C1AC, #B4AC94);
+    border:1px solid rgba(34,31,26,.4);
+    border-radius:4px;
+    padding:16px 16px 14px;
+    box-shadow:0 3px 10px rgba(34,31,26,.18), inset 0 1px 0 rgba(255,255,255,.5);
+  }
+  .slot { display:flex; flex-direction:column; gap:10px; }
+
+  /* ===== STRIP ===== */
+  .strip {
+    position:relative;
+    background:
+      linear-gradient(90deg, rgba(34,31,26,.04) 0, transparent 8px),
+      var(--strip);
+    border:1px solid rgba(34,31,26,.38);
+    padding:10px 18px 9px 26px;
+    display:grid;
+    grid-template-columns: 96px 60px 1.3fr 110px 1fr auto;
+    gap:4px 18px; align-items:center;
+    font-size:12px;
+    cursor:pointer;
+    box-shadow:0 1px 2px rgba(34,31,26,.22);
+    transition:transform .16s ease, box-shadow .16s ease;
+    transform:rotate(var(--tilt, 0deg));
+  }
+  .strip::before { /* perforation edge */
+    content:""; position:absolute; left:10px; top:4px; bottom:4px; width:2px;
+    background:repeating-linear-gradient(0deg, rgba(34,31,26,.3) 0 4px, transparent 4px 9px);
+  }
+  .strip:hover { transform:rotate(0deg) translateY(-2px); box-shadow:0 6px 14px rgba(34,31,26,.25); z-index:3; }
+  .strip.open { transform:rotate(0deg); box-shadow:0 8px 22px rgba(34,31,26,.3); z-index:4; }
+
+  .f-cs { font-weight:600; font-size:13px; }
+  .f-time { color:var(--ink-dim); font-variant-numeric:tabular-nums; }
+  .f-route { font-weight:500; }
+  .f-route i { font-style:normal; color:var(--stamp); font-weight:600; }
+  .f-fl { color:var(--ink-dim); font-variant-numeric:tabular-nums; }
+  .f-rmk { color:var(--ink-dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+  .stamp {
+    font-family:Archivo,sans-serif; font-weight:800; font-size:12px; letter-spacing:.14em;
+    border:2px solid currentColor; border-radius:3px;
+    padding:2px 9px 1px; text-transform:uppercase;
+    transform:rotate(-4deg); display:inline-block;
+    mix-blend-mode:multiply; opacity:.88;
+  }
+  .stamp.landed  { color:#3D6B33; }
+  .stamp.active  { color:var(--stamp); }
+  .stamp.hold    { color:#8A6D1A; }
+  .stamp.div     { color:var(--stamp-red); }
+
+  .note {
+    font-family:Caveat,cursive; font-size:17px; color:var(--pencil);
+    grid-column:1/-1; padding-left:8px; transform:rotate(-.6deg);
+    display:none;
+  }
+  .strip.open .note { display:block; }
+  .detail {
+    display:none; grid-column:1/-1;
+    border-top:1px dashed rgba(34,31,26,.35); margin-top:6px; padding-top:8px;
+    font-size:11px; color:var(--ink-dim); line-height:1.8;
+    grid-template-columns:repeat(auto-fit, minmax(220px,1fr)); gap:2px 24px;
+  }
+  .strip.open .detail { display:grid; }
+  .detail b { color:var(--ink); font-weight:600; }
+  .detail .mono { color:var(--pencil); }
+
+  /* footer chalk */
+  footer {
+    position:fixed; bottom:0; left:0; right:0;
+    background:#26241F; color:#BDB49C;
+    font-size:10px; letter-spacing:.16em;
+    padding:8px 34px; display:flex; gap:28px; align-items:center;
+  }
+  footer .dot { width:6px; height:6px; border-radius:50%; background:var(--stamp); box-shadow:0 0 6px var(--stamp); }
+  footer .spacer { flex:1; }
+
+  @media (max-width: 1000px) {
+    .strip { grid-template-columns:90px 1fr auto; }
+    .f-time, .f-fl, .f-rmk { display:none; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="tape">Runway Tower</div>
+  <div class="tape orange">Strip Bay · devs-team</div>
+  <div class="head-meta">
+    <b>6 STRIPS IN BAY</b> · SEQ 0417<br>
+    POSITION: GROUND CONTROL · RELIEF: ON STATION
+  </div>
+  <div class="spacer"></div>
+  <div class="head-meta" style="text-align:right">STRIP BAY NO. <b>RWY-01</b><br>BAYS: PROD / PREVIEW / HOLD</div>
+  <div class="zclock"><div class="z" id="z">--:--</div><small>ZULU</small></div>
+</header>
+
+<main id="bays"></main>
+
+<footer>
+  <div class="dot"></div><span>STRIP PRINTER READY</span>
+  <span>TELETYPE · COM1 UP</span>
+  <div class="spacer"></div>
+  <span>EVERY PUSH GETS A STRIP · EVERY STRIP GETS A NUMBER</span>
+</footer>
+
+<script>
+const BAYS = [
+  { name:"PRODUCTION", em:"3 ACTIVE", strips:[
+    { cs:"RWY-4F2A", t:"19:42", route:["storefront","env-prod"], fl:"FL390", rmk:"feat: cart totals rework", st:"LANDED", cls:"landed",
+      note:"healthy — p95 214ms. keep as rollback base.",
+      d:{COMMIT:"4f2a9e1 · main",IMAGE:"node:22 · nextjs",ALIAS:"storefront-devs-team.deploy.localhost",NET:"runway_edge_rwy-4f2a"}},
+    { cs:"RWY-B3F9", t:"18:11", route:["landing","env-prod"], fl:"FL390", rmk:"chore: bump hero copy", st:"LANDED", cls:"landed",
+      note:"static mode — served from data/static/. cheap flight.",
+      d:{COMMIT:"b3f97c2 · main",IMAGE:"astro · static",ALIAS:"landing-devs-team.deploy.localhost",NET:"static publish"}},
+    { cs:"RWY-9C1E", t:"19:53", route:["api","env-prod"], fl:"FL120 ↓", rmk:"fix: token refresh race", st:"ON FINAL", cls:"active",
+      note:"probe returned 200 — swapping alias now",
+      d:{COMMIT:"9c1e44d · main",IMAGE:"dockerfile · service",ALIAS:"api-devs-team.deploy.localhost",NET:"runway_edge_rwy-9c1e"}},
+  ]},
+  { name:"PREVIEW", em:"1 CLIMBING", strips:[
+    { cs:"RWY-77BD", t:"19:54", route:["docs","branch-docs"], fl:"FL080 ↑", rmk:"docs: self-hosting guide", st:"CLIMB", cls:"active",
+      note:"vite build — 12 modules so far",
+      d:{COMMIT:"77bd08a · docs",IMAGE:"vite · node:22",ALIAS:"docs-branch-docs.deploy.localhost",NET:"preview env · basicAuth on"}},
+    { cs:"RWY-A110", t:"19:39", route:["api","id-a1104f"], fl:"—", rmk:"feat: retry scheduler", st:"DIVERTED", cls:"div",
+      note:"OOM in runner. container stopped, strip kept for the record.",
+      d:{COMMIT:"a1104f9 · retry-sched",IMAGE:"dockerfile · service",ALIAS:"api-id-a1104f.deploy.localhost",NET:"edge torn down"}},
+  ]},
+  { name:"HOLDING", em:"1 QUEUED", strips:[
+    { cs:"RWY-2E8C", t:"19:46", route:["storefront","env-staging"], fl:"FL030", rmk:"wip: checkout experiments", st:"HOLDING", cls:"hold",
+      note:"waiting for build slot — queue depth 1",
+      d:{COMMIT:"2e8c5b0 · staging",IMAGE:"node:22 · nextjs",ALIAS:"storefront-env-staging.deploy.localhost",NET:"queued · SKIP LOCKED"}},
+  ]},
+];
+
+const bays = document.getElementById('bays');
+bays.innerHTML = BAYS.map(b => `
+  <section class="bay">
+    <div class="bay-label">${b.name}<em>${b.em}</em></div>
+    <div class="rack"><div class="slot">
+      ${b.strips.map((s,i) => `
+      <div class="strip" style="--tilt:${(i%2? -0.35 : 0.3)}deg" onclick="this.classList.toggle('open')">
+        <div class="f-cs">${s.cs}</div>
+        <div class="f-time">${s.t}Z</div>
+        <div class="f-route">${s.route[0]} <i>→</i> ${s.route[1]}</div>
+        <div class="f-fl">${s.fl}</div>
+        <div class="f-rmk">${s.rmk}</div>
+        <div class="stamp ${s.cls}">${s.st}</div>
+        <div class="note">✎ ${s.note}</div>
+        <div class="detail">
+          ${Object.entries(s.d).map(([k,v]) => `<div>${k} — <b class="mono">${v}</b></div>`).join('')}
+        </div>
+      </div>`).join('')}
+    </div></div>
+  </section>`).join('');
+
+setInterval(() => {
+  document.getElementById('z').textContent = new Date().toISOString().slice(11,16);
+}, 1000);
+document.getElementById('z').textContent = new Date().toISOString().slice(11,16);
+</script>
+</body>
+</html>
