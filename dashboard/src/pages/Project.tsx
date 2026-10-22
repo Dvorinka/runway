@@ -484,7 +484,7 @@ function Preflight({ done, ready }: { done: Record<string, boolean>; ready: bool
   );
 }
 
-function Deployments({ id }: { id: string }) {
+function Deployments({ id, project }: { id: string; project: Project | null }) {
   const nav = useNavigate();
   const [deployments, setDeployments] = useState<Deployment[] | null>(null);
   const [deploying, setDeploying] = useState(false);
@@ -576,9 +576,11 @@ function Deployments({ id }: { id: string }) {
       </div>
       <Err msg={error} />
       {(() => {
-        const latest = deployments?.find(
-          (d) => d.conclusion === "succeeded" || d.status === "completed",
-        );
+        // The production alias target is the deployment actually live;
+        // fall back to the newest concluded one when no alias exists yet.
+        const latest =
+          deployments?.find((d) => d.id === project?.production_deployment_id) ??
+          deployments?.find((d) => d.conclusion === "succeeded" || d.status === "completed");
         const liveUrl = latest?.urls?.environment ?? latest?.urls?.immutable ?? null;
         if (!latest || !liveUrl) return null;
         return (
@@ -2243,7 +2245,7 @@ export default function ProjectPage() {
           </button>
         ))}
       </div>
-      {tab === "deployments" && <Deployments id={id} />}
+      {tab === "deployments" && <Deployments id={id} project={project} />}
       {tab === "logs" && <ProjectLogs id={id} />}
       {tab === "environment" && <Environment id={id} />}
       {tab === "analytics" && <Analytics id={id} />}
