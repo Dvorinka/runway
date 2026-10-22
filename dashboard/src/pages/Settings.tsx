@@ -1,6 +1,7 @@
 import {
   api,
   type AllowlistRule,
+  type ApiKey,
   type GitConnection,
   type Me,
   type NodeTlsProvision,
@@ -89,20 +90,20 @@ function GitProviders() {
       </form>
       {provider !== "github" && (
         <details className="mb-4 text-xs">
-          <summary className="flex w-fit cursor-pointer items-center gap-1.5 text-muted-foreground hover:text-brand">
+          <summary className="flex w-fit cursor-pointer items-center gap-1.5 text-muted-foreground hover:text-foreground">
             <BookOpen className="h-3.5 w-3.5" />
             How to connect {providerLabel(provider)}
           </summary>
-          <ol className="mt-2 grid gap-1 text-muted-foreground">
+          <ol className="mt-2 grid grid-cols-1 gap-1 text-muted-foreground">
             {PROVIDER_GUIDES[provider as keyof typeof PROVIDER_GUIDES].steps.map((s, i) => (
               <li key={i} className="flex gap-2">
-                <span className="font-mono text-brand">{i + 1}.</span>
+                <span className="font-mono text-muted-foreground/70">{i + 1}.</span>
                 <span>{s}</span>
               </li>
             ))}
           </ol>
           <a
-            className="mt-1.5 inline-block underline-offset-2 hover:text-brand hover:underline"
+            className="mt-1.5 inline-block underline-offset-2 hover:text-foreground hover:underline"
             href={PROVIDER_GUIDES[provider as keyof typeof PROVIDER_GUIDES].docsUrl}
             target="_blank"
             rel="noreferrer"
@@ -112,7 +113,7 @@ function GitProviders() {
         </details>
       )}
       {error && <p className="mb-3 text-xs text-destructive">{error}</p>}
-      <div className="grid gap-2">
+      <div className="grid grid-cols-1 gap-2">
         {Object.entries(connections).flatMap(([p, conns]) =>
           conns.map((c) => (
             <div
@@ -148,7 +149,7 @@ function GithubApp() {
       {st === null ? (
         <p className="text-xs text-muted-foreground">Loading…</p>
       ) : st.configured ? (
-        <div className="grid gap-2">
+        <div className="grid grid-cols-1 gap-2">
           <div className="flex items-center gap-2">
             <Badge variant="success">configured</Badge>
             <span className="text-xs text-muted-foreground">
@@ -168,7 +169,7 @@ function GithubApp() {
           )}
         </div>
       ) : (
-        <div className="grid gap-2">
+        <div className="grid grid-cols-1 gap-2">
           <a href="/api/v1/github/app/register" className="w-fit">
             <Button size="sm">Register with GitHub</Button>
           </a>
@@ -179,6 +180,115 @@ function GithubApp() {
           </p>
         </div>
       )}
+    </Card>
+  );
+}
+
+function ApiKeys() {
+  const [keys, setKeys] = useState<ApiKey[]>([]);
+  const [name, setName] = useState("");
+  const [created, setCreated] = useState<{ id: string; token: string } | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState("");
+
+  const load = () =>
+    api.apiKeys().then((r) => setKeys(r.keys)).catch((e) => setError(e.message));
+  useEffect(() => {
+    load();
+  }, []);
+
+  async function create(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    setCopied(false);
+    try {
+      const res = await api.createApiKey(name.trim());
+      setCreated(res);
+      setName("");
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "failed");
+    }
+  }
+
+  function copyToken() {
+    if (!created) return;
+    navigator.clipboard.writeText(created.token).then(() => setCopied(true));
+  }
+
+  return (
+    <Card className="p-5">
+      <SectionHead icon={KeyRound} title="API keys">
+        Personal access tokens for the REST API and CLI (`runway login --key`).
+      </SectionHead>
+      <form onSubmit={create} className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto]">
+        <Input
+          placeholder="token name — e.g. laptop, ci"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          required
+        />
+        <Button type="submit" size="sm">
+          Create key
+        </Button>
+      </form>
+      {created && (
+        <div className="mb-4 rounded-md border border-border bg-black/40 p-3">
+          <p className="mb-2 text-xs text-amber-400">
+            This token is shown only once — store it somewhere safe.
+          </p>
+          <div className="flex items-center gap-2">
+            <code className="min-w-0 flex-1 truncate font-mono text-xs">
+              {created.token}
+            </code>
+            <Button type="button" variant="outline" size="sm" onClick={copyToken}>
+              {copied ? "Copied" : "Copy"}
+            </Button>
+          </div>
+        </div>
+      )}
+      {error && <p className="mb-3 text-xs text-destructive">{error}</p>}
+      <div className="grid grid-cols-1 gap-2">
+        {keys.map((k) => (
+          <div
+            key={k.id}
+            className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2"
+          >
+            <div className="min-w-0">
+              <div className="truncate text-sm">
+                {k.name}
+                {k.status === "revoked" && (
+                  <Badge variant="outline" className="ml-2 text-[10px]">
+                    revoked
+                  </Badge>
+                )}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                created {timeAgo(k.created_at)}
+                {k.last_used_at
+                  ? ` · last used ${timeAgo(k.last_used_at)}`
+                  : " · never used"}
+              </div>
+            </div>
+            {k.status !== "revoked" && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() =>
+                  api.revokeApiKey(k.id).then(load).catch((e) => setError(e.message))
+                }
+              >
+                Revoke
+              </Button>
+            )}
+          </div>
+        ))}
+        {keys.length === 0 && (
+          <p className="text-sm text-muted-foreground">
+            No keys yet — create one to deploy from CI or drive the API.
+          </p>
+        )}
+      </div>
     </Card>
   );
 }
@@ -233,7 +343,7 @@ function Allowlist() {
         </Button>
       </form>
       {error && <p className="mb-3 text-xs text-destructive">{error}</p>}
-      <div className="grid gap-2">
+      <div className="grid grid-cols-1 gap-2">
         {rules.map((r) => (
           <div
             key={r.id}
@@ -279,7 +389,7 @@ function JobQueue() {
     status === "failed"
       ? "bg-red-500"
       : status === "running"
-        ? "bg-brand animate-pulse"
+        ? "bg-amber-400 animate-pulse"
         : status === "done" || status === "succeeded" || status === "completed"
           ? "bg-emerald-500"
           : "bg-zinc-500";
@@ -335,7 +445,7 @@ function JobQueue() {
           <p className="text-xs text-muted-foreground">Queue is clear — nothing pending.</p>
         </div>
       ) : (
-        <div className="grid gap-1.5">
+        <div className="grid grid-cols-1 gap-1.5">
           {jobs.map((j) => (
             <div
               key={j.id}
@@ -401,7 +511,7 @@ function JobQueue() {
                 </span>
                 {jobs.length < total && (
                   <button
-                    className="underline-offset-2 hover:text-brand hover:underline"
+                    className="underline-offset-2 hover:text-foreground hover:underline"
                     onClick={() => {
                       const next = Math.min(limit + 25, 200);
                       setLimit(next);
@@ -482,7 +592,7 @@ function Nodes() {
         </Button>
       </form>
       {error && <p className="mb-3 text-xs text-destructive">{error}</p>}
-      <div className="grid gap-2">
+      <div className="grid grid-cols-1 gap-2">
         {nodes.map((n) => (
           <div
             key={n.id}
@@ -617,7 +727,7 @@ function Account({ me }: { me: Me }) {
           hasAvatar={me.has_avatar}
           onChanged={() => location.reload()}
         />
-        <form onSubmit={saveProfile} className="grid gap-3 sm:grid-cols-3">
+        <form onSubmit={saveProfile} className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <Input
             placeholder="Display name"
             value={name}
@@ -666,7 +776,7 @@ function Account({ me }: { me: Me }) {
       </Card>
       <Card className="p-5">
         <SectionHead icon={KeyRound} title="Change password" />
-        <form onSubmit={savePassword} className="mt-3 grid gap-3 sm:grid-cols-3">
+        <form onSubmit={savePassword} className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
           <Input
             type="password"
             placeholder="current password"
@@ -796,7 +906,7 @@ function TwoFactor({ enabled: initiallyEnabled }: { enabled: boolean }) {
         ))}
 
       {phase === "enroll" && (
-        <form onSubmit={verify} className="grid gap-3">
+        <form onSubmit={verify} className="grid grid-cols-1 gap-3">
           <div className="flex items-start gap-4">
             {qrUrl && (
               <img src={qrUrl} alt="TOTP QR code" className="rounded-md border border-border" />
@@ -827,7 +937,7 @@ function TwoFactor({ enabled: initiallyEnabled }: { enabled: boolean }) {
       )}
 
       {phase === "codes" && (
-        <div className="grid gap-3">
+        <div className="grid grid-cols-1 gap-3">
           <p className="text-xs text-amber-400">
             Save these recovery codes — each works once in place of an
             authenticator code. They are shown only now.
@@ -875,8 +985,9 @@ export default function SettingsPage({ me }: { me: Me }) {
       <p className="mb-6 mt-1 text-sm text-muted-foreground">
         Your account, providers, access control, and instance infrastructure.
       </p>
-      <div className="grid gap-4">
+      <div className="grid grid-cols-1 gap-4">
         <Account me={me} />
+        <ApiKeys />
         <GitProviders />
         {me.id === 1 && (
           <>

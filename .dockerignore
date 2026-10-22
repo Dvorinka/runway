@@ -1,8 +1,9 @@
 target/
 data/
 data-test/
-web/node_modules/
-web/dist/
+data-run/
+dashboard/node_modules/
+dashboard/dist/
 node_modules/
 .git/
 *.log

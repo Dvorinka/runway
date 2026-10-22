@@ -2,7 +2,7 @@ import { api, type Project } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Bell, FolderGit2, LayoutDashboard, Plus, Rocket, Settings, Users } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 
 interface Item {
   id: string;
@@ -12,6 +12,10 @@ interface Item {
   to: string;
 }
 
+const ACTIONS: Item[] = [
+  { id: "act:new", label: "New project", hint: "create", icon: <Plus className="h-4 w-4" />, to: "/projects?new=1" },
+];
+
 const PAGES: Item[] = [
   {
     id: "nav:overview",
@@ -19,7 +23,6 @@ const PAGES: Item[] = [
     icon: <LayoutDashboard className="h-4 w-4" />,
     to: "/",
   },
-  { id: "nav:new", label: "New project", icon: <Plus className="h-4 w-4" />, to: "/projects" },
   {
     id: "nav:deployments",
     label: "Deployments",
@@ -41,8 +44,17 @@ const PAGES: Item[] = [
   },
 ];
 
+const PROJECT_TABS: [string, string][] = [
+  ["Deployments", "deployments"],
+  ["Logs", "logs"],
+  ["Environment", "environment"],
+  ["Domains", "domains"],
+  ["Settings", "settings"],
+];
+
 export function CommandPalette() {
   const nav = useNavigate();
+  const { pathname } = useLocation();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [projects, setProjects] = useState<Project[]>([]);
@@ -51,9 +63,15 @@ export function CommandPalette() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement;
+      const typing =
+        el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable;
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault();
         setOpen((o) => !o);
+      } else if (e.key === "f" && !typing && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        setOpen(true);
       } else if (e.key === "Escape") setOpen(false);
     };
     const onOpen = () => setOpen(true);
@@ -76,21 +94,41 @@ export function CommandPalette() {
 
   if (!open) return null;
 
-  const items: Item[] = [
-    ...projects.map((p) => ({
+  // Subsequence fuzzy match — "dmo" still finds "demo-app".
+  const fuzzy = (q: string, s: string) => {
+    let i = 0;
+    for (const c of s.toLowerCase()) if (c === q[i]) i++;
+    return i >= q.length;
+  };
+  const match = (i: Item) =>
+    !query ||
+    fuzzy(query, i.label) ||
+    (i.hint ? fuzzy(query, i.hint) : false);
+
+  const scopedId = pathname.match(/^\/projects\/([^/]+)/)?.[1];
+  const scopedProject = projects.find((p) => p.id === scopedId);
+  const scopedItems: Item[] = scopedProject
+    ? PROJECT_TABS.map(([label, tab]) => ({
+        id: `scope:${tab}`,
+        label,
+        hint: scopedProject.name,
+        icon: <FolderGit2 className="h-4 w-4" />,
+        to: tab === "deployments" ? `/projects/${scopedId}` : `/projects/${scopedId}?tab=${tab}`,
+      })).filter(match)
+    : [];
+  const projectItems: Item[] = projects
+    .filter((p) => p.id !== scopedId)
+    .map((p) => ({
       id: p.id,
       label: p.name,
       hint: p.repo_full_name,
       icon: <FolderGit2 className="h-4 w-4" />,
       to: `/projects/${p.id}`,
-    })),
-    ...PAGES,
-  ].filter(
-    (i) =>
-      !query ||
-      i.label.toLowerCase().includes(query.toLowerCase()) ||
-      i.hint?.toLowerCase().includes(query.toLowerCase()),
-  );
+    }))
+    .filter(match);
+  const actionItems = ACTIONS.filter(match);
+  const pageItems = PAGES.filter(match);
+  const items = [...scopedItems, ...projectItems, ...actionItems, ...pageItems];
 
   const go = (to: string) => {
     setOpen(false);
@@ -131,23 +169,43 @@ export function CommandPalette() {
           {items.length === 0 && (
             <p className="px-3 py-6 text-center text-xs text-muted-foreground">No matches</p>
           )}
-          {items.map((it, i) => (
-            <button
-              key={it.id}
-              onMouseEnter={() => setSel(i)}
-              onClick={() => go(it.to)}
-              className={cn(
-                "flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm",
-                i === sel ? "bg-accent" : "",
-              )}
-            >
-              <span className={cn("text-muted-foreground", i === sel && "text-brand")}>{it.icon}</span>
-              <span className="flex-1 truncate">{it.label}</span>
-              {it.hint && (
-                <span className="truncate font-mono text-xs text-muted-foreground">{it.hint}</span>
-              )}
-            </button>
-          ))}
+          {(
+            [
+              [scopedProject?.name ?? "", scopedItems],
+              ["Projects", projectItems],
+              ["Actions", actionItems],
+              ["Pages", pageItems],
+            ] as [string, Item[]][]
+          ).map(([group, groupItems]) => {
+            if (groupItems.length === 0) return null;
+            return (
+              <div key={group}>
+                <div className="px-3 pb-1 pt-2 text-[11px] font-medium text-muted-foreground/70">
+                  {group}
+                </div>
+                {groupItems.map((it) => {
+                  const i = items.indexOf(it);
+                  return (
+                    <button
+                      key={it.id}
+                      onMouseEnter={() => setSel(i)}
+                      onClick={() => go(it.to)}
+                      className={cn(
+                        "flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm",
+                        i === sel ? "bg-accent" : "",
+                      )}
+                    >
+                      <span className={cn("text-muted-foreground", i === sel && "text-foreground")}>{it.icon}</span>
+                      <span className="flex-1 truncate">{it.label}</span>
+                      {it.hint && (
+                        <span className="truncate font-mono text-xs text-muted-foreground">{it.hint}</span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })}
         </div>
         <div className="flex items-center gap-4 border-t border-border px-4 py-2 text-[11px] text-muted-foreground">
           <span>↑↓ navigate</span>

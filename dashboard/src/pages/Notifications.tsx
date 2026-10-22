@@ -1,5 +1,6 @@
 import { api, type AppNotification } from "@/lib/api";
-import { Badge, Button, Card, TimeAgo } from "@/components/ui";
+import { Badge, Button, Card, EmptyState, TimeAgo } from "@/components/ui";
+import { Bell } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
@@ -39,11 +40,11 @@ export default function NotificationsPage() {
         )}
       </div>
       {error && <p className="mb-4 text-xs text-destructive">{error}</p>}
-      <div className="stagger grid gap-2">
+      <div className="stagger grid grid-cols-1 gap-2">
         {items.map((n) => {
           const inner = (
             <Card
-              className={`flex items-center justify-between p-4 transition-colors hover:border-brand/25 hover:bg-accent/50 ${
+              className={`flex items-center justify-between p-4 transition-colors hover:border-muted-foreground/40 hover:bg-accent/50 ${
                 n.read ? "opacity-60" : ""
               }`}
             >
@@ -66,7 +67,11 @@ export default function NotificationsPage() {
           );
         })}
         {items.length === 0 && (
-          <p className="text-sm text-muted-foreground">Nothing yet — deploy events show up here.</p>
+          <EmptyState
+            icon={Bell}
+            title="Nothing yet"
+            hint="Deploy events and alerts show up here."
+          />
         )}
       </div>
     </div>

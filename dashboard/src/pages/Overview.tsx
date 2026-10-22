@@ -1,7 +1,8 @@
 import { api, type Deployment, type Project } from "@/lib/api";
 import { DeploymentRow } from "@/components/DeploymentRow";
-import { Card, Skeleton, isRunning } from "@/components/ui";
+import { Card, EmptyState, Skeleton, isRunning } from "@/components/ui";
 import { ProjectCard } from "@/pages/Projects";
+import { cn } from "@/lib/utils";
 import { Activity, AlertTriangle, FolderGit2, Percent, Rocket } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
@@ -78,7 +79,10 @@ export default function Overview() {
             {label === "Success rate" && successRate !== null && (
               <div className="mt-2 h-1 overflow-hidden rounded-full bg-muted">
                 <div
-                  className="h-full rounded-full bg-gradient-to-r from-brand/70 to-brand transition-all"
+                  className={cn(
+                    "h-full rounded-full transition-all",
+                    successRate >= 90 ? "bg-success" : successRate >= 50 ? "bg-warning" : "bg-danger",
+                  )}
                   style={{ width: `${successRate}%` }}
                 />
               </div>
@@ -89,7 +93,7 @@ export default function Overview() {
       {down.length > 0 && (
         <section className="mb-8">
           <h2 className="mb-3 text-sm font-medium text-destructive">Needs attention</h2>
-          <div className="grid gap-2">
+          <div className="grid grid-cols-1 gap-2">
             {down.map((d) => (
               <DeploymentRow key={d.id} d={d} showProject />
             ))}
@@ -99,7 +103,7 @@ export default function Overview() {
       {running.length > 0 && (
         <section className="mb-8">
           <h2 className="mb-3 text-sm font-medium text-muted-foreground">Deploying now</h2>
-          <div className="grid gap-2">
+          <div className="grid grid-cols-1 gap-2">
             {running.map((d) => (
               <DeploymentRow key={d.id} d={d} showProject />
             ))}
@@ -109,31 +113,31 @@ export default function Overview() {
       <section className="mb-8">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-medium text-muted-foreground">Projects</h2>
-          <Link to="/projects" className="text-xs text-muted-foreground hover:text-brand">
+          <Link to="/projects" className="text-xs text-muted-foreground hover:text-foreground">
             View all →
           </Link>
         </div>
         {projects === null ? (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {[0, 1, 2].map((i) => (
               <Skeleton key={i} className="h-[104px]" />
             ))}
           </div>
         ) : projects.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-border p-12 text-center">
-            <div className="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-full border border-brand/30 bg-brand/10">
-              <Rocket className="h-5 w-5 text-brand" />
-            </div>
-            <p className="text-sm text-muted-foreground">No projects yet.</p>
+          <EmptyState
+            icon={Rocket}
+            title="No projects yet"
+            hint="Deploy from git or uploads — each project gets preview URLs and rollbacks."
+          >
             <Link
               to="/projects"
-              className="mt-2 inline-block text-xs text-muted-foreground underline underline-offset-2 hover:text-brand"
+              className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
             >
               Create your first project
             </Link>
-          </div>
+          </EmptyState>
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {projects.slice(0, 6).map((p) => (
               <ProjectCard key={p.id} p={p} />
             ))}
@@ -143,23 +147,27 @@ export default function Overview() {
       <section>
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-medium text-muted-foreground">Recent deployments</h2>
-          <Link to="/deployments" className="text-xs text-muted-foreground hover:text-brand">
+          <Link to="/deployments" className="text-xs text-muted-foreground hover:text-foreground">
             View all →
           </Link>
         </div>
         {deployments === null ? (
-          <div className="grid gap-2">
+          <div className="grid grid-cols-1 gap-2">
             {[0, 1].map((i) => (
               <Skeleton key={i} className="h-[64px]" />
             ))}
           </div>
         ) : (
-          <div className="grid gap-2">
+          <div className="grid grid-cols-1 gap-2">
             {deployments.slice(0, 8).map((d) => (
               <DeploymentRow key={d.id} d={d} showProject />
             ))}
             {deployments.length === 0 && (
-              <p className="text-sm text-muted-foreground">Nothing deployed yet.</p>
+              <EmptyState
+                icon={Rocket}
+                title="Nothing deployed yet"
+                hint="Push to a linked repo or upload a build to ship your first deploy."
+              />
             )}
           </div>
         )}

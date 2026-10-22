@@ -1,7 +1,7 @@
 import { api, type Deployment } from "@/lib/api";
 import { DeploymentRow } from "@/components/DeploymentRow";
-import { Input, Skeleton, isRunning } from "@/components/ui";
-import { Search } from "lucide-react";
+import { EmptyState, Input, Skeleton, isRunning } from "@/components/ui";
+import { Rocket, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 const FILTERS = ["all", "running", "succeeded", "failed"] as const;
@@ -79,7 +79,7 @@ export default function Deployments() {
             onClick={() => setFilter(f)}
             className={`-mb-px border-b-2 px-3 pb-2 text-sm capitalize transition-colors ${
               filter === f
-                ? "border-brand text-foreground"
+                ? "border-foreground text-foreground"
                 : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
           >
@@ -88,21 +88,20 @@ export default function Deployments() {
         ))}
       </div>
       {error && <p className="mb-4 text-sm text-destructive">{error}</p>}
-      <div className="stagger grid gap-2">
+      <div className="stagger grid grid-cols-1 gap-2">
         {deployments === null &&
           [0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-[64px]" />)}
         {filtered?.map((d) => <DeploymentRow key={d.id} d={d} showProject />)}
         {filtered !== undefined && filtered?.length === 0 && (
-          <div className="rounded-lg border border-dashed border-border p-12 text-center">
-            <div className="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-full border border-border bg-accent/50">
-              <Search className="h-5 w-5 text-muted-foreground" />
-            </div>
-            <p className="text-sm text-muted-foreground">
-              {deployments?.length === 0
-                ? "No deployments yet."
-                : `Nothing matches ${query ? `"${query}"` : "this filter"}.`}
-            </p>
-          </div>
+          <EmptyState
+            icon={deployments?.length === 0 ? Rocket : Search}
+            title={deployments?.length === 0 ? "No deployments yet" : "No matches"}
+            hint={
+              deployments?.length === 0
+                ? "Link a repo and ship your first deploy."
+                : `Nothing matches ${query ? `"${query}"` : "this filter"}.`
+            }
+          />
         )}
       </div>
     </div>

@@ -10,13 +10,13 @@ import {
   type RemoteNode,
   type Webhook,
 } from "@/lib/api";
-import { Avatar, AvatarRow, Badge, Button, Card, ComboBox, Input, SectionHead, Skeleton, StatusDot } from "@/components/ui";
+import { Avatar, AvatarRow, Badge, Button, Card, CardFooter, ComboBox, EmptyState, Input, SectionHead, Skeleton, StatusDot } from "@/components/ui";
 import { DeploymentRow } from "@/components/DeploymentRow";
 import { filesToTarGz } from "@/lib/tarball";
 import { timeAgo } from "@/lib/utils";
-import { Globe, Link2, Rocket, Webhook as WebhookIcon, ArrowRightLeft } from "lucide-react";
+import { Globe, Link2, Rocket, Webhook as WebhookIcon, ArrowRightLeft, ListFilter, CheckCircle2, Circle, KeyRound, Clock } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 const TABS = [
   "deployments",
@@ -31,6 +31,9 @@ const TABS = [
   "settings",
 ] as const;
 type Tab = (typeof TABS)[number];
+
+// Repo docs rendered on GitHub — target for settings-card "Learn more" links.
+const DOCS = "https://github.com/Dvorinka/runway/blob/main/docs";
 
 type AnalyticsProvider = "none" | "umami" | "rybbit" | "plausible" | "custom";
 
@@ -114,7 +117,7 @@ function Analytics({ id }: { id: string }) {
           Injects a tracking snippet into every HTML page on the next static deploy.
           Works with Umami, Rybbit, Plausible, or any provider's script tag.
         </p>
-      <div className="grid gap-3">
+      <div className="grid grid-cols-1 gap-3">
         <ComboBox
           value={provider}
           onChange={(v) => setProvider(v as AnalyticsProvider)}
@@ -237,7 +240,7 @@ function WebAnalytics({ id }: { id: string }) {
         </button>
       </div>
       {data && data.views > 0 && (
-        <div className="mt-4 grid gap-4">
+        <div className="mt-4 grid grid-cols-1 gap-4">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="rounded-md border border-border p-3">
               <div className="text-2xl font-semibold">{data.views.toLocaleString()}</div>
@@ -435,18 +438,68 @@ function Err({ msg }: { msg: string }) {
   return msg ? <p className="mt-2 text-xs text-destructive">{msg}</p> : null;
 }
 
-function Deployments({ id }: { id: string }) {
+function Preflight({ done, ready }: { done: Record<string, boolean>; ready: boolean }) {
+  const items: { key: string; label: string; hint: string; to: string }[] = [
+    { key: "deploy", label: "First deployment", hint: "drop files or hit Deploy now", to: "" },
+    { key: "live", label: "Production live", hint: "a succeeded deployment serving traffic", to: "" },
+    { key: "domain", label: "Custom domain", hint: "point DNS at this instance", to: "?tab=domains" },
+    { key: "env", label: "Environment variable", hint: "store config securely", to: "?tab=environment" },
+  ];
+  const total = items.length;
+  const count = items.filter((i) => done[i.key]).length;
+  if (!ready || count === total) return null;
+  return (
+    <div className="mb-4 rounded-lg border border-border bg-card">
+      <div className="flex items-center justify-between border-b border-border px-4 py-3">
+        <span className="text-sm font-medium">Preflight checklist</span>
+        <span className="rounded-full border border-border px-2 py-0.5 font-mono text-[11px] text-muted-foreground">
+          {count}/{total}
+        </span>
+      </div>
+      {items.map((i) => {
+        const ok = done[i.key];
+        return (
+          <div key={i.key} className="flex items-center justify-between border-b border-border px-4 py-2.5 last:border-0">
+            <div className="flex items-center gap-3">
+              {ok ? (
+                <CheckCircle2 className="h-4 w-4 text-success" />
+              ) : (
+                <Circle className="h-4 w-4 text-muted-foreground/50" />
+              )}
+              <span className={ok ? "text-sm text-muted-foreground" : "text-sm"}>{i.label}</span>
+              {!ok && <span className="text-xs text-muted-foreground">· {i.hint}</span>}
+            </div>
+            {!ok && i.to && (
+              <Link
+                to={i.to}
+                className="rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+              >
+                Open
+              </Link>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function Deployments({ id, project }: { id: string; project: Project | null }) {
   const nav = useNavigate();
   const [deployments, setDeployments] = useState<Deployment[] | null>(null);
   const [deploying, setDeploying] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
+  const [domainCount, setDomainCount] = useState<number | null>(null);
+  const [envCount, setEnvCount] = useState<number | null>(null);
 
   useEffect(() => {
     const load = () =>
       api.deployments(id).then((r) => setDeployments(r.deployments)).catch((e) => setError(e.message));
     load();
+    api.domains(id).then((r) => setDomainCount(r.domains.length)).catch(() => {});
+    api.getEnv(id).then((r) => setEnvCount(r.env.length)).catch(() => {});
     const es = projectEventsStream(id);
     es.onmessage = () => load();
     return () => es.close();
@@ -523,15 +576,18 @@ function Deployments({ id }: { id: string }) {
       </div>
       <Err msg={error} />
       {(() => {
-        const latest = deployments?.find(
-          (d) => d.conclusion === "succeeded" || d.status === "completed",
-        );
+        // The production alias target is the deployment actually live;
+        // fall back to the newest concluded one when no alias exists yet.
+        const latest =
+          deployments?.find((d) => d.id === project?.production_deployment_id) ??
+          deployments?.find((d) => d.conclusion === "succeeded" || d.status === "completed");
         const liveUrl = latest?.urls?.environment ?? latest?.urls?.immutable ?? null;
         if (!latest || !liveUrl) return null;
         return (
+          <>
           <Link
             to={`/deployments/${latest.id}`}
-            className="mb-2 block rounded-lg border border-brand/25 bg-gradient-to-r from-brand/[0.08] to-transparent p-4 transition-colors hover:border-brand/40"
+            className="mb-2 block rounded-lg border border-border bg-card p-4 transition-colors hover:border-muted-foreground/30"
           >
             <div className="flex items-center justify-between gap-3">
               <div className="flex min-w-0 items-center gap-3">
@@ -541,7 +597,7 @@ function Deployments({ id }: { id: string }) {
                   computed={latest.computed_status}
                 />
                 <div className="min-w-0">
-                  <div className="text-[10px] uppercase tracking-wide text-brand">
+                  <div className="text-[10px] uppercase tracking-wide text-success">
                     Production · live
                   </div>
                   <div className="truncate font-mono text-sm">
@@ -555,22 +611,48 @@ function Deployments({ id }: { id: string }) {
               </div>
             </div>
           </Link>
+          <div className="mb-2 flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-2.5">
+            <p className="text-xs text-muted-foreground">
+              To update Production, drop files anywhere on this page or
+              run <code className="rounded bg-accent px-1 py-0.5 font-mono text-[11px] text-foreground">runway deploy</code> from
+              a linked directory.
+            </p>
+            <Link
+              to="/deployments"
+              className="flex shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+            >
+              <ListFilter size={13} />
+              Deployments
+            </Link>
+          </div>
+          </>
         );
       })()}
-      <div className="stagger grid gap-2">
+      <Preflight
+        done={{
+          deploy: (deployments?.length ?? 0) > 0,
+          live:
+            deployments?.some(
+              (d) =>
+                (d.conclusion === "succeeded" || d.status === "completed") &&
+                (d.urls?.environment ?? d.urls?.immutable),
+            ) ?? false,
+          domain: (domainCount ?? 0) > 0,
+          env: (envCount ?? 0) > 0,
+        }}
+        ready={deployments !== null && domainCount !== null && envCount !== null}
+      />
+      <div className="stagger grid grid-cols-1 gap-2">
         {deployments === null && [0, 1, 2].map((i) => <Skeleton key={i} className="h-[64px]" />)}
         {deployments?.map((d) => (
           <DeploymentRow key={d.id} d={d} />
         ))}
         {deployments !== null && deployments.length === 0 && (
-          <div className="rounded-lg border border-dashed border-border p-12 text-center">
-            <div className="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-full border border-brand/30 bg-brand/10">
-              <Rocket className="h-5 w-5 text-brand" />
-            </div>
-            <p className="text-sm text-muted-foreground">
-              No deployments yet — hit Deploy now, or drop files here.
-            </p>
-          </div>
+          <EmptyState
+            icon={Rocket}
+            title="No deployments yet"
+            hint="Hit Deploy now, or drop files here."
+          />
         )}
       </div>
     </div>
@@ -646,7 +728,7 @@ function Environment({ id }: { id: string }) {
   return (
     <>
       {bulk ? (
-        <form onSubmit={addBulk} className="mb-4 grid gap-2">
+        <form onSubmit={addBulk} className="mb-4 grid grid-cols-1 gap-2">
           <textarea
             value={bulkText}
             onChange={(e) => setBulkText(e.target.value)}
@@ -686,7 +768,7 @@ function Environment({ id }: { id: string }) {
         </form>
       )}
       <Err msg={error} />
-      <div className="stagger grid gap-2">
+      <div className="stagger grid grid-cols-1 gap-2">
         {vars.map((v) => (
           <Card key={`${v.key}:${v.environment}`} className="flex items-center justify-between p-3">
             <div className="font-mono text-sm">
@@ -710,7 +792,11 @@ function Environment({ id }: { id: string }) {
           </Card>
         ))}
         {vars.length === 0 && (
-          <p className="text-sm text-muted-foreground">No environment variables yet.</p>
+          <EmptyState
+            icon={KeyRound}
+            title="No environment variables yet"
+            hint="Add a key above, or paste a .env file."
+          />
         )}
       </div>
     </>
@@ -771,7 +857,7 @@ function Cron({ id }: { id: string }) {
             onClick={() => setSchedule(s)}
             className={`rounded-full border px-2.5 py-0.5 text-xs transition-colors ${
               schedule === s
-                ? "border-brand/40 bg-brand/15 text-brand"
+                ? "border-foreground/25 bg-accent text-foreground"
                 : "border-border text-muted-foreground hover:text-foreground"
             }`}
           >
@@ -780,7 +866,7 @@ function Cron({ id }: { id: string }) {
         ))}
       </div>
       <Err msg={error} />
-      <div className="stagger grid gap-2">
+      <div className="stagger grid grid-cols-1 gap-2">
         {jobs.map((j) => (
           <Card key={j.id} className="flex items-center justify-between p-3">
             <div>
@@ -813,7 +899,11 @@ function Cron({ id }: { id: string }) {
           </Card>
         ))}
         {jobs.length === 0 && (
-          <p className="text-sm text-muted-foreground">No cron jobs yet.</p>
+          <EmptyState
+            icon={Clock}
+            title="No cron jobs yet"
+            hint="Schedule deployments of a branch on an interval."
+          />
         )}
       </div>
     </>
@@ -876,7 +966,7 @@ function Redirects({ id }: { id: string }) {
         </Button>
       </form>
       <Err msg={error} />
-      <div className="stagger grid gap-2">
+      <div className="stagger grid grid-cols-1 gap-2">
         {rules.map((r) => (
           <Card key={r.id} className="flex items-center justify-between p-3">
             <div className="font-mono text-sm">
@@ -980,16 +1070,16 @@ function Domains({ id }: { id: string }) {
           <SectionHead icon={Globe} title="Automatic">
             Issued for every deployment — environment, branch previews, and the immutable build URL.
           </SectionHead>
-          <div className="stagger mb-6 grid gap-2">
+          <div className="stagger mb-6 grid grid-cols-1 gap-2">
             {auto.map((a) => (
               <Card key={a.host} className="flex items-center justify-between p-3">
                 <div className="flex min-w-0 items-center gap-2">
-                  <Badge variant="brand">{a.label}</Badge>
+                  <Badge variant="secondary">{a.label}</Badge>
                   <a
                     href={`https://${a.host}`}
                     target="_blank"
                     rel="noreferrer"
-                    className="truncate font-mono text-sm hover:text-brand"
+                    className="min-w-0 flex-1 truncate font-mono text-sm hover:text-foreground"
                   >
                     {a.host}
                   </a>
@@ -1012,12 +1102,12 @@ function Domains({ id }: { id: string }) {
           onChange={(e) => setHostname(e.target.value)}
           required
         />
-        <Button type="submit" size="sm">
+        <Button type="submit" size="sm" className="shrink-0">
           Add domain
         </Button>
       </form>
       <Err msg={error} />
-      <div className="stagger grid gap-2">
+      <div className="stagger grid grid-cols-1 gap-2">
         {domains.map((d) => (
           <Card key={d.id} className="flex items-center justify-between p-3">
             <div className="font-mono text-sm">{d.hostname}</div>
@@ -1056,7 +1146,11 @@ function Domains({ id }: { id: string }) {
           </Card>
         ))}
         {domains.length === 0 && (
-          <p className="text-sm text-muted-foreground">No domains yet.</p>
+          <EmptyState
+            icon={Link2}
+            title="Add a domain"
+            hint="Add a domain you own, point its DNS at this instance, then verify."
+          />
         )}
       </div>
     </>
@@ -1110,7 +1204,7 @@ function Webhooks({ id }: { id: string }) {
         </Button>
       </form>
       <Err msg={error} />
-      <div className="stagger grid gap-2">
+      <div className="stagger grid grid-cols-1 gap-2">
         {hooks.map((w) => (
           <Card key={w.id} className="flex items-center justify-between p-3">
             <div>
@@ -1190,7 +1284,7 @@ function Settings({ id, project }: { id: string; project: Project | null }) {
 
   const [avatarKey, setAvatarKey] = useState(0);
   return (
-    <div className="grid gap-4">
+    <div className="grid grid-cols-1 gap-4">
       {project && (
         <Card className="p-4">
           <h3 className="mb-2 text-sm font-medium">Avatar</h3>
@@ -1366,7 +1460,7 @@ function Environments({ id, project }: { id: string; project: Project | null }) 
           </span>
         </span>
       </label>
-      <div className="mb-3 grid gap-2">
+      <div className="mb-3 grid grid-cols-1 gap-2">
         {envs.map((env) => (
           <div
             key={env.id}
@@ -1470,7 +1564,7 @@ function DockerBuild({ id, project }: { id: string; project: Project | null }) {
         the image's own command serves the app. Path is relative to the repo root (or the root
         directory if set).
       </p>
-      <div className="grid gap-3">
+      <div className="grid grid-cols-1 gap-3">
         <Input
           placeholder="Dockerfile"
           value={df}
@@ -1484,14 +1578,14 @@ function DockerBuild({ id, project }: { id: string; project: Project | null }) {
           value={args}
           onChange={(e) => setArgs(e.target.value)}
         />
-        <div>
-          <Button size="sm" onClick={save}>
-            Save
-          </Button>
-        </div>
       </div>
       <Err msg={error} />
-      {msg && <p className="mt-2 text-xs text-muted-foreground">{msg}</p>}
+      <CardFooter doc={`${DOCS}/presets.md`} docLabel="Learn more about Dockerfile builds">
+        {msg && <span className="text-xs text-muted-foreground">{msg}</span>}
+        <Button size="sm" onClick={save}>
+          Save
+        </Button>
+      </CardFooter>
     </Card>
   );
 }
@@ -1533,19 +1627,19 @@ function HealthCheck({ id, project }: { id: string; project: Project | null }) {
         Repeated failures mark the deployment <em>unhealthy</em> and notify the team — catches
         "container up, app dead". Applies to deployments created after saving.
       </p>
-      <div className="flex gap-2">
-        <Input
-          placeholder="/healthz"
-          value={path}
-          onChange={(e) => setPath(e.target.value)}
-          className="font-mono"
-        />
+      <Input
+        placeholder="/healthz"
+        value={path}
+        onChange={(e) => setPath(e.target.value)}
+        className="font-mono"
+      />
+      <Err msg={error} />
+      <CardFooter doc={`${DOCS}/runway-json.md`} docLabel="Learn more about health checks">
+        {msg && <span className="text-xs text-muted-foreground">{msg}</span>}
         <Button size="sm" onClick={save}>
           Save
         </Button>
-      </div>
-      <Err msg={error} />
-      {msg && <p className="mt-2 text-xs text-muted-foreground">{msg}</p>}
+      </CardFooter>
     </Card>
   );
 }
@@ -1590,7 +1684,7 @@ function DeployRules({ id, project }: { id: string; project: Project | null }) {
         pushes touching matching files — glob list like{" "}
         <code className="font-mono">apps/web/**,packages/shared/**</code> (monorepo filtering).
       </p>
-      <div className="grid gap-3">
+      <div className="grid grid-cols-1 gap-3">
         <label className="flex items-center gap-2 text-xs">
           <input
             type="checkbox"
@@ -1644,14 +1738,14 @@ function DeployRules({ id, project }: { id: string; project: Project | null }) {
           />
           Comment on pull requests with preview URL
         </label>
-        <div>
-          <Button size="sm" onClick={save}>
-            Save rules
-          </Button>
-        </div>
       </div>
       <Err msg={error} />
-      {msg && <p className="mt-2 text-xs text-muted-foreground">{msg}</p>}
+      <CardFooter doc={`${DOCS}/runway-json.md`} docLabel="Learn more about deploy rules">
+        {msg && <span className="text-xs text-muted-foreground">{msg}</span>}
+        <Button size="sm" onClick={save}>
+          Save rules
+        </Button>
+      </CardFooter>
     </Card>
   );
 }
@@ -1698,19 +1792,19 @@ function Retention({ id, project }: { id: string; project: Project | null }) {
         Deployments an alias still points at (including rollback targets) are
         never pruned. Empty keeps everything.
       </p>
-      <div className="flex gap-2">
-        <Input
-          placeholder="e.g. 5 — empty keeps all"
-          value={count}
-          onChange={(e) => setCount(e.target.value.replace(/\D/g, ""))}
-          className="w-44"
-        />
+      <Input
+        placeholder="e.g. 5 — empty keeps all"
+        value={count}
+        onChange={(e) => setCount(e.target.value.replace(/\D/g, ""))}
+        className="w-44"
+      />
+      <Err msg={error} />
+      <CardFooter doc={`${DOCS}/runway-json.md`} docLabel="Learn more about retention">
+        {msg && <span className="text-xs text-muted-foreground">{msg}</span>}
         <Button size="sm" onClick={save}>
           Save
         </Button>
-      </div>
-      <Err msg={error} />
-      {msg && <p className="mt-2 text-xs text-muted-foreground">{msg}</p>}
+      </CardFooter>
     </Card>
   );
 }
@@ -1760,15 +1854,6 @@ function StatusPageCard({ id, project }: { id: string; project: Project | null }
           onChange={(e) => setSlug(e.target.value)}
           className="w-56 font-mono"
         />
-        {enabled ? (
-          <Button variant="outline" size="sm" onClick={() => save(false, slug)}>
-            Disable
-          </Button>
-        ) : (
-          <Button size="sm" onClick={() => save(true, slug)}>
-            Enable
-          </Button>
-        )}
       </div>
       {enabled && (
         <div className="mt-3 space-y-2 text-xs">
@@ -1801,6 +1886,17 @@ function StatusPageCard({ id, project }: { id: string; project: Project | null }
         </div>
       )}
       <Err msg={error} />
+      <CardFooter doc={`${DOCS}/runway-json.md`} docLabel="Learn more about status pages">
+        {enabled ? (
+          <Button variant="outline" size="sm" onClick={() => save(false, slug)}>
+            Disable
+          </Button>
+        ) : (
+          <Button size="sm" onClick={() => save(true, slug)}>
+            Enable
+          </Button>
+        )}
+      </CardFooter>
     </Card>
   );
 }
@@ -1849,18 +1945,18 @@ function PreviewDomain({ id, project }: { id: string; project: Project | null })
         Staging base for branch previews: <code className="font-mono">&lt;project&gt;-branch-&lt;branch&gt;.{domain.trim() || "staging.example.com"}</code>.
         Environment and immutable URLs stay on the deploy domain.
       </p>
-      <div className="flex gap-2">
-        <Input
-          placeholder="staging.example.com (empty = deploy domain)"
-          value={domain}
-          onChange={(e) => setDomain(e.target.value)}
-        />
+      <Input
+        placeholder="staging.example.com (empty = deploy domain)"
+        value={domain}
+        onChange={(e) => setDomain(e.target.value)}
+      />
+      <Err msg={error} />
+      <CardFooter doc={`${DOCS}/runway-json.md`} docLabel="Learn more about preview domains">
+        {msg && <span className="text-xs text-muted-foreground">{msg}</span>}
         <Button size="sm" onClick={save}>
           Save
         </Button>
-      </div>
-      <Err msg={error} />
-      {msg && <span className="text-xs text-muted-foreground">{msg}</span>}
+      </CardFooter>
     </Card>
   );
 }
@@ -1915,7 +2011,7 @@ function Firewall({ id, project }: { id: string; project: Project | null }) {
         Applied at the edge (Traefik) — blocked traffic never reaches the app. One IP/CIDR per
         line; leave empty to allow everyone.
       </p>
-      <div className="grid gap-3">
+      <div className="grid grid-cols-1 gap-3">
         <textarea
           value={allow}
           onChange={(e) => setAllow(e.target.value)}
@@ -1923,7 +2019,7 @@ function Firewall({ id, project }: { id: string; project: Project | null }) {
           rows={3}
           className="w-full rounded-md border border-border bg-transparent px-3 py-2 font-mono text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
         />
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Input
             className="w-36"
             placeholder="Rate limit /s"
@@ -1939,12 +2035,12 @@ function Firewall({ id, project }: { id: string; project: Project | null }) {
           <span className="text-xs text-muted-foreground">requests/sec per client IP</span>
         </div>
         <Protection id={id} project={project} />
-        <div className="flex items-center gap-3">
-          <Button size="sm" onClick={save}>Save</Button>
-          {msg && <span className="text-xs text-muted-foreground">{msg}</span>}
-        </div>
         <Err msg={error} />
       </div>
+      <CardFooter doc={`${DOCS}/runway-json.md`} docLabel="Learn more about the firewall">
+        {msg && <span className="text-xs text-muted-foreground">{msg}</span>}
+        <Button size="sm" onClick={save}>Save</Button>
+      </CardFooter>
     </Card>
   );
 }
@@ -1981,7 +2077,7 @@ function Protection({ id, project }: { id: string; project: Project | null }) {
   }
 
   return (
-    <div className="grid gap-2 border-t border-border pt-3">
+    <div className="grid grid-cols-1 gap-2 border-t border-border pt-3">
       <div className="flex items-center justify-between">
         <span className="text-sm">Deployment protection</span>
         {enabled && <Badge variant="success">on</Badge>}
@@ -2077,8 +2173,14 @@ function ProjectLogs({ id }: { id: string }) {
 
 export default function ProjectPage() {
   const { id = "" } = useParams();
+  const [params, setParams] = useSearchParams();
   const [project, setProject] = useState<Project | null>(null);
-  const [tab, setTab] = useState<Tab>("deployments");
+  const tabParam = params.get("tab");
+  const tab: Tab = (TABS as readonly string[]).includes(tabParam ?? "")
+    ? (tabParam as Tab)
+    : "deployments";
+  const setTab = (t: Tab) =>
+    setParams(t === "deployments" ? {} : { tab: t }, { replace: true });
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -2099,7 +2201,6 @@ export default function ProjectPage() {
   return (
     <div className="page-enter mx-auto max-w-5xl p-4 sm:p-8">
       <div className="relative mb-6">
-        <div className="pointer-events-none absolute -top-16 left-1/4 h-48 w-96 rounded-full bg-brand/[0.07] blur-[80px]" />
         <div className="relative flex items-center justify-between">
         <div className="flex min-w-0 items-center gap-3">
           {project && (
@@ -2108,7 +2209,7 @@ export default function ProjectPage() {
           <div className="min-w-0">
             <h1 className="truncate text-2xl font-semibold tracking-tight">{project?.name ?? "Project"}</h1>
           {project && (
-            <div className="mt-1.5 flex items-center gap-3 text-xs text-muted-foreground">
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted-foreground">
               <span className="font-mono">
                 {project.repo_provider}:{project.repo_full_name}
               </span>
@@ -2137,14 +2238,15 @@ export default function ProjectPage() {
         </div>
         </div>
       </div>
-      <div className="-mx-4 mb-6 flex gap-4 overflow-x-auto border-b border-border px-4 sm:mx-0 sm:px-0">
+      {/* Rail carries tab links on lg+; strip stays for mobile. */}
+      <div className="-mx-4 mb-6 flex gap-4 overflow-x-auto border-b border-border px-4 sm:mx-0 sm:px-0 lg:hidden">
         {TABS.map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
             className={`-mb-px shrink-0 border-b-2 pb-2 text-sm capitalize ${
               tab === t
-                ? "border-brand text-foreground"
+                ? "border-foreground text-foreground"
                 : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
           >
@@ -2152,7 +2254,7 @@ export default function ProjectPage() {
           </button>
         ))}
       </div>
-      {tab === "deployments" && <Deployments id={id} />}
+      {tab === "deployments" && <Deployments id={id} project={project} />}
       {tab === "logs" && <ProjectLogs id={id} />}
       {tab === "environment" && <Environment id={id} />}
       {tab === "analytics" && <Analytics id={id} />}

@@ -14,6 +14,7 @@ export interface Project {
   environments?: { id: string; name: string; slug: string; branch?: string; status?: string }[];
   status: string;
   preset?: string | null;
+  production_deployment_id?: string | null;
   latest_deployment?: Deployment | null;
   created_at: string;
 }
@@ -26,6 +27,9 @@ export interface Deployment {
   branch: string;
   commit_sha: string;
   commit_meta?: { message?: string; author?: string; author_name?: string };
+  repo_provider?: string;
+  repo_full_name?: string;
+  repo_base_url?: string;
   status: string;
   conclusion: string | null;
   computed_status?: string | null;
@@ -34,6 +38,16 @@ export interface Deployment {
   error?: string | { message?: string; status?: string } | null;
   url?: string;
   urls?: { immutable?: string | null; environment?: string | null; branch?: string | null };
+  env_state?: {
+    subdomain: string;
+    current_deployment_id: string | null;
+    previous_deployment_id: string | null;
+  } | null;
+  prod_state?: {
+    subdomain: string;
+    current_deployment_id: string | null;
+    previous_deployment_id: string | null;
+  } | null;
   concluded_at?: string | null;
   created_at: string;
 }
@@ -106,6 +120,14 @@ export interface AllowlistRule {
   id: number;
   type: string;
   value: string;
+}
+
+export interface ApiKey {
+  id: string;
+  name: string;
+  status: string;
+  last_used_at: string | null;
+  created_at: string;
 }
 
 export interface RemoteNode {
@@ -349,6 +371,14 @@ export const api = {
     }),
   deleteMe: (password: string) =>
     req<void>("/api/auth/me", { method: "DELETE", body: JSON.stringify({ password }) }),
+  apiKeys: () => req<{ keys: ApiKey[] }>("/api/v1/keys"),
+  createApiKey: (name: string) =>
+    req<{ id: string; token: string }>("/api/v1/keys", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
+  revokeApiKey: (id: string) =>
+    req<void>(`/api/v1/keys/${id}`, { method: "DELETE" }),
   deploymentStats: (id: string) =>
     req<{
       running: boolean;
@@ -359,6 +389,23 @@ export const api = {
       net_tx?: number;
       pids?: number;
     }>(`/api/v1/deployments/${id}/stats`),
+  deploymentOg: (id: string, path = "/") =>
+    req<{
+      ok: boolean;
+      url: string;
+      reason?: string;
+      report?: {
+        title?: string;
+        description?: string;
+        og: Record<string, string>;
+        twitter: Record<string, string>;
+        favicon?: string;
+      };
+    }>(`/api/v1/deployments/${id}/og?path=${encodeURIComponent(path)}`),
+  deploymentFiles: (id: string) =>
+    req<{ ok: boolean; files?: { path: string; size: number }[]; reason?: string }>(
+      `/api/v1/deployments/${id}/files`,
+    ),
   deploymentMetrics: (id: string) =>
     req<{
       samples: {
@@ -380,6 +427,23 @@ export const api = {
     }).then((r) => r.text()),
   redeploy: (id: string) =>
     req<Deployment>(`/api/v1/deployments/${id}/redeploy`, { method: "POST" }),
+  rollback: (projectId: string, envId: string) =>
+    req<{ subdomain: string; deployment_id: string; previous_deployment_id: string | null }>(
+      `/api/v1/projects/${projectId}/environments/${envId}/rollback`,
+      { method: "POST" },
+    ),
+  promote: (id: string, environmentId = "prod") =>
+    req<{
+      subdomain: string;
+      environment_id: string;
+      deployment_id: string;
+      previous_deployment_id: string | null;
+    }>(`/api/v1/deployments/${id}/promote`, {
+      method: "POST",
+      body: JSON.stringify({ environment_id: environmentId }),
+    }),
+  skip: (id: string) =>
+    req<{ ok: boolean }>(`/api/v1/deployments/${id}/skip`, { method: "POST" }),
   uploadDeploy: (projectId: string, body: Blob) =>
     fetch(`/api/v1/projects/${projectId}/deployments/upload`, {
       method: "POST",
