@@ -110,6 +110,13 @@ function LiveStats({ id }: { id: string }) {
   );
 }
 
+function commitUrl(dep: Deployment) {
+  if (!dep.repo_base_url || !dep.repo_provider || dep.repo_provider === "upload")
+    return null;
+  const dir = dep.repo_provider === "bitbucket" ? "commits" : "commit";
+  return `${dep.repo_base_url}/${dir}/${dep.commit_sha}`;
+}
+
 function DeployInfo({ dep, active }: { dep: Deployment; active: boolean }) {
   const [copied, setCopied] = useState(false);
   const envUrl = dep.urls?.environment;
@@ -147,7 +154,24 @@ function DeployInfo({ dep, active }: { dep: Deployment; active: boolean }) {
     [
       "Source",
       <span key="src" className="font-mono text-xs">
-        {dep.branch}@{dep.commit_sha.slice(0, 7)}
+        {dep.repo_provider && dep.repo_provider !== "upload" && dep.repo_full_name && (
+          <span className="text-muted-foreground">
+            {dep.repo_provider}:{dep.repo_full_name}{" "}
+          </span>
+        )}
+        {dep.branch}@
+        {commitUrl(dep) ? (
+          <a
+            href={commitUrl(dep)!}
+            target="_blank"
+            rel="noreferrer"
+            className="hover:text-foreground"
+          >
+            {dep.commit_sha.slice(0, 7)}
+          </a>
+        ) : (
+          dep.commit_sha.slice(0, 7)
+        )}
         {dep.commit_meta?.author && (
           <span className="text-muted-foreground"> · {dep.commit_meta.author}</span>
         )}
