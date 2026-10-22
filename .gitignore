@@ -3,6 +3,11 @@
 .env
 data/
 data-test/
+data-run/
 node_modules/
 dist/
 .playwright-mcp/
+__pycache__/
+screenshots/
+/*.png
+OVERNIGHT-PROMPT.md

@@ -77,6 +77,14 @@ export default function Login() {
           }}
         />
         <div className="pointer-events-none absolute -top-1/4 right-0 h-[150%] w-72 rotate-[24deg] bg-gradient-to-b from-transparent via-white/[0.05] to-transparent" />
+        {/* runway centerline */}
+        <div
+          className="pointer-events-none absolute -top-1/4 right-[8.5rem] h-[150%] w-[3px] rotate-[24deg] opacity-20"
+          style={{
+            backgroundImage:
+              "repeating-linear-gradient(180deg, #ededed 0px, #ededed 34px, transparent 34px, transparent 58px)",
+          }}
+        />
         <div className="relative flex items-center gap-3">
           <img src="/runway-mark-white.svg" alt="" className="h-9 w-9" />
           <span className="text-lg font-semibold tracking-tight">Runway</span>
@@ -138,7 +146,7 @@ export default function Login() {
                 }}
                 className={`rounded-md px-3 py-1.5 text-sm transition-colors ${
                   mode === m
-                    ? "border border-brand/40 bg-brand/15 font-medium text-brand"
+                    ? "border border-foreground/25 bg-accent font-medium text-foreground"
                     : "border border-transparent text-muted-foreground hover:text-foreground"
                 }`}
               >

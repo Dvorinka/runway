@@ -6,11 +6,11 @@ import {
   type Repo,
 } from "@/lib/api";
 import { GIT_PROVIDERS, PROVIDER_GUIDES, providerLabel, type GitProvider } from "@/lib/gitproviders";
-import { Avatar, Button, Card, ComboBox, Input, SectionHead, Skeleton, StatusDot } from "@/components/ui";
+import { Avatar, Button, Card, ComboBox, EmptyState, Input, SectionHead, Skeleton, StatusDot } from "@/components/ui";
 import { duration, firstLine, timeAgo } from "@/lib/utils";
-import { LayoutGrid, List, Plus, BookOpen, Search } from "lucide-react";
+import { FolderPlus, LayoutGrid, List, Plus, BookOpen, Search } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
 type Provider = GitProvider;
 
@@ -47,10 +47,10 @@ function ConnectGuide({
   return (
     <div className="grid gap-2 rounded-md border border-border p-3">
       <div className="flex items-center gap-2">
-        <BookOpen className="h-3.5 w-3.5 text-brand" />
+        <BookOpen className="h-3.5 w-3.5 text-muted-foreground" />
         <p className="text-xs font-medium">Connect {providerLabel(provider)}</p>
         <a
-          className="ml-auto text-xs text-muted-foreground underline-offset-2 hover:text-brand hover:underline"
+          className="ml-auto text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
           href={guide.docsUrl}
           target="_blank"
           rel="noreferrer"
@@ -61,7 +61,7 @@ function ConnectGuide({
       <ol className="grid gap-1 text-xs text-muted-foreground">
         {guide.steps.map((s, i) => (
           <li key={i} className="flex gap-2">
-            <span className="font-mono text-brand">{i + 1}.</span>
+            <span className="font-mono text-muted-foreground/70">{i + 1}.</span>
             <span>{s}</span>
           </li>
         ))}
@@ -215,7 +215,7 @@ function NewProject({ onDone }: { onDone: () => void }) {
                 onClick={() => setProvider(p)}
                 className={`rounded-md px-2 py-1 text-xs transition-colors ${
                   provider === p
-                    ? "border border-brand/40 bg-brand/15 font-medium text-brand"
+                    ? "border border-foreground/25 bg-accent font-medium text-foreground"
                     : "border border-transparent text-muted-foreground hover:text-foreground"
                 }`}
               >
@@ -324,7 +324,7 @@ export function ProjectCard({ p }: { p: Project }) {
   const dep = p.latest_deployment;
   return (
     <Link key={p.id} to={`/projects/${p.id}`} className="block">
-      <Card className="flex h-full flex-col gap-3 p-4 transition-colors hover:border-brand/30 hover:bg-accent/50">
+      <Card className="flex h-full flex-col gap-3 p-4 transition-colors hover:border-muted-foreground/40 hover:bg-accent/50">
         <div className="flex items-center justify-between">
           <div className="flex min-w-0 items-center gap-2">
             <Avatar kind="project" id={p.id} name={p.name} hasAvatar={p.has_avatar} />
@@ -376,10 +376,18 @@ export default function Projects() {
   const [creating, setCreating] = useState(false);
   const [query, setQuery] = useState("");
   const [view, setView] = useState<"grid" | "list">("grid");
+  const [searchParams, setSearchParams] = useSearchParams();
 
   useEffect(() => {
     api.projects().then((r) => setProjects(r.projects)).catch((e) => setError(e.message));
   }, []);
+
+  useEffect(() => {
+    if (searchParams.get("new")) {
+      setCreating(true);
+      setSearchParams({}, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
 
   const filtered = projects?.filter((p) => {
     const q = query.toLowerCase();
@@ -444,21 +452,21 @@ export default function Projects() {
         </div>
       )}
       {filtered !== undefined && filtered !== null && filtered.length === 0 && !error && !creating && (
-        <div className="rounded-lg border border-dashed border-border p-12 text-center">
-          <p className="text-sm font-medium">
-            {projects?.length === 0 ? "No projects yet" : "No matches"}
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {projects?.length === 0
+        <EmptyState
+          icon={projects?.length === 0 ? FolderPlus : Search}
+          title={projects?.length === 0 ? "No projects yet" : "No matches"}
+          hint={
+            projects?.length === 0
               ? "Connect a repository and ship your first deploy."
-              : `Nothing matches "${query}".`}
-          </p>
+              : `Nothing matches "${query}".`
+          }
+        >
           {projects?.length === 0 && (
-            <Button size="sm" className="mt-4" onClick={() => setCreating(true)}>
+            <Button size="sm" onClick={() => setCreating(true)}>
               New project
             </Button>
           )}
-        </div>
+        </EmptyState>
       )}
       {view === "grid" ? (
         <div className="stagger grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -470,7 +478,7 @@ export default function Projects() {
             const dep = p.latest_deployment;
             return (
               <Link key={p.id} to={`/projects/${p.id}`}>
-                <Card className="flex items-center justify-between gap-4 p-3 transition-colors hover:border-brand/25 hover:bg-accent/50">
+                <Card className="flex items-center justify-between gap-4 p-3 transition-colors hover:border-muted-foreground/40 hover:bg-accent/50">
                   <div className="flex min-w-0 items-center gap-3">
                     {dep ? (
                       <StatusDot status={dep.status} conclusion={dep.conclusion} computed={dep.computed_status} />

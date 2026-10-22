@@ -3,20 +3,28 @@
 @import "@fontsource-variable/geist-mono";
 
 @theme {
-  --color-background: oklch(0.135 0 0);
-  --color-foreground: oklch(0.985 0 0);
-  --color-card: oklch(0.18 0 0);
-  --color-card-foreground: oklch(0.985 0 0);
-  --color-primary: oklch(0.922 0 0);
-  --color-primary-foreground: oklch(0.205 0 0);
-  --color-muted: oklch(0.24 0 0);
-  --color-muted-foreground: oklch(0.68 0 0);
-  --color-accent: oklch(0.24 0 0);
-  --color-border: oklch(1 0 0 / 9%);
-  --color-ring: oklch(0.63 0.24 34);
+  /* dashboard/DESIGN.md token table — dark-only product UI. */
+  --color-background: #0a0a0a;
+  --color-foreground: #ededed;
+  --color-card: #161616;
+  --color-card-foreground: #ededed;
+  --color-raised: #1c1c1c;
+  --color-primary: #ededed;
+  --color-primary-foreground: #0a0a0a;
+  --color-muted: #1c1c1c;
+  --color-muted-foreground: #888888;
+  --color-accent: #1c1c1c;
+  --color-border: #262626;
+  --color-ring: #ff4d00;
   --color-brand: #ff4d00;
   --color-brand-foreground: #ffffff;
-  --color-destructive: oklch(0.704 0.191 22.216);
+  --color-intent-soft: rgb(255 77 0 / 0.12);
+  --color-intent-border: rgb(255 77 0 / 0.4);
+  --color-success: #3fb67f;
+  --color-warning: #d9a524;
+  --color-danger: #e5484d;
+  --color-info: #4d9fff;
+  --color-destructive: #e5484d;
   --radius: 0.625rem;
 }
 
