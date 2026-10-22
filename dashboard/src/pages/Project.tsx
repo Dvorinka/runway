@@ -642,7 +642,7 @@ function Deployments({ id, project }: { id: string; project: Project | null }) {
         }}
         ready={deployments !== null && domainCount !== null && envCount !== null}
       />
-      <div className="stagger grid gap-2">
+      <div className="stagger grid grid-cols-1 gap-2">
         {deployments === null && [0, 1, 2].map((i) => <Skeleton key={i} className="h-[64px]" />)}
         {deployments?.map((d) => (
           <DeploymentRow key={d.id} d={d} />
@@ -768,7 +768,7 @@ function Environment({ id }: { id: string }) {
         </form>
       )}
       <Err msg={error} />
-      <div className="stagger grid gap-2">
+      <div className="stagger grid grid-cols-1 gap-2">
         {vars.map((v) => (
           <Card key={`${v.key}:${v.environment}`} className="flex items-center justify-between p-3">
             <div className="font-mono text-sm">
@@ -866,7 +866,7 @@ function Cron({ id }: { id: string }) {
         ))}
       </div>
       <Err msg={error} />
-      <div className="stagger grid gap-2">
+      <div className="stagger grid grid-cols-1 gap-2">
         {jobs.map((j) => (
           <Card key={j.id} className="flex items-center justify-between p-3">
             <div>
@@ -966,7 +966,7 @@ function Redirects({ id }: { id: string }) {
         </Button>
       </form>
       <Err msg={error} />
-      <div className="stagger grid gap-2">
+      <div className="stagger grid grid-cols-1 gap-2">
         {rules.map((r) => (
           <Card key={r.id} className="flex items-center justify-between p-3">
             <div className="font-mono text-sm">
@@ -1070,7 +1070,7 @@ function Domains({ id }: { id: string }) {
           <SectionHead icon={Globe} title="Automatic">
             Issued for every deployment — environment, branch previews, and the immutable build URL.
           </SectionHead>
-          <div className="stagger mb-6 grid gap-2">
+          <div className="stagger mb-6 grid grid-cols-1 gap-2">
             {auto.map((a) => (
               <Card key={a.host} className="flex items-center justify-between p-3">
                 <div className="flex min-w-0 items-center gap-2">
@@ -1079,7 +1079,7 @@ function Domains({ id }: { id: string }) {
                     href={`https://${a.host}`}
                     target="_blank"
                     rel="noreferrer"
-                    className="truncate font-mono text-sm hover:text-foreground"
+                    className="min-w-0 flex-1 truncate font-mono text-sm hover:text-foreground"
                   >
                     {a.host}
                   </a>
@@ -1107,7 +1107,7 @@ function Domains({ id }: { id: string }) {
         </Button>
       </form>
       <Err msg={error} />
-      <div className="stagger grid gap-2">
+      <div className="stagger grid grid-cols-1 gap-2">
         {domains.map((d) => (
           <Card key={d.id} className="flex items-center justify-between p-3">
             <div className="font-mono text-sm">{d.hostname}</div>
@@ -1204,7 +1204,7 @@ function Webhooks({ id }: { id: string }) {
         </Button>
       </form>
       <Err msg={error} />
-      <div className="stagger grid gap-2">
+      <div className="stagger grid grid-cols-1 gap-2">
         {hooks.map((w) => (
           <Card key={w.id} className="flex items-center justify-between p-3">
             <div>
@@ -2209,7 +2209,7 @@ export default function ProjectPage() {
           <div className="min-w-0">
             <h1 className="truncate text-2xl font-semibold tracking-tight">{project?.name ?? "Project"}</h1>
           {project && (
-            <div className="mt-1.5 flex items-center gap-3 text-xs text-muted-foreground">
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-muted-foreground">
               <span className="font-mono">
                 {project.repo_provider}:{project.repo_full_name}
               </span>
@@ -2238,7 +2238,8 @@ export default function ProjectPage() {
         </div>
         </div>
       </div>
-      <div className="-mx-4 mb-6 flex gap-4 overflow-x-auto border-b border-border px-4 sm:mx-0 sm:px-0">
+      {/* Rail carries tab links on lg+; strip stays for mobile. */}
+      <div className="-mx-4 mb-6 flex gap-4 overflow-x-auto border-b border-border px-4 sm:mx-0 sm:px-0 lg:hidden">
         {TABS.map((t) => (
           <button
             key={t}

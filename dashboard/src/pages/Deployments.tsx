@@ -88,7 +88,7 @@ export default function Deployments() {
         ))}
       </div>
       {error && <p className="mb-4 text-sm text-destructive">{error}</p>}
-      <div className="stagger grid gap-2">
+      <div className="stagger grid grid-cols-1 gap-2">
         {deployments === null &&
           [0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-[64px]" />)}
         {filtered?.map((d) => <DeploymentRow key={d.id} d={d} showProject />)}

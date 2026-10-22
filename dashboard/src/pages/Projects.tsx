@@ -496,11 +496,11 @@ export default function Projects() {
         </EmptyState>
       )}
       {view === "grid" ? (
-        <div className="stagger grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="stagger grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {filtered?.map((p) => <ProjectCard key={p.id} p={p} />)}
         </div>
       ) : (
-        <div className="stagger grid gap-2">
+        <div className="stagger grid grid-cols-1 gap-2">
           {filtered?.map((p) => {
             const dep = p.latest_deployment;
             return (

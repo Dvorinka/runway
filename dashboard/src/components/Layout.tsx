@@ -1,22 +1,31 @@
-import { api, type Me } from "@/lib/api";
+import { api, type Me, type Project } from "@/lib/api";
 import { Avatar } from "@/components/ui";
 import { CommandPalette } from "@/components/CommandPalette";
 import { cn } from "@/lib/utils";
 import {
+  ArrowLeft,
+  ArrowRightLeft,
+  BarChart3,
   Bell,
   ChevronsUpDown,
+  Clock,
   FolderKanban,
+  Gauge,
+  Globe,
+  KeyRound,
   LayoutGrid,
   LogOut,
   Menu,
   Rocket,
+  ScrollText,
   Search,
   Settings,
   Users,
+  Webhook,
   X,
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
+import { Link, NavLink, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 
 function NavItem({
   to,
@@ -53,7 +62,75 @@ function NavItem({
   );
 }
 
+const PROJECT_TABS: [string, string, React.ComponentType<{ className?: string }>][] = [
+  ["Deployments", "deployments", Rocket],
+  ["Logs", "logs", ScrollText],
+  ["Environment", "environment", KeyRound],
+  ["Analytics", "analytics", BarChart3],
+  ["Speed", "speed", Gauge],
+  ["Cron", "cron", Clock],
+  ["Redirects", "redirects", ArrowRightLeft],
+  ["Domains", "domains", Globe],
+  ["Webhooks", "webhooks", Webhook],
+  ["Settings", "settings", Settings],
+];
+
+function ProjectRailNav({
+  id,
+  onNavigate,
+}: {
+  id: string;
+  onNavigate?: () => void;
+}) {
+  const [project, setProject] = useState<Project | null>(null);
+  const [params] = useSearchParams();
+  const tab = params.get("tab") ?? "deployments";
+  useEffect(() => {
+    api.project(id).then(setProject).catch(() => {});
+  }, [id]);
+  return (
+    <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 py-2" onClick={onNavigate}>
+      <NavItem to="/projects" icon={ArrowLeft}>
+        Projects
+      </NavItem>
+      <div className="flex items-center gap-2 px-2 pb-2 pt-4">
+        <Avatar
+          kind="project"
+          id={id}
+          name={project?.name ?? id}
+          hasAvatar={project?.has_avatar}
+          className="h-5 w-5 text-[9px]"
+        />
+        <span className="min-w-0 flex-1 truncate text-sm font-medium">
+          {project?.name ?? "Project"}
+        </span>
+      </div>
+      {PROJECT_TABS.map(([label, t, Icon]) => {
+        const active = tab === t;
+        return (
+          <Link
+            key={t}
+            to={t === "deployments" ? `/projects/${id}` : `/projects/${id}?tab=${t}`}
+            className={cn(
+              "flex h-8 items-center gap-2.5 rounded-md px-2 text-sm transition-colors",
+              active
+                ? "bg-accent text-foreground"
+                : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+            )}
+          >
+            <Icon className="h-4 w-4 shrink-0" />
+            <span className="min-w-0 flex-1 truncate">{label}</span>
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}
+
 function RailNav({ unread, onNavigate }: { unread: number; onNavigate?: () => void }) {
+  const { pathname } = useLocation();
+  const projectId = pathname.match(/^\/projects\/([^/]+)/)?.[1];
+  if (projectId) return <ProjectRailNav id={projectId} onNavigate={onNavigate} />;
   return (
     <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 py-2" onClick={onNavigate}>
       <NavItem to="/" icon={LayoutGrid}>Overview</NavItem>

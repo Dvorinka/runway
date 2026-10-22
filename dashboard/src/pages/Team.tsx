@@ -30,7 +30,7 @@ function Members({ team, myRole, me, reload }: {
     <Card className="p-5">
       <SectionHead icon={Users} title="Members" />
       <Err msg={error} />
-      <div className="stagger grid gap-2">
+      <div className="stagger grid grid-cols-1 gap-2">
         {team.members.map((m) => (
           <div
             key={m.user_id}
@@ -131,7 +131,7 @@ function Invites({ teamId, admin }: { teamId: string; admin: boolean }) {
         </form>
       )}
       <Err msg={error} />
-      <div className="stagger grid gap-2">
+      <div className="stagger grid grid-cols-1 gap-2">
         {invites.map((i) => (
           <div
             key={i.id}
@@ -249,7 +249,7 @@ function StorageSection({ teamId, admin }: { teamId: string; admin: boolean }) {
         </form>
       )}
       <Err msg={error} />
-      <div className="stagger grid gap-2">
+      <div className="stagger grid grid-cols-1 gap-2">
         {items.map((s) => (
           <div key={s.id} className="rounded-md border border-border px-3 py-2">
             <div className="flex items-center justify-between">
@@ -391,7 +391,7 @@ function Webhooks({ teamId, admin }: { teamId: string; admin: boolean }) {
         </form>
       )}
       <Err msg={error} />
-      <div className="stagger grid gap-2">
+      <div className="stagger grid grid-cols-1 gap-2">
         {hooks.map((h) => (
           <div
             key={h.id}
