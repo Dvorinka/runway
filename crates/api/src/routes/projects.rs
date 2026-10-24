@@ -157,6 +157,28 @@ pub struct CreateProject {
     pub config: Option<Value>,
 }
 
+/// Stamp a detected preset's runner fields into a config map. Shared by
+/// creation-time detection (git providers) and upload-deploy detection.
+pub(crate) fn apply_preset(config: &mut Value, preset: &'static runway_core::presets::Preset) {
+    let obj = config.as_object_mut().unwrap();
+    obj.entry("runner".to_string())
+        .or_insert_with(|| preset.runner.into());
+    obj.entry("build_command".to_string())
+        .or_insert_with(|| preset.build_command.into());
+    obj.entry("start_command".to_string())
+        .or_insert_with(|| preset.start_command.into());
+    obj.entry("port".to_string())
+        .or_insert_with(|| preset.port.into());
+    if let Some(output_dir) = preset.output_dir {
+        obj.entry("output_directory".to_string())
+            .or_insert_with(|| output_dir.into());
+        obj.entry("spa_fallback".to_string())
+            .or_insert_with(|| preset.spa_fallback.into());
+    }
+    obj.entry("preset".to_string())
+        .or_insert_with(|| preset.slug.into());
+}
+
 pub async fn create(
     user: AuthUser,
     State(state): State<AppState>,
@@ -168,25 +190,6 @@ pub async fn create(
 
     // Resolve the runner image up front so bad presets fail fast.
     let mut config = body.config.unwrap_or_else(|| json!({}));
-    let apply_preset = |config: &mut Value, preset: &'static runway_core::presets::Preset| {
-        let obj = config.as_object_mut().unwrap();
-        obj.entry("runner".to_string())
-            .or_insert_with(|| preset.runner.into());
-        obj.entry("build_command".to_string())
-            .or_insert_with(|| preset.build_command.into());
-        obj.entry("start_command".to_string())
-            .or_insert_with(|| preset.start_command.into());
-        obj.entry("port".to_string())
-            .or_insert_with(|| preset.port.into());
-        if let Some(output_dir) = preset.output_dir {
-            obj.entry("output_directory".to_string())
-                .or_insert_with(|| output_dir.into());
-            obj.entry("spa_fallback".to_string())
-                .or_insert_with(|| preset.spa_fallback.into());
-        }
-        obj.entry("preset".to_string())
-            .or_insert_with(|| preset.slug.into());
-    };
     if let Some(preset_slug) = &body.preset {
         let preset = runway_core::presets::preset(preset_slug)
             .ok_or_else(|| ApiError::bad_request("unknown preset"))?;
