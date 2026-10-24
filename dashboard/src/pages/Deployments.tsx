@@ -11,6 +11,23 @@ export default function Deployments() {
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<(typeof FILTERS)[number]>("all");
+  const [envs, setEnvs] = useState<Set<string>>(new Set());
+  const [projs, setProjs] = useState<Set<string>>(new Set());
+
+  const envChoices = useMemo(
+    () => [...new Set(deployments?.map((d) => d.environment_id) ?? [])].sort(),
+    [deployments],
+  );
+  const projChoices = useMemo(
+    () => [...new Set(deployments?.map((d) => d.project_name).filter(Boolean) as string[])].sort(),
+    [deployments],
+  );
+  const toggle = (set: Set<string>, v: string, apply: (s: Set<string>) => void) => {
+    const next = new Set(set);
+    if (next.has(v)) next.delete(v);
+    else next.add(v);
+    apply(next);
+  };
 
   useEffect(() => {
     const load = () =>
@@ -33,6 +50,8 @@ export default function Deployments() {
           return false;
         if (filter !== "all" && filter !== "running" && d.conclusion !== filter)
           return false;
+        if (envs.size > 0 && !envs.has(d.environment_id)) return false;
+        if (projs.size > 0 && !projs.has(d.project_name ?? "")) return false;
         const q = query.toLowerCase();
         return (
           !q ||
@@ -42,7 +61,7 @@ export default function Deployments() {
           d.branch.toLowerCase().includes(q)
         );
       }),
-    [deployments, query, filter],
+    [deployments, query, filter, envs, projs],
   );
 
   return (
@@ -87,6 +106,38 @@ export default function Deployments() {
           </button>
         ))}
       </div>
+      {(envChoices.length > 1 || projChoices.length > 1) && (
+        <div className="mb-5 -mt-2 flex flex-wrap items-center gap-1.5 text-xs">
+          {projChoices.length > 1 &&
+            projChoices.map((p) => (
+              <button
+                key={p}
+                onClick={() => toggle(projs, p, setProjs)}
+                className={`rounded-full border px-2.5 py-0.5 transition-colors ${
+                  projs.has(p)
+                    ? "border-foreground/60 bg-accent text-foreground"
+                    : "border-border text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {p}
+              </button>
+            ))}
+          {envChoices.length > 1 &&
+            envChoices.map((e) => (
+              <button
+                key={e}
+                onClick={() => toggle(envs, e, setEnvs)}
+                className={`rounded-full border px-2.5 py-0.5 transition-colors ${
+                  envs.has(e)
+                    ? "border-foreground/60 bg-accent text-foreground"
+                    : "border-border text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {e === "prod" ? "production" : e}
+              </button>
+            ))}
+        </div>
+      )}
       {error && <p className="mb-4 text-sm text-destructive">{error}</p>}
       <div className="stagger grid grid-cols-1 gap-2">
         {deployments === null &&
