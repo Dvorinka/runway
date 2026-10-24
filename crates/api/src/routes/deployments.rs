@@ -833,6 +833,24 @@ pub async fn upload(
         return Err(e);
     }
 
+    // Git providers detect the framework at project creation; upload
+    // projects have no source then — detect from this archive instead and
+    // stamp the result onto the deployment's config snapshot. Explicit
+    // runner fields in project config always win.
+    let mut extra = json!({ "source_archive": format!("{dep_id}.tar.gz") });
+    let has_runner = ["runner", "image", "override_image", "dockerfile_path"]
+        .iter()
+        .any(|k| project.config.get(k).is_some());
+    if !has_runner {
+        if let Some(detected) = detect_upload_preset(&path).await? {
+            if let (Some(dst), Some(src)) = (extra.as_object_mut(), detected.as_object()) {
+                for (k, v) in src {
+                    dst.insert(k.clone(), v.clone());
+                }
+            }
+        }
+    }
+
     let sha = hex::encode(hasher.finalize())[..40].to_string();
     let branch = project.repo_branch.clone();
     let commit = CommitInfo {
@@ -850,7 +868,7 @@ pub async fn upload(
         &commit,
         "api",
         Some(user.user.id),
-        Some(json!({ "source_archive": format!("{dep_id}.tar.gz") })),
+        Some(extra),
     )
     .await?;
     Ok((
@@ -858,4 +876,57 @@ pub async fn upload(
         Json(deployment_json(&state, &dep, &project)),
     )
         .into_response())
+}
+
+/// Inspect an uploaded tarball for a runnable framework. Returns the
+/// preset fields (or `dockerfile_path`) to stamp into the deployment
+/// config, `None` when nothing matches. A corrupt archive is rejected
+/// here — the pipeline's in-container extract would only fail later.
+async fn detect_upload_preset(path: &std::path::Path) -> ApiResult<Option<Value>> {
+    let listing = tokio::process::Command::new("tar")
+        .args(["-tzf"])
+        .arg(path)
+        .output()
+        .await
+        .map_err(ApiError::internal)?;
+    if !listing.status.success() {
+        return Err(ApiError::bad_request("invalid gzip archive"));
+    }
+    let files: Vec<String> = String::from_utf8_lossy(&listing.stdout)
+        .lines()
+        .map(|l| l.trim().trim_start_matches("./").to_string())
+        .filter(|l| !l.is_empty() && !l.ends_with('/'))
+        .collect();
+    // Package manager + framework checks mirror creation-time detection:
+    // root-level entries only (monorepo root_dir is a deployment concern).
+    let root: Vec<String> = files.iter().filter(|f| !f.contains('/')).cloned().collect();
+
+    let package_json = if root.iter().any(|f| f == "package.json") {
+        let out = tokio::process::Command::new("tar")
+            .args(["-xzOf"])
+            .arg(path)
+            .arg("package.json")
+            .output()
+            .await
+            .map_err(ApiError::internal)?;
+        Some(String::from_utf8_lossy(&out.stdout).to_string())
+    } else {
+        None
+    };
+
+    let mut config = json!({});
+    let refs: Vec<&str> = root.iter().map(String::as_str).collect();
+    if let Some(preset) = runway_core::presets::detect(&refs, package_json.as_deref()) {
+        crate::routes::projects::apply_preset(&mut config, preset);
+        runway_core::presets::adjust_for_pm(
+            &mut config,
+            runway_core::presets::package_manager(&refs),
+        );
+        return Ok(Some(config));
+    }
+    if root.iter().any(|f| f == "Dockerfile") {
+        config["dockerfile_path"] = "Dockerfile".into();
+        return Ok(Some(config));
+    }
+    Ok(None)
 }

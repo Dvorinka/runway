@@ -283,6 +283,9 @@ pub async fn connect_to_network(
     let (Some(container), Some(network)) = (container, network) else {
         return Ok(());
     };
+    // Attach is load-bearing so real failures propagate, but the benign
+    // states devpush tolerates must not retry the caller: already
+    // attached (403 "already exists") and 409 conflict are success.
     docker
         .connect_network(
             network,
@@ -292,7 +295,28 @@ pub async fn connect_to_network(
             },
         )
         .await
-        .or_else(|e| if is_not_found(&e) { Ok(()) } else { Err(e) })?;
+        .or_else(|e| {
+            let benign = is_not_found(&e)
+                || matches!(
+                    e,
+                    BollardError::DockerResponseServerError {
+                        status_code: 409,
+                        ..
+                    }
+                )
+                || (matches!(
+                    e,
+                    BollardError::DockerResponseServerError {
+                        status_code: 403,
+                        ..
+                    }
+                ) && e.to_string().contains("already exists"));
+            if benign {
+                Ok(())
+            } else {
+                Err(e)
+            }
+        })?;
     Ok(())
 }
 
@@ -306,7 +330,11 @@ pub async fn disconnect_from_network(
     let (Some(container), Some(network)) = (container, network) else {
         return Ok(());
     };
-    docker
+    // Detach is best-effort cleanup: the container may already be gone or
+    // never connected (deploy failed before the edge attach). devpush
+    // tolerates 404/409 and warns on the rest — a failed detach must not
+    // retry the whole `fail_deployment` job.
+    if let Err(e) = docker
         .disconnect_network(
             network,
             DisconnectNetworkOptions {
@@ -315,7 +343,20 @@ pub async fn disconnect_from_network(
             },
         )
         .await
-        .or_else(|e| if is_not_found(&e) { Ok(()) } else { Err(e) })?;
+    {
+        let benign = is_not_found(&e)
+            || matches!(
+                e,
+                BollardError::DockerResponseServerError {
+                    status_code: 409,
+                    ..
+                }
+            )
+            || e.to_string().contains("is not connected to network");
+        if !benign {
+            tracing::warn!("failed to detach {container} from {network}: {e}");
+        }
+    }
     Ok(())
 }
 
