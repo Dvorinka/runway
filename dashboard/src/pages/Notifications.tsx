@@ -49,7 +49,7 @@ export default function NotificationsPage() {
               }`}
             >
               <div className="flex items-start gap-3">
-                {!n.read && <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-brand" />}
+                {!n.read && <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-info" />}
                 <div>
                   <div className="text-sm">{n.title}</div>
                   {n.body && <div className="mt-1 text-xs text-muted-foreground">{n.body}</div>}

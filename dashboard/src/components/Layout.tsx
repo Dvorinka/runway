@@ -54,7 +54,7 @@ function NavItem({
       <Icon className="h-4 w-4 shrink-0" />
       <span className="min-w-0 flex-1 truncate">{children}</span>
       {badge !== undefined && badge > 0 && (
-        <span className="rounded-full bg-brand px-1.5 text-[11px] leading-4 font-medium text-white">
+        <span className="rounded-full bg-info px-1.5 text-[11px] leading-4 font-medium text-white">
           {badge}
         </span>
       )}
