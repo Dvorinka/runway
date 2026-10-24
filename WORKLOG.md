@@ -418,3 +418,6 @@ throwaway `data-run` DB; production `~/.config/runway` was untouched
   now lists the full 16-tool surface.
 - `runway deploy` CLI verified E2E: tar+upload → static preset
   detection → publish → serve container; status-follow output correct.
+- connect_to_network: same benign-state tolerance ported from devpush
+  (404/409/403 already-exists) — stopped the startup reconcile warning
+  against seeded compose networks. On PR #18.
