@@ -8,7 +8,7 @@ import {
   type RemoteNode,
 } from "@/lib/api";
 import { GIT_PROVIDERS, PROVIDER_GUIDES, providerLabel } from "@/lib/gitproviders";
-import { AvatarRow, Badge, Button, Card, ComboBox, Input, SectionHead } from "@/components/ui";
+import { AvatarRow, Badge, Button, Card, ComboBox, Input, SectionHead, Skeleton } from "@/components/ui";
 import { timeAgo } from "@/lib/utils";
 import { AppWindow, BookOpen, CheckCircle2, GitBranch, KeyRound, ListOrdered, Server, ShieldCheck, Smartphone, User } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -147,7 +147,7 @@ function GithubApp() {
         Powers repository browsing, push-triggered deploys, and preview URLs for GitHub projects.
       </SectionHead>
       {st === null ? (
-        <p className="text-xs text-muted-foreground">Loading…</p>
+        <Skeleton className="h-8" />
       ) : st.configured ? (
         <div className="grid grid-cols-1 gap-2">
           <div className="flex items-center gap-2">

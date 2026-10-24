@@ -1,5 +1,5 @@
 import { api, deploymentLogsStream, type Deployment } from "@/lib/api";
-import { Badge, Button, Menu, StatusDot, displayStatus, isRunning, type MenuItem } from "@/components/ui";
+import { Badge, Button, Menu, Skeleton, StatusDot, displayStatus, isRunning, type MenuItem } from "@/components/ui";
 import { Ansi } from "@/lib/ansi";
 import { cn, duration, elapsed, firstLine, timeAgo } from "@/lib/utils";
 import { ArrowUpToLine, Copy, FolderTree, Globe, History, ListPlus, RefreshCw, Repeat } from "lucide-react";
@@ -110,6 +110,13 @@ function LiveStats({ id }: { id: string }) {
   );
 }
 
+function commitUrl(dep: Deployment) {
+  if (!dep.repo_base_url || !dep.repo_provider || dep.repo_provider === "upload")
+    return null;
+  const dir = dep.repo_provider === "bitbucket" ? "commits" : "commit";
+  return `${dep.repo_base_url}/${dir}/${dep.commit_sha}`;
+}
+
 function DeployInfo({ dep, active }: { dep: Deployment; active: boolean }) {
   const [copied, setCopied] = useState(false);
   const envUrl = dep.urls?.environment;
@@ -147,7 +154,24 @@ function DeployInfo({ dep, active }: { dep: Deployment; active: boolean }) {
     [
       "Source",
       <span key="src" className="font-mono text-xs">
-        {dep.branch}@{dep.commit_sha.slice(0, 7)}
+        {dep.repo_provider && dep.repo_provider !== "upload" && dep.repo_full_name && (
+          <span className="text-muted-foreground">
+            {dep.repo_provider}:{dep.repo_full_name}{" "}
+          </span>
+        )}
+        {dep.branch}@
+        {commitUrl(dep) ? (
+          <a
+            href={commitUrl(dep)!}
+            target="_blank"
+            rel="noreferrer"
+            className="hover:text-foreground"
+          >
+            {dep.commit_sha.slice(0, 7)}
+          </a>
+        ) : (
+          dep.commit_sha.slice(0, 7)
+        )}
         {dep.commit_meta?.author && (
           <span className="text-muted-foreground"> · {dep.commit_meta.author}</span>
         )}
@@ -177,6 +201,7 @@ function DeployInfo({ dep, active }: { dep: Deployment; active: boolean }) {
               onClick={() => copy(mainUrl)}
               className="shrink-0 text-muted-foreground hover:text-foreground"
               title="Copy URL"
+              aria-label="Copy URL"
             >
               {copied ? "✓" : "⧉"}
             </button>
@@ -373,6 +398,7 @@ function OgPanel({ id }: { id: string }) {
               onChange={(e) => setPath(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && fetchOg(path)}
               placeholder="/"
+              aria-label="Open Graph preview path"
               className="w-40 bg-transparent font-mono text-xs text-foreground placeholder:text-muted-foreground/50 focus:outline-none"
             />
             <button
@@ -436,6 +462,7 @@ function OgPanel({ id }: { id: string }) {
                         )}
                         <button
                           title={value ? "Copy meta tag" : "Copy suggested tag"}
+                          aria-label={value ? "Copy meta tag" : "Copy suggested tag"}
                           onClick={() => copySnippet(tag, snippet, value)}
                           className="text-muted-foreground transition-colors hover:text-foreground"
                         >
@@ -509,6 +536,7 @@ function FilesPanel({ id }: { id: string }) {
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
               placeholder="filter paths…"
+              aria-label="Filter file paths"
               className="w-44 bg-transparent font-mono text-xs text-foreground placeholder:text-muted-foreground/50 focus:outline-none"
             />
             {data?.ok && (
@@ -525,7 +553,7 @@ function FilesPanel({ id }: { id: string }) {
                 : "No file payload — server deployments keep their artifact inside the container image."}
             </p>
           )}
-          {!data && <p className="px-3 py-3 text-xs text-muted-foreground">loading…</p>}
+          {!data && <Skeleton className="m-3 h-8" />}
           {data?.ok && files.length === 0 && (
             <p className="px-3 py-3 text-xs text-muted-foreground">no files match.</p>
           )}
@@ -931,6 +959,8 @@ export default function DeploymentPage() {
             {(["build", "runtime"] as const).map((t) => (
               <button
                 key={t}
+                role="tab"
+                aria-selected={logTab === t}
                 onClick={() => setLogTab(t)}
                 className={cn(
                   "transition-colors",
@@ -957,6 +987,7 @@ export default function DeploymentPage() {
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
               placeholder="filter…"
+              aria-label="Filter log lines"
               className="w-32 bg-transparent text-xs text-muted-foreground placeholder:text-muted-foreground/50 focus:text-foreground focus:outline-none"
             />
             <button
@@ -1010,6 +1041,7 @@ export default function DeploymentPage() {
                 {s.step !== null && (
                   <button
                     onClick={() => setStepOpen((o) => ({ ...o, [si]: !sectionOpen(si) }))}
+                    aria-expanded={sectionOpen(si)}
                     className="mt-1 flex w-full items-center gap-2 border-t border-border/60 py-1.5 text-left"
                   >
                     <span className="font-sans text-xs font-medium text-muted-foreground">

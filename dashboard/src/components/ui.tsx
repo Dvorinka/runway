@@ -2,11 +2,11 @@
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn, timeAgo } from "@/lib/utils";
 import { api } from "@/lib/api";
-import { ArrowUpRight, Check, ChevronsUpDown, MoreHorizontal, Search } from "lucide-react";
-import { forwardRef, useEffect, useRef, useState } from "react";
+import { AlertTriangle, ArrowUpRight, Check, ChevronsUpDown, MoreHorizontal, Search } from "lucide-react";
+import { Component, forwardRef, useEffect, useRef, useState } from "react";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none",
+  "inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
   {
     variants: {
       variant: {
@@ -44,10 +44,49 @@ export function Skeleton({ className }: { className?: string }) {
   );
 }
 
+// Route-level crash containment — a render throw shows an honest
+// fallback inside the shell instead of a white page.
+export class ErrorBoundary extends Component<
+  { children: React.ReactNode },
+  { error: Error | null }
+> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div className="mx-auto max-w-5xl p-4 sm:p-8">
+        <Card className="border-dashed p-8 text-center">
+          <AlertTriangle className="mx-auto mb-3 h-6 w-6 text-warning" />
+          <p className="text-sm font-medium">Something went wrong rendering this page.</p>
+          <p className="mx-auto mt-1 max-w-md text-xs text-muted-foreground">
+            {this.state.error?.message}
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            className="mt-4"
+            onClick={() => window.location.assign("/")}
+          >
+            Back to overview
+          </Button>
+        </Card>
+      </div>
+    );
+  }
+}
+
 export const Input = forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(
   ({ className, ...props }, ref) => (
+    // Most forms name fields by placeholder; mirror it as the accessible
+    // name unless the caller provides an explicit label.
     <input
       ref={ref}
+      aria-label={props["aria-label"] ?? props.placeholder}
       className={cn(
         "flex h-9 w-full rounded-md border border-border bg-transparent px-3 text-sm",
         "placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring",
@@ -322,6 +361,7 @@ export function Menu({
       <button
         type="button"
         aria-label={title}
+        aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
         className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-border px-2.5 text-sm transition-colors hover:bg-accent"
@@ -330,6 +370,7 @@ export function Menu({
       </button>
       {open && (
         <div
+          role="menu"
           className={cn(
             "absolute z-50 mt-1 min-w-44 overflow-hidden rounded-md border border-border bg-card p-1 shadow-xl",
             align === "end" ? "right-0" : "left-0",
@@ -339,6 +380,7 @@ export function Menu({
             <button
               key={i}
               type="button"
+              role="menuitem"
               disabled={item.disabled}
               onClick={() => {
                 setOpen(false);
@@ -476,6 +518,7 @@ export function ComboBox({
                 }
               }}
               placeholder={searchPlaceholder}
+              aria-label={searchPlaceholder}
               className="h-9 w-full bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
             />
           </div>

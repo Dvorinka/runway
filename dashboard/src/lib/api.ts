@@ -27,6 +27,9 @@ export interface Deployment {
   branch: string;
   commit_sha: string;
   commit_meta?: { message?: string; author?: string; author_name?: string };
+  repo_provider?: string;
+  repo_full_name?: string;
+  repo_base_url?: string;
   status: string;
   conclusion: string | null;
   computed_status?: string | null;
