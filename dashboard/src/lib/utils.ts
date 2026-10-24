@@ -33,3 +33,10 @@ export function duration(fromIso: string, toIso: string | null | undefined): str
 export function firstLine(s?: string): string {
   return (s ?? "").split("\n")[0].trim();
 }
+
+export function fmtBytes(n: number): string {
+  if (n >= 1 << 30) return `${(n / (1 << 30)).toFixed(1)} GB`;
+  if (n >= 1 << 20) return `${(n / (1 << 20)).toFixed(0)} MB`;
+  if (n >= 1 << 10) return `${(n / (1 << 10)).toFixed(0)} KB`;
+  return `${n} B`;
+}

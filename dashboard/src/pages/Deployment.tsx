@@ -1,7 +1,7 @@
 import { api, deploymentLogsStream, type Deployment } from "@/lib/api";
 import { Badge, Button, Menu, Skeleton, StatusDot, displayStatus, isRunning, type MenuItem } from "@/components/ui";
 import { Ansi } from "@/lib/ansi";
-import { cn, duration, elapsed, firstLine, timeAgo } from "@/lib/utils";
+import { cn, duration, elapsed, firstLine, fmtBytes, timeAgo } from "@/lib/utils";
 import { ArrowUpToLine, Copy, FolderTree, Globe, History, ListPlus, RefreshCw, Repeat } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
@@ -42,13 +42,6 @@ function groupLogLines(lines: string[]): LogSection[] {
 }
 
 const stepTitle = (step: string) => step.charAt(0).toUpperCase() + step.slice(1);
-
-function fmtBytes(n: number): string {
-  if (n >= 1 << 30) return `${(n / (1 << 30)).toFixed(1)} GB`;
-  if (n >= 1 << 20) return `${(n / (1 << 20)).toFixed(0)} MB`;
-  if (n >= 1 << 10) return `${(n / (1 << 10)).toFixed(0)} KB`;
-  return `${n} B`;
-}
 
 function Sparkline({ values, max }: { values: number[]; max?: number }) {
   if (values.length < 2) return null;
