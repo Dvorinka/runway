@@ -1,6 +1,6 @@
-import { api, type Project } from "@/lib/api";
+import { api, type Deployment, type Project } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { Bell, FolderGit2, LayoutDashboard, Plus, Rocket, Settings, Users } from "lucide-react";
+import { Bell, Copy, ExternalLink, FolderGit2, LayoutDashboard, Plus, Rocket, Settings, Users } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
@@ -9,7 +9,8 @@ interface Item {
   label: string;
   hint?: string;
   icon: React.ReactNode;
-  to: string;
+  to?: string;
+  run?: () => void;
 }
 
 const ACTIONS: Item[] = [
@@ -48,7 +49,12 @@ const PROJECT_TABS: [string, string][] = [
   ["Deployments", "deployments"],
   ["Logs", "logs"],
   ["Environment", "environment"],
+  ["Analytics", "analytics"],
+  ["Speed", "speed"],
+  ["Cron", "cron"],
+  ["Redirects", "redirects"],
   ["Domains", "domains"],
+  ["Webhooks", "webhooks"],
   ["Settings", "settings"],
 ];
 
@@ -58,6 +64,7 @@ export function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [projects, setProjects] = useState<Project[]>([]);
+  const [deployments, setDeployments] = useState<Deployment[]>([]);
   const [sel, setSel] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -88,6 +95,7 @@ export function CommandPalette() {
     setQuery("");
     setSel(0);
     api.projects().then((r) => setProjects(r.projects)).catch(() => {});
+    api.deploymentsIndex().then((r) => setDeployments(r.deployments)).catch(() => {});
     const t = setTimeout(() => inputRef.current?.focus(), 10);
     return () => clearTimeout(t);
   }, [open]);
@@ -107,14 +115,58 @@ export function CommandPalette() {
 
   const scopedId = pathname.match(/^\/projects\/([^/]+)/)?.[1];
   const scopedProject = projects.find((p) => p.id === scopedId);
+  const prodUrl = scopedProject?.url ?? null;
+  const scopedActions: Item[] = (
+    scopedProject
+      ? [
+          ...(prodUrl
+            ? [
+                {
+                  id: "scope:open-prod",
+                  label: "Open production site",
+                  hint: prodUrl.replace(/^https?:\/\//, ""),
+                  icon: <ExternalLink className="h-4 w-4" />,
+                  run: () =>
+                    window.open(
+                      prodUrl.startsWith("http") ? prodUrl : `https://${prodUrl}`,
+                      "_blank",
+                    ),
+                },
+              ]
+            : []),
+          {
+            id: "scope:copy-url",
+            label: "Copy production URL",
+            hint: prodUrl ? "copy" : "no URL",
+            icon: <Copy className="h-4 w-4" />,
+            run: () => {
+              if (prodUrl)
+                navigator.clipboard.writeText(
+                  prodUrl.startsWith("http") ? prodUrl : `https://${prodUrl}`,
+                );
+            },
+          },
+          {
+            id: "scope:copy-id",
+            label: "Copy project ID",
+            hint: "copy",
+            icon: <Copy className="h-4 w-4" />,
+            run: () => navigator.clipboard.writeText(scopedProject.id),
+          },
+        ]
+      : []
+  ).filter(match);
   const scopedItems: Item[] = scopedProject
-    ? PROJECT_TABS.map(([label, tab]) => ({
-        id: `scope:${tab}`,
-        label,
-        hint: scopedProject.name,
-        icon: <FolderGit2 className="h-4 w-4" />,
-        to: tab === "deployments" ? `/projects/${scopedId}` : `/projects/${scopedId}?tab=${tab}`,
-      })).filter(match)
+    ? [
+        ...PROJECT_TABS.map(([label, tab]) => ({
+          id: `scope:${tab}`,
+          label,
+          hint: scopedProject.name,
+          icon: <FolderGit2 className="h-4 w-4" />,
+          to: tab === "deployments" ? `/projects/${scopedId}` : `/projects/${scopedId}?tab=${tab}`,
+        })),
+        ...scopedActions,
+      ].filter(match)
     : [];
   const projectItems: Item[] = projects
     .filter((p) => p.id !== scopedId)
@@ -126,13 +178,23 @@ export function CommandPalette() {
       to: `/projects/${p.id}`,
     }))
     .filter(match);
+  const deploymentItems: Item[] = deployments
+    .map((d) => ({
+      id: `dep:${d.id}`,
+      label: `${d.commit_sha.slice(0, 7)} — ${d.project_name ?? "deployment"}`,
+      hint: d.environment_id === "prod" ? "production" : d.environment_id,
+      icon: <Rocket className="h-4 w-4" />,
+      to: `/deployments/${d.id}`,
+    }))
+    .filter((it) => !query || fuzzy(query, it.label) || fuzzy(query, it.id));
   const actionItems = ACTIONS.filter(match);
   const pageItems = PAGES.filter(match);
-  const items = [...scopedItems, ...projectItems, ...actionItems, ...pageItems];
+  const items = [...scopedItems, ...projectItems, ...deploymentItems, ...actionItems, ...pageItems];
 
-  const go = (to: string) => {
+  const go = (it: Item) => {
     setOpen(false);
-    nav(to);
+    if (it.run) it.run();
+    else if (it.to) nav(it.to);
   };
 
   return (
@@ -159,7 +221,7 @@ export function CommandPalette() {
               e.preventDefault();
               setSel((s) => Math.max(s - 1, 0));
             } else if (e.key === "Enter" && items[sel]) {
-              go(items[sel].to);
+              go(items[sel]);
             }
           }}
           placeholder="Jump to a project or page…"
@@ -173,6 +235,7 @@ export function CommandPalette() {
             [
               [scopedProject?.name ?? "", scopedItems],
               ["Projects", projectItems],
+              ["Deployments", deploymentItems],
               ["Actions", actionItems],
               ["Pages", pageItems],
             ] as [string, Item[]][]
@@ -189,7 +252,7 @@ export function CommandPalette() {
                     <button
                       key={it.id}
                       onMouseEnter={() => setSel(i)}
-                      onClick={() => go(it.to)}
+                      onClick={() => go(it)}
                       className={cn(
                         "flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm",
                         i === sel ? "bg-accent" : "",
