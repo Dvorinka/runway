@@ -793,17 +793,18 @@ pub async fn add_domain(
     }
     // DNS verification lands with the domain service (Phase 3); for now
     // domains start pending and are activated by verify.
-    sqlx::query(
+    let domain: runway_core::models::Domain = sqlx::query_as(
         "INSERT INTO domain (project_id, hostname, type, environment_id, status)
-         VALUES ($1,$2,$3,$4,'pending')",
+         VALUES ($1,$2,$3,$4,'pending')
+         RETURNING *",
     )
     .bind(&project.id)
     .bind(&hostname)
     .bind(&body.r#type)
     .bind(&body.environment_id)
-    .execute(&state.db)
+    .fetch_one(&state.db)
     .await?;
-    Ok(StatusCode::CREATED.into_response())
+    Ok((StatusCode::CREATED, Json(domain)).into_response())
 }
 
 /// Mark a domain active (manual flow until DNS/CF verification lands).
