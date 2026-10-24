@@ -95,6 +95,7 @@ export default function Deployments() {
         {FILTERS.map((f) => (
           <button
             key={f}
+            aria-pressed={filter === f}
             onClick={() => setFilter(f)}
             className={`-mb-px border-b-2 px-3 pb-2 text-sm capitalize transition-colors ${
               filter === f
@@ -112,6 +113,7 @@ export default function Deployments() {
             projChoices.map((p) => (
               <button
                 key={p}
+                aria-pressed={projs.has(p)}
                 onClick={() => toggle(projs, p, setProjs)}
                 className={`rounded-full border px-2.5 py-0.5 transition-colors ${
                   projs.has(p)
@@ -126,6 +128,7 @@ export default function Deployments() {
             envChoices.map((e) => (
               <button
                 key={e}
+                aria-pressed={envs.has(e)}
                 onClick={() => toggle(envs, e, setEnvs)}
                 className={`rounded-full border px-2.5 py-0.5 transition-colors ${
                   envs.has(e)

@@ -6,7 +6,7 @@ import { AlertTriangle, ArrowUpRight, Check, ChevronsUpDown, MoreHorizontal, Sea
 import { Component, forwardRef, useEffect, useRef, useState } from "react";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none",
+  "inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
   {
     variants: {
       variant: {
@@ -82,8 +82,11 @@ export class ErrorBoundary extends Component<
 
 export const Input = forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(
   ({ className, ...props }, ref) => (
+    // Most forms name fields by placeholder; mirror it as the accessible
+    // name unless the caller provides an explicit label.
     <input
       ref={ref}
+      aria-label={props["aria-label"] ?? props.placeholder}
       className={cn(
         "flex h-9 w-full rounded-md border border-border bg-transparent px-3 text-sm",
         "placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring",
@@ -358,6 +361,7 @@ export function Menu({
       <button
         type="button"
         aria-label={title}
+        aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
         className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-border px-2.5 text-sm transition-colors hover:bg-accent"
@@ -366,6 +370,7 @@ export function Menu({
       </button>
       {open && (
         <div
+          role="menu"
           className={cn(
             "absolute z-50 mt-1 min-w-44 overflow-hidden rounded-md border border-border bg-card p-1 shadow-xl",
             align === "end" ? "right-0" : "left-0",
@@ -375,6 +380,7 @@ export function Menu({
             <button
               key={i}
               type="button"
+              role="menuitem"
               disabled={item.disabled}
               onClick={() => {
                 setOpen(false);
@@ -512,6 +518,7 @@ export function ComboBox({
                 }
               }}
               placeholder={searchPlaceholder}
+              aria-label={searchPlaceholder}
               className="h-9 w-full bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
             />
           </div>

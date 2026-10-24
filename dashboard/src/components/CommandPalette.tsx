@@ -203,11 +203,17 @@ export function CommandPalette() {
       onMouseDown={() => setOpen(false)}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Command palette"
         className="w-full max-w-lg overflow-hidden rounded-lg border border-border bg-card shadow-2xl"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <input
           ref={inputRef}
+          role="combobox"
+          aria-expanded="true"
+          aria-label="Jump to a project or page"
           value={query}
           onChange={(e) => {
             setQuery(e.target.value);
@@ -227,7 +233,7 @@ export function CommandPalette() {
           placeholder="Jump to a project or page…"
           className="w-full border-b border-border bg-transparent px-4 py-3 text-sm placeholder:text-muted-foreground focus:outline-none"
         />
-        <div className="max-h-72 overflow-y-auto p-1.5">
+        <div role="listbox" className="max-h-72 overflow-y-auto p-1.5">
           {items.length === 0 && (
             <p className="px-3 py-6 text-center text-xs text-muted-foreground">No matches</p>
           )}
@@ -251,6 +257,8 @@ export function CommandPalette() {
                   return (
                     <button
                       key={it.id}
+                      role="option"
+                      aria-selected={i === sel}
                       onMouseEnter={() => setSel(i)}
                       onClick={() => go(it)}
                       className={cn(

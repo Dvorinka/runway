@@ -201,6 +201,7 @@ function DeployInfo({ dep, active }: { dep: Deployment; active: boolean }) {
               onClick={() => copy(mainUrl)}
               className="shrink-0 text-muted-foreground hover:text-foreground"
               title="Copy URL"
+              aria-label="Copy URL"
             >
               {copied ? "✓" : "⧉"}
             </button>
@@ -397,6 +398,7 @@ function OgPanel({ id }: { id: string }) {
               onChange={(e) => setPath(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && fetchOg(path)}
               placeholder="/"
+              aria-label="Open Graph preview path"
               className="w-40 bg-transparent font-mono text-xs text-foreground placeholder:text-muted-foreground/50 focus:outline-none"
             />
             <button
@@ -460,6 +462,7 @@ function OgPanel({ id }: { id: string }) {
                         )}
                         <button
                           title={value ? "Copy meta tag" : "Copy suggested tag"}
+                          aria-label={value ? "Copy meta tag" : "Copy suggested tag"}
                           onClick={() => copySnippet(tag, snippet, value)}
                           className="text-muted-foreground transition-colors hover:text-foreground"
                         >
@@ -533,6 +536,7 @@ function FilesPanel({ id }: { id: string }) {
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
               placeholder="filter paths…"
+              aria-label="Filter file paths"
               className="w-44 bg-transparent font-mono text-xs text-foreground placeholder:text-muted-foreground/50 focus:outline-none"
             />
             {data?.ok && (
@@ -955,6 +959,8 @@ export default function DeploymentPage() {
             {(["build", "runtime"] as const).map((t) => (
               <button
                 key={t}
+                role="tab"
+                aria-selected={logTab === t}
                 onClick={() => setLogTab(t)}
                 className={cn(
                   "transition-colors",
@@ -981,6 +987,7 @@ export default function DeploymentPage() {
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
               placeholder="filter…"
+              aria-label="Filter log lines"
               className="w-32 bg-transparent text-xs text-muted-foreground placeholder:text-muted-foreground/50 focus:text-foreground focus:outline-none"
             />
             <button
@@ -1034,6 +1041,7 @@ export default function DeploymentPage() {
                 {s.step !== null && (
                   <button
                     onClick={() => setStepOpen((o) => ({ ...o, [si]: !sectionOpen(si) }))}
+                    aria-expanded={sectionOpen(si)}
                     className="mt-1 flex w-full items-center gap-2 border-t border-border/60 py-1.5 text-left"
                   >
                     <span className="font-sans text-xs font-medium text-muted-foreground">

@@ -235,7 +235,13 @@ function WebAnalytics({ id }: { id: string }) {
             the next deploy.
           </p>
         </div>
-        <button onClick={toggle} className={toggleCls(enabled)}>
+        <button
+          onClick={toggle}
+          role="switch"
+          aria-checked={enabled}
+          aria-label="Enable analytics"
+          className={toggleCls(enabled)}
+        >
           <span className={knob(enabled)} />
         </button>
       </div>
@@ -371,6 +377,9 @@ function Speed({ id }: { id: string }) {
           </div>
           <button
             onClick={toggle}
+            role="switch"
+            aria-checked={enabled}
+            aria-label="Enable speed insights"
             className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${
               enabled ? "bg-emerald-500" : "bg-muted"
             }`}
@@ -1084,7 +1093,7 @@ function Domains({ id }: { id: string }) {
                     {a.host}
                   </a>
                 </div>
-                <Button variant="ghost" size="sm" onClick={() => copy(a.host)} title="Copy URL">
+                <Button variant="ghost" size="sm" onClick={() => copy(a.host)} title="Copy URL" aria-label="Copy URL">
                   {copied === a.host ? "✓" : "⧉"}
                 </Button>
               </Card>
@@ -2227,6 +2236,7 @@ export default function ProjectPage() {
                     onClick={copyUrl}
                     className="border-l border-border px-2 py-1 transition-colors hover:bg-accent hover:text-foreground"
                     title="Copy URL"
+                    aria-label="Copy URL"
                   >
                     {copied ? "✓" : "⧉"}
                   </button>
