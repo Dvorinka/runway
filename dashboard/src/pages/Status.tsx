@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "@/lib/api";
+import { Skeleton } from "@/components/ui";
 
 type EnvStatus = {
   name: string;
@@ -58,7 +59,7 @@ export default function StatusPage() {
           <img src="/runway-mark-white.svg" alt="Runway" className="h-12 w-12" />
         </div>
         {error && <p className="text-center text-sm text-muted-foreground">{error}</p>}
-        {!data && !error && <p className="text-center text-sm text-muted-foreground">Loading…</p>}
+        {!data && !error && <Skeleton className="mx-auto h-24 max-w-md" />}
         {data && (
           <>
             <p className="mb-1 text-center text-xs uppercase tracking-widest text-muted-foreground">

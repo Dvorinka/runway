@@ -2,8 +2,8 @@
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn, timeAgo } from "@/lib/utils";
 import { api } from "@/lib/api";
-import { ArrowUpRight, Check, ChevronsUpDown, MoreHorizontal, Search } from "lucide-react";
-import { forwardRef, useEffect, useRef, useState } from "react";
+import { AlertTriangle, ArrowUpRight, Check, ChevronsUpDown, MoreHorizontal, Search } from "lucide-react";
+import { Component, forwardRef, useEffect, useRef, useState } from "react";
 
 const buttonVariants = cva(
   "inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none",
@@ -42,6 +42,42 @@ export function Skeleton({ className }: { className?: string }) {
   return (
     <div className={cn("animate-pulse rounded-lg border border-border bg-card/60", className)} />
   );
+}
+
+// Route-level crash containment — a render throw shows an honest
+// fallback inside the shell instead of a white page.
+export class ErrorBoundary extends Component<
+  { children: React.ReactNode },
+  { error: Error | null }
+> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div className="mx-auto max-w-5xl p-4 sm:p-8">
+        <Card className="border-dashed p-8 text-center">
+          <AlertTriangle className="mx-auto mb-3 h-6 w-6 text-warning" />
+          <p className="text-sm font-medium">Something went wrong rendering this page.</p>
+          <p className="mx-auto mt-1 max-w-md text-xs text-muted-foreground">
+            {this.state.error?.message}
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            className="mt-4"
+            onClick={() => window.location.assign("/")}
+          >
+            Back to overview
+          </Button>
+        </Card>
+      </div>
+    );
+  }
 }
 
 export const Input = forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(

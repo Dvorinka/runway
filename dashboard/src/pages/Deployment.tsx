@@ -1,5 +1,5 @@
 import { api, deploymentLogsStream, type Deployment } from "@/lib/api";
-import { Badge, Button, Menu, StatusDot, displayStatus, isRunning, type MenuItem } from "@/components/ui";
+import { Badge, Button, Menu, Skeleton, StatusDot, displayStatus, isRunning, type MenuItem } from "@/components/ui";
 import { Ansi } from "@/lib/ansi";
 import { cn, duration, elapsed, firstLine, timeAgo } from "@/lib/utils";
 import { ArrowUpToLine, Copy, FolderTree, Globe, History, ListPlus, RefreshCw, Repeat } from "lucide-react";
@@ -549,7 +549,7 @@ function FilesPanel({ id }: { id: string }) {
                 : "No file payload — server deployments keep their artifact inside the container image."}
             </p>
           )}
-          {!data && <p className="px-3 py-3 text-xs text-muted-foreground">loading…</p>}
+          {!data && <Skeleton className="m-3 h-8" />}
           {data?.ok && files.length === 0 && (
             <p className="px-3 py-3 text-xs text-muted-foreground">no files match.</p>
           )}

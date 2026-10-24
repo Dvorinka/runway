@@ -1,11 +1,11 @@
 import { api, type AppNotification } from "@/lib/api";
-import { Badge, Button, Card, EmptyState, TimeAgo } from "@/components/ui";
+import { Badge, Button, Card, EmptyState, Skeleton, TimeAgo } from "@/components/ui";
 import { Bell } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 export default function NotificationsPage() {
-  const [items, setItems] = useState<AppNotification[]>([]);
+  const [items, setItems] = useState<AppNotification[] | null>(null);
   const [unread, setUnread] = useState(0);
   const [error, setError] = useState("");
 
@@ -41,7 +41,8 @@ export default function NotificationsPage() {
       </div>
       {error && <p className="mb-4 text-xs text-destructive">{error}</p>}
       <div className="stagger grid grid-cols-1 gap-2">
-        {items.map((n) => {
+        {items === null && [0, 1, 2].map((i) => <Skeleton key={i} className="h-[64px]" />)}
+        {items?.map((n) => {
           const inner = (
             <Card
               className={`flex items-center justify-between p-4 transition-colors hover:border-muted-foreground/40 hover:bg-accent/50 ${
@@ -66,7 +67,7 @@ export default function NotificationsPage() {
             <div key={n.id}>{inner}</div>
           );
         })}
-        {items.length === 0 && (
+        {items?.length === 0 && (
           <EmptyState
             icon={Bell}
             title="Nothing yet"

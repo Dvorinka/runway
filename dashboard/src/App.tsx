@@ -1,5 +1,6 @@
 import { api, type Me } from "@/lib/api";
 import Layout from "@/components/Layout";
+import { ErrorBoundary } from "@/components/ui";
 import Login from "@/pages/Login";
 import Overview from "@/pages/Overview";
 import Projects from "@/pages/Projects";
@@ -43,7 +44,11 @@ function Authed({ me, loading }: { me: Me | null; loading: boolean }) {
   if (loading) return null;
   if (!me) return <Login />;
 
-  const page = (el: React.ReactNode) => <Layout me={me}>{el}</Layout>;
+  const page = (el: React.ReactNode) => (
+    <Layout me={me}>
+      <ErrorBoundary>{el}</ErrorBoundary>
+    </Layout>
+  );
 
   return (
     <Routes>
