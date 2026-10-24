@@ -398,3 +398,21 @@ throwaway `data-run` DB; production `~/.config/runway` was untouched
   `docker system df` (images/containers/volumes/build-cache counts +
   bytes); Settings "Docker disk usage" card renders it (48 images /
   31.5 GB live). Self-hosted ops surface; neither reference has one.
+- Upload-deploy E2E: bare `index.html` tarball via `runway deploy` path
+  surfaced two real defects, both fixed on PR #18:
+  - `detect_upload_preset`: upload projects carry no source at creation,
+    so detection never ran — empty config → "runner image not found".
+    The handler now lists the archive, runs the same `presets::detect`
+    git providers get at creation, stamps it into the deployment config
+    snapshot (incl. `dockerfile_path` fallback; explicit runner wins).
+    Corrupt archives now 400 instead of queueing a doomed deploy.
+  - `disconnect_from_network` parity: devpush tolerates 404/409 and
+    warns on the rest; Runway propagated Docker's 500 "not connected"
+    and retried `fail_deployment` 4x per failure. Now benign-detach
+    states are swallowed and the rest warn — verified live: the
+    readiness-timeout failure concluded with zero job retries.
+  - Residual finding filed as #35: host `runway serve` under Docker
+    Desktop cannot probe bridge IPs — compose/self-host unaffected.
+- CLI `cancel`/`skip` verified against live server (real REST calls,
+  correct conclusions); MCP `skip_deployment` added; api.rs tool table
+  now lists the full 16-tool surface.
