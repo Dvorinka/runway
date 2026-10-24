@@ -416,3 +416,5 @@ throwaway `data-run` DB; production `~/.config/runway` was untouched
 - CLI `cancel`/`skip` verified against live server (real REST calls,
   correct conclusions); MCP `skip_deployment` added; api.rs tool table
   now lists the full 16-tool surface.
+- `runway deploy` CLI verified E2E: tar+upload → static preset
+  detection → publish → serve container; status-follow output correct.
