@@ -73,6 +73,7 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/admin/jobs/{id}/retry",
             post(routes::admin::retry_job),
         )
+        .route("/api/v1/admin/system", get(routes::admin::system))
         // Admin — remote Docker nodes
         .route(
             "/api/v1/admin/nodes",
