@@ -60,6 +60,13 @@ pub async fn run(ctx: Ctx) {
                 sqlx::query("DELETE FROM deployment_metric WHERE ts < now() - interval '24 hours'")
                     .execute(&ctx.db)
                     .await;
+            let _ = sqlx::query(
+                "DELETE FROM notification WHERE
+                    (read AND created_at < now() - interval '30 days') OR
+                    created_at < now() - interval '90 days'",
+            )
+            .execute(&ctx.db)
+            .await;
             let removed = ctx.logs.prune_older_than(7).await;
             if removed > 0 {
                 tracing::info!(removed, "pruned stale deployment logs");
