@@ -135,6 +135,16 @@ enum Command {
         #[arg(long, default_value = "prod")]
         environment: String,
     },
+    /// Cancel a running deployment and stop its container.
+    Cancel {
+        /// Deployment ID (defaults to the latest of the linked project).
+        deployment: Option<String>,
+    },
+    /// Skip a queued deployment so the worker never picks it up.
+    Skip {
+        /// Deployment ID (defaults to the latest of the linked project).
+        deployment: Option<String>,
+    },
     /// Open the project's deployment URL in the browser.
     Open {
         /// Print the URL instead of opening a browser.
@@ -277,6 +287,8 @@ async fn main() -> anyhow::Result<()> {
             deployment,
             environment,
         } => commands::promote(deployment, environment).await?,
+        Command::Cancel { deployment } => commands::cancel(deployment).await?,
+        Command::Skip { deployment } => commands::skip(deployment).await?,
         Command::Open { print } => commands::open(print).await?,
     }
 

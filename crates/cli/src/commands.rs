@@ -452,6 +452,35 @@ pub async fn promote(deployment: Option<String>, environment: String) -> anyhow:
     Ok(())
 }
 
+/// `runway cancel [deployment]` — cancel a running deployment.
+pub async fn cancel(deployment: Option<String>) -> anyhow::Result<()> {
+    let client = Client::from_config()?;
+    let id = match deployment {
+        Some(id) => id,
+        None => latest_deployment(&client).await?,
+    };
+    let res = client
+        .post(&format!("/api/v1/deployments/{id}/cancel"), &json!({}))
+        .await?;
+    let status = res["status"].as_str().unwrap_or("canceled");
+    println!("Deployment {id} {status}");
+    Ok(())
+}
+
+/// `runway skip [deployment]` — drop a queued deployment before it runs.
+pub async fn skip(deployment: Option<String>) -> anyhow::Result<()> {
+    let client = Client::from_config()?;
+    let id = match deployment {
+        Some(id) => id,
+        None => latest_deployment(&client).await?,
+    };
+    client
+        .post(&format!("/api/v1/deployments/{id}/skip"), &json!({}))
+        .await?;
+    println!("Deployment {id} skipped");
+    Ok(())
+}
+
 /// `runway env list | set KEY=VAL | unset KEY`.
 pub async fn env(args: Vec<String>, environment: Option<String>) -> anyhow::Result<()> {
     let client = Client::from_config()?;

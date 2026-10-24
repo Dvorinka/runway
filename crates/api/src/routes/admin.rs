@@ -404,3 +404,41 @@ pub async fn prune_jobs(
         .await?;
     Ok(Json(json!({ "ok": true, "deleted": res.rows_affected() })).into_response())
 }
+
+/// `GET /api/v1/admin/system` — docker disk-usage inventory for the
+/// host node. Self-hosted ops surface: runner images and build cache
+/// accumulate; this is the only place that footprint is visible.
+pub async fn system(user: AuthUser, State(state): State<AppState>) -> ApiResult<Response> {
+    require_superadmin(&user)?;
+    let docker = state
+        .docker
+        .as_ref()
+        .ok_or_else(|| ApiError::bad_request("docker unavailable"))?;
+    let df = docker
+        .df()
+        .await
+        .map_err(|e| ApiError::internal(format!("docker df failed: {e}")))?;
+    let images = df.images.unwrap_or_default();
+    let containers = df.containers.unwrap_or_default();
+    let volumes = df.volumes.unwrap_or_default();
+    let caches = df.build_cache.unwrap_or_default();
+    Ok(Json(json!({
+        "images": {
+            "count": images.len(),
+            "size": images.iter().map(|i| i.size).sum::<i64>(),
+        },
+        "containers": {
+            "count": containers.len(),
+            "size": containers.iter().map(|c| c.size_rw.unwrap_or(0)).sum::<i64>(),
+        },
+        "volumes": {
+            "count": volumes.len(),
+            "size": volumes.iter().filter_map(|v| v.usage_data.as_ref().map(|u| u.size)).sum::<i64>(),
+        },
+        "build_cache": {
+            "count": caches.len(),
+            "size": caches.iter().filter_map(|c| c.size).sum::<i64>(),
+        },
+    }))
+    .into_response())
+}

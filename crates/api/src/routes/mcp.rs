@@ -82,6 +82,12 @@ fn tools() -> Value {
                    "properties": {"deployment_id": {"type": "string"}}})
         ),
         tool(
+            "skip_deployment",
+            "Skip a queued deployment so it never runs",
+            json!({"type": "object", "required": ["deployment_id"],
+                   "properties": {"deployment_id": {"type": "string"}}})
+        ),
+        tool(
             "rollback_environment",
             "Roll an environment back to its previous deployment",
             json!({"type": "object", "required": ["project_id"],
@@ -373,6 +379,13 @@ async fn call(state: &AppState, user_id: i64, name: &str, args: &Value) -> ApiRe
                 .await
                 .map_err(|e| ApiError::bad_request(e.to_string()))?;
             Ok(json!({ "deployment_id": d.id, "conclusion": "canceled" }))
+        }
+        "skip_deployment" => {
+            let (d, _p) = deployment_for(state, user_id, arg(args, "deployment_id")?).await?;
+            runway_core::deploy::skip(&state.db, &state.bus, &d)
+                .await
+                .map_err(|e| ApiError::bad_request(e.to_string()))?;
+            Ok(json!({ "deployment_id": d.id, "conclusion": "skipped" }))
         }
         "rollback_environment" => {
             let p = project_for(state, user_id, arg(args, "project_id")?).await?;

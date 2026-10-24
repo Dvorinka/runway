@@ -223,6 +223,7 @@ pub async fn openapi() -> Response {
         ]),
         ("/api/v1/keys/{id}", &[("delete", "Revoke an API key")]),
         ("/api/deploy", &[("post", "Trigger deploy with rw_ token {project, branch?}")]),
+        ("/api/v1/admin/system", &[("get", "Docker disk-usage inventory (superadmin)")]),
         ("/api/mcp", &[("post", "MCP JSON-RPC 2.0 (initialize, tools/list, tools/call) — Bearer ak_ auth")]),
     ];
 
