@@ -2192,7 +2192,7 @@ function ProjectLogs({ id }: { id: string }) {
 export default function ProjectPage() {
   const { id = "" } = useParams();
   const [params, setParams] = useSearchParams();
-  const [project, setProject] = useState<Project | null>(null);
+  const [project, setProject] = useState<Project | null | undefined>(undefined);
   const tabParam = params.get("tab");
   const tab: Tab = (TABS as readonly string[]).includes(tabParam ?? "")
     ? (tabParam as Tab)
@@ -2202,8 +2202,20 @@ export default function ProjectPage() {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    api.project(id).then(setProject).catch(() => {});
+    api.project(id).then(setProject).catch(() => setProject(null));
   }, [id]);
+
+  if (project === null) {
+    return (
+      <div className="page-enter mx-auto max-w-5xl p-4 sm:p-8">
+        <EmptyState
+          icon={Rocket}
+          title="Project not found"
+          hint="The project was deleted, or the link is wrong."
+        />
+      </div>
+    );
+  }
 
   function copyUrl() {
     if (!project?.url) return;
@@ -2273,7 +2285,7 @@ export default function ProjectPage() {
           </button>
         ))}
       </div>
-      {tab === "deployments" && <Deployments id={id} project={project} />}
+      {tab === "deployments" && <Deployments id={id} project={project ?? null} />}
       {tab === "logs" && <ProjectLogs id={id} />}
       {tab === "environment" && <Environment id={id} />}
       {tab === "analytics" && <Analytics id={id} />}
@@ -2282,7 +2294,7 @@ export default function ProjectPage() {
       {tab === "redirects" && <Redirects id={id} />}
       {tab === "domains" && <Domains id={id} />}
       {tab === "webhooks" && <Webhooks id={id} />}
-      {tab === "settings" && <Settings id={id} project={project} />}
+      {tab === "settings" && <Settings id={id} project={project ?? null} />}
     </div>
   );
 }

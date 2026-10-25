@@ -8,7 +8,7 @@ import {
   type TeamInvite,
   type TeamWebhook,
 } from "@/lib/api";
-import { Avatar, AvatarRow, Badge, Button, Card, ComboBox, Input, SectionHead, Skeleton } from "@/components/ui";
+import { Avatar, AvatarRow, Badge, Button, Card, ComboBox, EmptyState, Input, SectionHead, Skeleton } from "@/components/ui";
 import { Cloud, Database, MailPlus, ScrollText, Users, Webhook } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
@@ -557,7 +557,7 @@ export default function TeamPage({ me }: { me: Me }) {
     return (
       <div className="page-enter mx-auto max-w-5xl p-4 sm:p-8">
         {error ? (
-          <p className="text-xs text-destructive">{error}</p>
+          <EmptyState icon={Users} title="Team unavailable" hint={error} />
         ) : (
           <div className="grid grid-cols-1 gap-2">
             {[0, 1, 2].map((i) => (
