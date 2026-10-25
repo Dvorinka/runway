@@ -4,10 +4,11 @@
 data/
 data-test/
 data-run/
-node_modules/
-dist/
-.playwright-mcp/
-__pycache__/
 screenshots/
 /*.png
 OVERNIGHT-PROMPT.md
+node_modules/
+dist/
+*.tsbuildinfo
+__pycache__/
+.playwright-mcp/
