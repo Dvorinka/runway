@@ -77,7 +77,7 @@ async fn tick(ctx: &Ctx) -> anyhow::Result<()> {
         let docker = match dep.remote_node_id.as_deref() {
             Some(nid) => {
                 if !node_clients.contains_key(nid) {
-                    if let Some(c) = dkr::node_client(&ctx.db, nid).await {
+                    if let Some(c) = dkr::node_client(&ctx.db, nid, &ctx.crypto).await {
                         node_clients.insert(nid.to_string(), c);
                     }
                 }
