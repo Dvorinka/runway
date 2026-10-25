@@ -2424,6 +2424,7 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",
+ "chrono",
  "clap",
  "clap_complete",
  "reqwest",
