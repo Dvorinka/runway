@@ -394,8 +394,29 @@ pub fn router(state: AppState) -> Router {
         .fallback_service(tower_http::services::ServeDir::new(&web_dir).fallback(
             tower_http::services::ServeFile::new(web_dir.join("index.html")),
         ))
+        .layer(axum::middleware::map_response(security_headers))
 }
 
 async fn health() -> Json<serde_json::Value> {
     Json(json!({ "status": "ok", "service": "runway" }))
+}
+
+/// Baseline hardening headers on every response, API and SPA alike.
+async fn security_headers(mut res: axum::response::Response) -> axum::response::Response {
+    let h = res.headers_mut();
+    h.insert(
+        "content-security-policy",
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
+         img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; \
+         base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+            .parse()
+            .unwrap(),
+    );
+    h.insert("x-content-type-options", "nosniff".parse().unwrap());
+    h.insert("x-frame-options", "DENY".parse().unwrap());
+    h.insert(
+        "referrer-policy",
+        "strict-origin-when-cross-origin".parse().unwrap(),
+    );
+    res
 }
