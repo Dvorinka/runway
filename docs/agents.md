@@ -46,8 +46,10 @@ Settings → API keys mint `ak_` tokens. Use as
 
 `list_projects`, `get_project`, `list_deployments`, `get_deployment`,
 `get_deployment_logs`, `deployment_stats`, `deploy_project`,
-`cancel_deployment`, `redeploy_deployment`, `rollback_environment`,
-`list_env`, `set_env`, `list_domains`, `ping`.
+`cancel_deployment`, `skip_deployment`, `redeploy_deployment`,
+`promote_deployment`, `rollback_environment`, `list_env`, `set_env`,
+`list_domains`. The protocol-level `ping` method answers `{}` — it is
+not a callable tool.
 
 Write tools (`deploy_project`, `set_env`, `rollback_environment`, …)
 respect the same RBAC gates as the REST surface — issue the key to an
