@@ -2115,6 +2115,7 @@ function Protection({ id, project }: { id: string; project: Project | null }) {
         <div className="flex gap-2">
           <Input
             type="password"
+            autoComplete="new-password"
             placeholder="preview password"
             value={pw}
             onChange={(e) => setPw(e.target.value)}

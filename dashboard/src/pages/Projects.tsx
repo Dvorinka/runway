@@ -79,6 +79,7 @@ function ConnectGuide({
       )}
       <Input
         type="password"
+        autoComplete="new-password"
         placeholder={guide.tokenPlaceholder}
         value={token}
         onChange={(e) => setToken(e.target.value)}
