@@ -12,3 +12,6 @@ dist/
 *.tsbuildinfo
 __pycache__/
 .playwright-mcp/
+
+# vite pre-bundle cache
+dashboard/.vite/

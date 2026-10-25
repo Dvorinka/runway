@@ -126,6 +126,7 @@ fn node_json(n: &runway_core::models::RemoteNode) -> Value {
         "meta": n.meta,
         "tls": n.tls_cert.is_some(),
         "created_at": n.created_at,
+        "updated_at": n.updated_at,
     })
 }
 
