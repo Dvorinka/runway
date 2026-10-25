@@ -149,13 +149,14 @@ async fn tick(
             ctx.logs
                 .info(&dep.id, &format!("Container exited (code {exit})"))
                 .await;
-            enqueue_fail(
-                ctx,
-                &dep.id,
-                "deploy",
-                &format!("container exited (code {exit})"),
-            )
-            .await;
+            // devpush exit-code reasons — keep verbatim for parity.
+            let reason = match exit {
+                0 => "App exited unexpectedly. Ensure your app keeps running and doesn't exit on its own.".to_string(),
+                137 => "App was killed (out of memory or manually stopped). Try increasing memory limits.".to_string(),
+                1 => "App crashed on startup. Check deployment logs for error details.".to_string(),
+                c => format!("App exited with code {c}. Check deployment logs for error details."),
+            };
+            enqueue_fail(ctx, &dep.id, "deploy", &reason).await;
             continue;
         }
 
@@ -232,8 +233,8 @@ async fn tick(
                 &dep.id,
                 "deploy",
                 &format!(
-                    "app did not become ready within {}s",
-                    ctx.settings.deployment_timeout_seconds
+                    "Timed out waiting for app to respond on port {}. Ensure your app starts an HTTP server on the configured port.",
+                    dep.serve_port()
                 ),
             )
             .await;
