@@ -9,7 +9,12 @@ use serde_json::{json, Value};
 use crate::client::{self, CliConfig, Client, LinkFile};
 
 /// `runway login` — store instance URL + API key after validating them.
-pub async fn login(server: Option<String>, key: Option<String>) -> anyhow::Result<()> {
+pub async fn login(
+    server: Option<String>,
+    key: Option<String>,
+    email: Option<String>,
+    password: Option<String>,
+) -> anyhow::Result<()> {
     let server = match server {
         Some(s) => s.trim_end_matches('/').to_string(),
         None => prompt("Instance URL (e.g. https://runway.example.com): ")?,
@@ -17,9 +22,14 @@ pub async fn login(server: Option<String>, key: Option<String>) -> anyhow::Resul
     if !(server.starts_with("http://") || server.starts_with("https://")) {
         bail!("server must start with http:// or https://");
     }
+
     let key = match key {
         Some(k) => k,
-        None => prompt("API key (ak_...): ")?,
+        None => {
+            // No key — email/password sign-in mints one, so a fresh
+            // machine never needs the dashboard (or `bootstrap`).
+            login_mint_key(&server, email, password).await?
+        }
     };
     if !key.starts_with("ak_") {
         bail!("expected an ak_ API key (run `runway bootstrap` or the dashboard)");
@@ -41,6 +51,82 @@ pub async fn login(server: Option<String>, key: Option<String>) -> anyhow::Resul
         client::config_path().display()
     );
     Ok(())
+}
+
+/// Sign in with email + password and mint an `ak_` API key. Handles the
+/// TOTP challenge when the account has 2FA enabled.
+async fn login_mint_key(
+    server: &str,
+    email: Option<String>,
+    password: Option<String>,
+) -> anyhow::Result<String> {
+    let email = match email {
+        Some(e) if !e.trim().is_empty() => e,
+        _ => prompt("Email: ")?,
+    };
+    let password = match password {
+        Some(p) if !p.is_empty() => p,
+        _ => prompt_secret("Password: ")?,
+    };
+    let http = reqwest::Client::new();
+    let resp = http
+        .post(format!("{server}/api/auth/login"))
+        .json(&json!({ "email": email, "password": password }))
+        .send()
+        .await
+        .context("login request failed")?;
+    let mut cookie = first_set_cookie(&resp);
+    let body: Value = resp.json().await.unwrap_or_default();
+    if body["two_factor"].as_bool() == Some(true) {
+        let pending = body["pending"].as_str().unwrap_or_default().to_string();
+        let code = prompt("Two-factor or recovery code: ")?;
+        let resp = http
+            .post(format!("{server}/api/auth/totp/challenge"))
+            .json(&json!({ "pending": pending, "code": code }))
+            .send()
+            .await
+            .context("2FA challenge failed")?;
+        if !resp.status().is_success() {
+            bail!("invalid two-factor code");
+        }
+        cookie = first_set_cookie(&resp).or(cookie);
+    }
+    let cookie = cookie.context("no session cookie returned — check email and password")?;
+
+    // Session → named API key. Name ties the key to this machine so the
+    // dashboard's key list stays auditable.
+    let host = std::env::var("HOSTNAME").unwrap_or_else(|_| "machine".into());
+    let resp = http
+        .post(format!("{server}/api/v1/keys"))
+        .header("cookie", cookie)
+        .json(&json!({ "name": format!("cli-{host}") }))
+        .send()
+        .await
+        .context("key mint failed")?;
+    if !resp.status().is_success() {
+        bail!("could not mint API key ({})", resp.status());
+    }
+    let body: Value = resp.json().await.unwrap_or_default();
+    body["token"]
+        .as_str()
+        .map(String::from)
+        .context("no token in key response")
+}
+
+/// First `name=value` pair from a response's Set-Cookie header.
+fn first_set_cookie(resp: &reqwest::Response) -> Option<String> {
+    resp.headers()
+        .get(reqwest::header::SET_COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(';').next().map(str::to_string))
+}
+
+fn prompt_secret(msg: &str) -> anyhow::Result<String> {
+    let s = rpassword::prompt_password(msg)?;
+    if s.is_empty() {
+        bail!("empty input");
+    }
+    Ok(s)
 }
 
 /// `runway link [project-id]` — bind CWD to a project (`.runway/project.json`).
@@ -321,7 +407,7 @@ pub async fn logs(deployment: Option<String>, follow: bool, project: bool) -> an
             .get_text(&format!("/api/v1/projects/{}/logs", link.project_id))
             .await?;
         for line in text.lines() {
-            print_log_line(line);
+            print_log_line(line, false);
         }
         return Ok(());
     }
@@ -329,18 +415,18 @@ pub async fn logs(deployment: Option<String>, follow: bool, project: bool) -> an
         Some(d) => d,
         None => latest_deployment(&client).await?,
     };
-    let mut printed = print_logs(&client, &dep_id, 0).await?;
+    let mut printed = print_logs(&client, &dep_id, 0, false).await?;
     if !follow {
         return Ok(());
     }
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        printed = print_logs(&client, &dep_id, printed).await?;
+        printed = print_logs(&client, &dep_id, printed, false).await?;
         // Terminal signal is `conclusion` — status='completed' covers
         // succeeded AND failed (devpush lifecycle semantics).
         let dep = client.get(&format!("/api/v1/deployments/{dep_id}")).await?;
         if let Some(conclusion) = dep["conclusion"].as_str() {
-            let _ = print_logs(&client, &dep_id, printed).await?;
+            let _ = print_logs(&client, &dep_id, printed, false).await?;
             println!("-- deployment concluded: {conclusion}");
             break;
         }
@@ -796,34 +882,46 @@ async fn latest_deployment(client: &Client) -> anyhow::Result<String> {
 
 /// Print one stored log line; `step` markers render as section headers
 /// instead of the raw `<ts>\tstep\t<name>` triple.
-fn print_log_line(line: &str) {
+fn print_log_line(line: &str, strip_ts: bool) {
     let mut parts = line.splitn(3, '\t');
     match (parts.next(), parts.next(), parts.next()) {
         (Some(_), Some("step"), Some(name)) => println!("--- {name} ---"),
+        (Some(_), Some(_), Some(text)) if strip_ts => println!("{text}"),
         _ => println!("{line}"),
     }
 }
 
-/// Print log lines after `skip`; returns the new line count.
-async fn print_logs(client: &Client, dep_id: &str, skip: usize) -> anyhow::Result<usize> {
+/// Print log lines after `skip`; returns the new line count. `strip_ts`
+/// drops the timestamp column — nicer while a deploy streams.
+async fn print_logs(
+    client: &Client,
+    dep_id: &str,
+    skip: usize,
+    strip_ts: bool,
+) -> anyhow::Result<usize> {
     let text = client
         .get_text(&format!("/api/v1/deployments/{dep_id}/logs?tail=5000"))
         .await?;
     let lines: Vec<&str> = text.lines().collect();
     for line in lines.iter().skip(skip) {
-        print_log_line(line);
+        print_log_line(line, strip_ts);
     }
     Ok(lines.len())
 }
 
-/// Poll a deployment until terminal status, printing transitions.
+/// Poll a deployment until terminal status, streaming new log lines and
+/// printing transitions (Vercel-style `deploy` output).
 async fn follow_deployment(client: &Client, dep_id: &str) -> anyhow::Result<()> {
     let mut last = String::new();
+    let mut printed = 0usize;
     loop {
+        printed = print_logs(client, dep_id, printed, true)
+            .await
+            .unwrap_or(printed);
         let dep = client.get(&format!("/api/v1/deployments/{dep_id}")).await?;
         let status = dep["status"].as_str().unwrap_or("?").to_string();
         let computed = dep["computed_status"].as_str().unwrap_or("");
-        let label = if computed.is_empty() || computed == status {
+        let label = if computed.is_empty() || computed == "unknown" || computed == status {
             status.clone()
         } else {
             format!("{status} ({computed})")
@@ -844,6 +942,7 @@ async fn follow_deployment(client: &Client, dep_id: &str) -> anyhow::Result<()> 
                 return Ok(());
             }
             Some(other) => {
+                let _ = print_logs(client, dep_id, printed, true).await;
                 let err = dep["error"]["message"]
                     .as_str()
                     .or(dep["error"].as_str())

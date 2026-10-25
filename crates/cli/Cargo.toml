@@ -17,6 +17,7 @@ axum.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
 reqwest.workspace = true
+rpassword = "7.5.4"
 runway-api = { path = "../api" }
 runway-core = { path = "../core" }
 runway-worker = { path = "../worker" }

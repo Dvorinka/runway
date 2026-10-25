@@ -36,16 +36,16 @@ enum Command {
     },
     /// Deploy the current directory (upload tarball to the linked project).
     Deploy {
-        /// Stream build logs until the deployment settles (default: on).
-        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        /// Stream build logs until the deployment settles (default: on; pass --follow=false to disable).
+        #[arg(long, default_value_t = true, num_args = 0..=1, default_missing_value = "true", action = clap::ArgAction::Set)]
         follow: bool,
     },
     /// New deployment from the same source (latest or a given ID).
     Redeploy {
         /// Deployment ID (defaults to the latest of the linked project).
         deployment: Option<String>,
-        /// Stream build logs until the deployment settles (default: on).
-        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        /// Stream build logs until the deployment settles (default: on; pass --follow=false to disable).
+        #[arg(long, default_value_t = true, num_args = 0..=1, default_missing_value = "true", action = clap::ArgAction::Set)]
         follow: bool,
     },
     /// Show the logged-in user and instance health.
@@ -79,9 +79,16 @@ enum Command {
         /// Instance URL (e.g. http://localhost:8000).
         #[arg(long)]
         server: Option<String>,
-        /// API key (ak_...).
+        /// API key (ak_...). Omit to sign in with email + password —
+        /// a key is minted for you.
         #[arg(long)]
         key: Option<String>,
+        /// Account email (key-minting sign-in).
+        #[arg(long)]
+        email: Option<String>,
+        /// Account password (key-minting sign-in; prefer the prompt).
+        #[arg(long)]
+        password: Option<String>,
     },
     /// Link the current directory to a project.
     Link {
@@ -246,7 +253,12 @@ async fn main() -> anyhow::Result<()> {
             runway_core::db::migrate(&db).await?;
             allowlist_add(&db, email, domain, pattern).await?;
         }
-        Command::Login { server, key } => commands::login(server, key).await?,
+        Command::Login {
+            server,
+            key,
+            email,
+            password,
+        } => commands::login(server, key, email, password).await?,
         Command::Link { project } => commands::link(project).await?,
         Command::Whoami => commands::whoami().await?,
         Command::Logout => commands::logout().await?,
