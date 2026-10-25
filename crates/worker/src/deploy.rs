@@ -506,19 +506,21 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
     }
 
     // -- Resource limits -----------------------------------------------
+    // devpush parity: uncapped unless the operator sets defaults; custom
+    // per-project values are honored only when a default+max pair exists.
     let mut cpus = ctx.settings.default_cpus;
     let mut memory_mb = ctx.settings.default_memory_mb;
-    if ctx.settings.allow_custom_cpu {
-        if let Some(override_cpus) = config.get("cpus").and_then(|v| v.as_f64()) {
-            if override_cpus > 0.0 {
-                cpus = f64::min(override_cpus, ctx.settings.max_cpus);
+    if let (Some(_), Some(max)) = (ctx.settings.default_cpus, ctx.settings.max_cpus) {
+        if let Some(o) = config.get("cpus").and_then(|v| v.as_f64()) {
+            if o > 0.0 {
+                cpus = Some(f64::min(o, max));
             }
         }
     }
-    if ctx.settings.allow_custom_memory {
-        if let Some(override_mem) = config.get("memory").and_then(|v| v.as_i64()) {
-            if override_mem > 0 {
-                memory_mb = i64::min(override_mem, ctx.settings.max_memory_mb);
+    if let (Some(_), Some(max)) = (ctx.settings.default_memory_mb, ctx.settings.max_memory_mb) {
+        if let Some(o) = config.get("memory").and_then(|v| v.as_i64()) {
+            if o > 0 {
+                memory_mb = Some(i64::min(o, max));
             }
         }
     }
@@ -644,11 +646,11 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
         }),
         ..Default::default()
     };
-    if cpus > 0.0 {
-        host_config.nano_cpus = Some((cpus * 1e9) as i64);
+    if let Some(c) = cpus {
+        host_config.nano_cpus = Some((c * 1e9) as i64);
     }
-    if memory_mb > 0 {
-        host_config.memory = Some(memory_mb * 1024 * 1024);
+    if let Some(m) = memory_mb {
+        host_config.memory = Some(m * 1024 * 1024);
     }
     // Linked storage: data mounts + network attach (deploy-time wiring).
     // Remote nodes can't reach local storage containers or their host
