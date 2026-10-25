@@ -11,6 +11,12 @@ cd "$(dirname "$0")/../.."
 
 export HOST_DATA_DIR="$PWD/data-run"
 mkdir -p "$HOST_DATA_DIR"
+# The container runs as uid 1000; the bind-mounted data dir must be
+# writable by it. chown when we can (root), widen perms otherwise —
+# installs done as root or by a uid≠1000 user break uploads otherwise.
+chown -R 1000:1000 "$HOST_DATA_DIR" 2>/dev/null \
+  || chmod -R a+rwX "$HOST_DATA_DIR" 2>/dev/null \
+  || echo "warn: $HOST_DATA_DIR is not writable by uid 1000" >&2
 
 if [[ "${1:-}" == "--fresh" ]]; then
   docker compose -f compose/development.yml down -v

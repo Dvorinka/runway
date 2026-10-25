@@ -365,3 +365,59 @@ throwaway `data-run` DB; production `~/.config/runway` was untouched
   design-pending. #22 devpushhq namespace — closed won't-fix: the
   image ref is real pull evidence and devpush logs the identical
   line; `runner-overrides.json` is the supported remap.
+
+## Overnight round 3 — parity + polish batch
+
+- Composable deployment filters (#26): env/project chips compose with
+  status tabs + free-text query; verified `preview` narrows to 1 row.
+- Command palette depth (#31): all 10 project tabs scoped, deployment
+  search items, context actions (open prod site, copy prod URL, copy
+  project ID), `run` actions vs `to` navigation.
+- CLI/MCP parity (#27): added `runway cancel` + `runway skip`
+  (REST+MCP had them, CLI didn't); added `skip_deployment` MCP tool
+  (cancel only accepts in-flight; queued needs skip); docs tool
+  surface updated.
+- Notification retention (#33): monitor's hourly sweep deletes read
+  notifications >30d, all rows >90d — devpush never prunes; the
+  flap incident showed why a bound is needed.
+- Unread indicators moved `bg-brand` → `bg-info` — DESIGN.md reserves
+  orange for intent-in-flight; unread is informational evidence.
+- Error boundary + skeleton pass (#29): ErrorBoundary wraps every
+  routed page; all raw "Loading…" texts converted to Skeleton
+  (Team, GitHub App card, Files panel, public status page);
+  Notifications gained a loading skeleton.
+- Accessibility (#28): Button focus-visible ring; switch semantics
+  (role/aria-checked) on toggles; Menu aria-haspopup/roles; palette
+  dialog/combobox/listbox semantics; Input mirrors placeholder as
+  aria-label (~65 fields); chips/tabs/steppers expose pressed/
+  selected/expanded.
+- Upload-provider project creation (#34) verified E2E and closed.
+- Deployment Delete (#21) closed not-planned: neither devpush nor
+  Vercel offers user-facing deployment deletion — immutable history.
+- Docker disk inventory: `GET /api/v1/admin/system` summarizes
+  `docker system df` (images/containers/volumes/build-cache counts +
+  bytes); Settings "Docker disk usage" card renders it (48 images /
+  31.5 GB live). Self-hosted ops surface; neither reference has one.
+- Upload-deploy E2E: bare `index.html` tarball via `runway deploy` path
+  surfaced two real defects, both fixed on PR #18:
+  - `detect_upload_preset`: upload projects carry no source at creation,
+    so detection never ran — empty config → "runner image not found".
+    The handler now lists the archive, runs the same `presets::detect`
+    git providers get at creation, stamps it into the deployment config
+    snapshot (incl. `dockerfile_path` fallback; explicit runner wins).
+    Corrupt archives now 400 instead of queueing a doomed deploy.
+  - `disconnect_from_network` parity: devpush tolerates 404/409 and
+    warns on the rest; Runway propagated Docker's 500 "not connected"
+    and retried `fail_deployment` 4x per failure. Now benign-detach
+    states are swallowed and the rest warn — verified live: the
+    readiness-timeout failure concluded with zero job retries.
+  - Residual finding filed as #35: host `runway serve` under Docker
+    Desktop cannot probe bridge IPs — compose/self-host unaffected.
+- CLI `cancel`/`skip` verified against live server (real REST calls,
+  correct conclusions); MCP `skip_deployment` added; api.rs tool table
+  now lists the full 16-tool surface.
+- `runway deploy` CLI verified E2E: tar+upload → static preset
+  detection → publish → serve container; status-follow output correct.
+- connect_to_network: same benign-state tolerance ported from devpush
+  (404/409/403 already-exists) — stopped the startup reconcile warning
+  against seeded compose networks. On PR #18.

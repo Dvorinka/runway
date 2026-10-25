@@ -73,6 +73,15 @@ Two ways to get traffic in:
   `DEPLOY_DOMAIN`. The account ID is on the zone Overview page sidebar.
   The domain's DNS must already live on Cloudflare.
 
+> **Docker Desktop caveat.** `runway serve` run directly on the host
+> against a Docker Desktop socket (the `desktop` docker context on
+> macOS/Windows/Linux) cannot complete deployments: the readiness probe
+> reaches containers on their bridge IPs, which are not routable from
+> outside the Docker Desktop VM. Builds succeed; deployments then time
+> out at `Timed out waiting for app readiness`. Use the compose stack
+> (API runs in-container) or a Linux host with the daemon on
+> `/var/run/docker.sock` — both reach bridge IPs natively.
+
 ## Remote Docker nodes
 
 The easy path needs one command on the machine. Settings → Remote Docker
