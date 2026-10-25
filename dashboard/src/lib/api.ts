@@ -690,6 +690,21 @@ export const api = {
     req<{ notifications: AppNotification[]; unread: number }>("/api/v1/notifications"),
   markAllRead: () =>
     req<{ ok: boolean }>("/api/v1/notifications/mark-read", { method: "POST" }),
+  markRead: (id: number) =>
+    req<{ ok: boolean }>("/api/v1/notifications/mark-read", {
+      method: "POST",
+      body: JSON.stringify({ id }),
+    }),
+  invitePreview: (id: string) =>
+    req<{
+      team_name: string;
+      email: string;
+      role: string;
+      inviter: string | null;
+      expires_at: string;
+      expired: boolean;
+      yours: boolean;
+    }>(`/api/v1/invites/${id}`),
 };
 
 export function deploymentLogsStream(id: string): EventSource {
