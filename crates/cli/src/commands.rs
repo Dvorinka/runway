@@ -131,9 +131,12 @@ pub async fn unlink() -> anyhow::Result<()> {
 }
 
 /// `runway projects` — list all projects on the instance.
-pub async fn projects() -> anyhow::Result<()> {
+pub async fn projects(json_out: bool) -> anyhow::Result<()> {
     let client = Client::from_config()?;
     let res = client.get("/api/v1/projects").await?;
+    if json_out {
+        return print_json(&res);
+    }
     let list = res["projects"].as_array().cloned().unwrap_or_default();
     if list.is_empty() {
         println!("No projects yet — run `runway create <name>`.");
@@ -347,7 +350,7 @@ pub async fn logs(deployment: Option<String>, follow: bool, project: bool) -> an
 }
 
 /// `runway deployments [--limit N]`.
-pub async fn deployments(limit: usize) -> anyhow::Result<()> {
+pub async fn deployments(limit: usize, json_out: bool) -> anyhow::Result<()> {
     let client = Client::from_config()?;
     let link = client::load_link()?;
     let res = client
@@ -356,6 +359,9 @@ pub async fn deployments(limit: usize) -> anyhow::Result<()> {
             link.project_id
         ))
         .await?;
+    if json_out {
+        return print_json(&res);
+    }
     let deps = res["deployments"].as_array().cloned().unwrap_or_default();
     if deps.is_empty() {
         println!("No deployments yet.");
@@ -431,14 +437,18 @@ pub async fn rollback(environment: String) -> anyhow::Result<()> {
 }
 
 /// `runway env list | set KEY=VAL | unset KEY`.
-pub async fn env(args: Vec<String>, environment: Option<String>) -> anyhow::Result<()> {
+pub async fn env(mut args: Vec<String>, environment: Option<String>) -> anyhow::Result<()> {
     let client = Client::from_config()?;
     let link = client::load_link()?;
     let base = format!("/api/v1/projects/{}/env", link.project_id);
+    let json_out = strip_json_flag(&mut args);
 
     match args.first().map(String::as_str) {
         None | Some("list") => {
             let res = client.get(&base).await?;
+            if json_out {
+                return print_json(&res);
+            }
             let vars = res["env"].as_array().cloned().unwrap_or_default();
             if vars.is_empty() {
                 println!("No variables — `runway env set KEY=VALUE` or `runway env push [file]`.");
@@ -585,10 +595,11 @@ pub async fn env(args: Vec<String>, environment: Option<String>) -> anyhow::Resu
 }
 
 /// `runway domains list | add <host> | remove <host> | assign-cf <host>`.
-pub async fn domains(args: Vec<String>) -> anyhow::Result<()> {
+pub async fn domains(mut args: Vec<String>) -> anyhow::Result<()> {
     let client = Client::from_config()?;
     let link = client::load_link()?;
     let base = format!("/api/v1/projects/{}/domains", link.project_id);
+    let json_out = strip_json_flag(&mut args);
 
     let find_id = |hostname: &str, list: &[Value]| -> anyhow::Result<i64> {
         list.iter()
@@ -600,6 +611,9 @@ pub async fn domains(args: Vec<String>) -> anyhow::Result<()> {
     match args.first().map(String::as_str) {
         None | Some("list") => {
             let res = client.get(&base).await?;
+            if json_out {
+                return print_json(&res);
+            }
             for d in res["domains"].as_array().cloned().unwrap_or_default() {
                 println!(
                     "  {:<40} {} [{}]",
@@ -689,12 +703,17 @@ async fn find_node(client: &Client, want: &str) -> anyhow::Result<Value> {
 ///   nodes approve <id|name>             approve a waiting node
 ///   nodes rm <id|name>                  delete/reject a node
 ///   nodes token ls | token rm <id>      list or revoke enrollment tokens
-pub async fn nodes(args: Vec<String>) -> anyhow::Result<()> {
+pub async fn nodes(mut args: Vec<String>) -> anyhow::Result<()> {
     let client = Client::from_config()?;
     let base = "/api/v1/admin/nodes";
+    let json_out = strip_json_flag(&mut args);
 
     match args.first().map(String::as_str) {
         None | Some("ls") | Some("list") => {
+            if json_out {
+                let res = client.get(base).await?;
+                return print_json(&res);
+            }
             for n in list_nodes(&client).await? {
                 let meta = &n["meta"];
                 let inv = [
@@ -774,6 +793,9 @@ pub async fn nodes(args: Vec<String>) -> anyhow::Result<()> {
         Some("token") => match args.get(1).map(String::as_str) {
             Some("ls") | Some("list") => {
                 let res = client.get(&format!("{base}/tokens")).await?;
+                if json_out {
+                    return print_json(&res);
+                }
                 for t in res["tokens"].as_array().cloned().unwrap_or_default() {
                     let state = if t["revoked"].as_bool() == Some(true) {
                         "revoked"
@@ -805,6 +827,19 @@ pub async fn nodes(args: Vec<String>) -> anyhow::Result<()> {
 }
 
 // -- helpers ---------------------------------------------------------------
+
+/// Pull `--json` out of trailing-var-arg command args; returns whether
+/// machine-readable output was requested.
+fn strip_json_flag(args: &mut Vec<String>) -> bool {
+    let had = args.iter().any(|a| a == "--json");
+    args.retain(|a| a != "--json");
+    had
+}
+
+fn print_json(v: &Value) -> anyhow::Result<()> {
+    println!("{}", serde_json::to_string_pretty(v)?);
+    Ok(())
+}
 
 fn prompt(msg: &str) -> anyhow::Result<String> {
     print!("{msg}");

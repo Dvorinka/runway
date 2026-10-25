@@ -545,7 +545,14 @@ pub async fn get_env(
     let project = accessible_project(&state, user.user.id, &id).await?;
     // Keys returned; values masked except empty. Port keeps them hidden in
     // the API — full values visible only in the dashboard session flow.
-    let vars = project.env_vars(&state.crypto)?;
+    let vars = project.env_vars(&state.crypto).map_err(|e| {
+        tracing::error!(
+            error = %e,
+            project = %project.id,
+            "env decrypt failed — ENCRYPTION_KEY likely differs from the key these vars were written with"
+        );
+        e
+    })?;
     let masked: Vec<Value> = vars
         .iter()
         .map(|v| {

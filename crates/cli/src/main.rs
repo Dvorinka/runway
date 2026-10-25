@@ -55,7 +55,11 @@ enum Command {
     /// Unlink the current directory (delete .runway/project.json).
     Unlink,
     /// List all projects on the instance.
-    Projects,
+    Projects {
+        /// Print the raw API response as JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Show instance, link, project, and latest deployment status.
     Status,
     /// Print shell completions (bash|zsh|fish|powershell|elvish).
@@ -120,6 +124,9 @@ enum Command {
         /// Max rows to print.
         #[arg(long, default_value_t = 15)]
         limit: usize,
+        /// Print the raw API response as JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// Roll back an environment to its previous deployment.
     Rollback {
@@ -238,7 +245,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Whoami => commands::whoami().await?,
         Command::Logout => commands::logout().await?,
         Command::Unlink => commands::unlink().await?,
-        Command::Projects => commands::projects().await?,
+        Command::Projects { json } => commands::projects(json).await?,
         Command::Status => commands::status().await?,
         Command::Completions { shell } => {
             use clap::CommandFactory;
@@ -268,7 +275,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Env { args, environment } => commands::env(args, environment).await?,
         Command::Domains { args } => commands::domains(args).await?,
         Command::Stats { deployment } => commands::stats(deployment).await?,
-        Command::Deployments { limit } => commands::deployments(limit).await?,
+        Command::Deployments { limit, json } => commands::deployments(limit, json).await?,
         Command::Rollback { environment } => commands::rollback(environment).await?,
         Command::Open { print } => commands::open(print).await?,
         Command::Nodes { args } => commands::nodes(args).await?,
