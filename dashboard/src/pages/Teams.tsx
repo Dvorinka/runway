@@ -39,7 +39,7 @@ export default function TeamsPage() {
             People, roles, shared storage, and webhooks per team.
           </p>
         </div>
-        <form onSubmit={create} className="flex gap-2">
+        <form onSubmit={create} className="flex min-w-0 gap-2">
           <Input
             placeholder="new team name"
             value={name}
@@ -47,7 +47,7 @@ export default function TeamsPage() {
             required
             disabled={busy}
           />
-          <Button type="submit" size="sm" disabled={busy}>
+          <Button type="submit" size="sm" className="shrink-0" disabled={busy}>
             {busy ? "Creating…" : "Create team"}
           </Button>
         </form>
