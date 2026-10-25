@@ -52,8 +52,9 @@ fn build_payload(project: &Project, dep: &Deployment, event: &str, settings: &Se
                 "slug": environment.as_ref().map(|e| e.slug.clone()),
             },
             "trigger": dep.trigger,
-            "url": format!("{}://{}", settings.url_scheme,
-                dep.url(project.slug.as_deref().unwrap_or(&project.id), settings)),
+            // dep.url() already carries the scheme — wrapping it again
+            // produced https://https://… (devpush builds scheme://slug.domain).
+            "url": dep.url(project.slug.as_deref().unwrap_or(&project.id), settings),
             "created_at": dep.created_at.to_rfc3339(),
             "concluded_at": dep.concluded_at.map(|t| t.to_rfc3339()),
         },
@@ -183,4 +184,93 @@ pub async fn send_for_ids(
     };
     send_deployment_webhooks(db, crypto, settings, &project, &dep, event).await;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::test_settings;
+
+    fn project() -> Project {
+        let now = chrono::Utc::now();
+        Project {
+            id: "p1".into(),
+            team_id: "t1".into(),
+            name: "proj".into(),
+            slug: Some("proj".into()),
+            description: String::new(),
+            repo_provider: "github".into(),
+            repo_id: Some(1),
+            repo_full_name: "o/r".into(),
+            repo_base_url: "https://github.com".into(),
+            repo_branch: "main".into(),
+            repo_status: "active".into(),
+            github_installation_id: None,
+            gitea_connection_id: None,
+            gitlab_connection_id: None,
+            bitbucket_connection_id: None,
+            remote_node_id: None,
+            has_avatar: false,
+            config: json!({}),
+            environments: json!([
+                { "id": "prod", "name": "Production", "slug": "production",
+                  "branch": "main", "status": "active" },
+            ]),
+            env_vars: String::new(),
+            status: "active".into(),
+            created_by_user_id: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[test]
+    fn payload_url_is_single_schemed_immutable_url() {
+        let s = test_settings();
+        let p = project();
+        let mut d = Deployment {
+            id: "d0123456789abcdef".into(),
+            project_id: "p1".into(),
+            repo_provider: "github".into(),
+            repo_id: 1,
+            repo_full_name: "o/r".into(),
+            repo_base_url: "https://github.com".into(),
+            environment_id: "prod".into(),
+            branch: "main".into(),
+            commit_sha: "abc".into(),
+            commit_meta: json!({"message": "m", "author": "a"}),
+            config: json!({}),
+            image: None,
+            env_vars: String::new(),
+            job_id: None,
+            error: None,
+            container_id: None,
+            container_status: None,
+            observed_status: None,
+            observed_exit_code: None,
+            observed_at: None,
+            observed_reason: None,
+            observed_last_seen_at: None,
+            observed_missing_count: 0,
+            status: "deploy".into(),
+            conclusion: None,
+            trigger: "user".into(),
+            remote_node_id: None,
+            remote_port: None,
+            created_by_user_id: None,
+            created_at: chrono::Utc::now(),
+            concluded_at: None,
+        };
+        let payload = build_payload(&p, &d, "started", &s);
+        let url = payload["deployment"]["url"].as_str().unwrap();
+        // Regression: dep.url() already includes the scheme — a second
+        // wrap produced "https://https://…".
+        assert_eq!(url.matches("://").count(), 1, "double scheme: {url}");
+        assert_eq!(url, d.url(p.slug.as_deref().unwrap(), &s));
+        assert!(url.starts_with(&format!("{}://", s.url_scheme)));
+        assert!(url.contains("-id-d012345"));
+        d.conclusion = Some("failed".into());
+        let p2 = build_payload(&p, &d, "failed", &s);
+        assert_eq!(p2["event"], "deployment.failed");
+    }
 }
