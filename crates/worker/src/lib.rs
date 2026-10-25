@@ -13,6 +13,7 @@ pub mod cron;
 pub mod deploy;
 pub mod jobs;
 pub mod monitor;
+pub mod retention;
 pub mod storage;
 pub mod tunnel;
 
@@ -170,8 +171,9 @@ pub async fn run(
     let monitor_ctx = ctx.clone();
     tokio::spawn(async move { monitor::run(monitor_ctx).await });
 
-    cron::spawn(ctx);
+    cron::spawn(ctx.clone());
+    retention::spawn(ctx);
 
-    tracing::info!("worker loops started (jobs, monitor, cron)");
+    tracing::info!("worker loops started (jobs, monitor, cron, retention)");
     Ok(())
 }
