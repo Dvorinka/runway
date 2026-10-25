@@ -82,6 +82,23 @@ Two ways to get traffic in:
 > (API runs in-container) or a Linux host with the daemon on
 > `/var/run/docker.sock` — both reach bridge IPs natively.
 
+## Git providers
+
+Push-to-deploy hooks for self-hosted forges. Each provider's inbound
+webhook is armed by its own secret env var:
+
+- `GITEA_WEBHOOK_SECRET` (shared by Forgejo), `GITLAB_WEBHOOK_SECRET`,
+  `BITBUCKET_WEBHOOK_SECRET` — point the repo's hook at
+  `{scheme}://{APP_HOSTNAME}/api/{provider}/webhook` with the same
+  secret. Gitea signs with `X-Gitea-Signature` (HMAC-SHA256 hex); the
+  handler verifies before touching the payload.
+- Self-hosted Gitea blocks private-IP webhook targets by default —
+  set `webhook.ALLOWED_HOST_LIST` in `app.ini` (e.g. `*` or your host's
+  subnet) or deliveries are denied before they leave the forge.
+- The hook URL must be reachable *from the forge*, so `localhost`
+  only works when both share a network namespace; use the LAN IP or
+  `host.docker.internal` for containerized forges.
+
 ## Remote Docker nodes
 
 The easy path needs one command on the machine. Settings → Remote Docker
