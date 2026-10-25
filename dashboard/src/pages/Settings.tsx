@@ -669,6 +669,9 @@ function Nodes() {
               <span className="ml-2 font-mono text-xs text-muted-foreground">
                 {n.host} · {n.docker_url}
               </span>
+              <span className="ml-2 text-xs text-muted-foreground">
+                last seen {timeAgo(n.updated_at)}
+              </span>
               {n.meta && Object.keys(n.meta).length > 0 && (
                 <span className="ml-2 hidden sm:inline text-xs text-muted-foreground">
                   {[

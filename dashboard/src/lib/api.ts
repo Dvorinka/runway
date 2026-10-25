@@ -139,6 +139,7 @@ export interface RemoteNode {
   max_deployments: number | null;
   tls: boolean;
   meta: Record<string, unknown> | null;
+  updated_at: string;
 }
 
 export interface NodeToken {

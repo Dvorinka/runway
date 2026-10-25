@@ -11,3 +11,6 @@ __pycache__/
 screenshots/
 /*.png
 OVERNIGHT-PROMPT.md
+
+# vite pre-bundle cache
+dashboard/.vite/

@@ -724,18 +724,19 @@ pub async fn nodes(mut args: Vec<String>) -> anyhow::Result<()> {
                     meta["cpus"].as_u64().map(|c| format!("{c} cpu")),
                     meta["mem_bytes"]
                         .as_u64()
-                        .map(|m| format!("{:.1} GB", m as f64 / 1e9)),
+                        .map(|m| format!("{:.1} GiB", m as f64 / 1073741824.0)),
                 ]
                 .into_iter()
                 .flatten()
                 .collect::<Vec<_>>()
                 .join(" · ");
                 println!(
-                    "  {:<16} {:<8} {:<32} {}",
+                    "  {:<16} {:<8} {:<32} {} · seen {}",
                     n["name"].as_str().unwrap_or(""),
                     n["status"].as_str().unwrap_or("?"),
                     n["docker_url"].as_str().unwrap_or(""),
                     inv,
+                    n["updated_at"].as_str().map(ago).unwrap_or_default(),
                 );
             }
         }
@@ -834,6 +835,23 @@ fn strip_json_flag(args: &mut Vec<String>) -> bool {
     let had = args.iter().any(|a| a == "--json");
     args.retain(|a| a != "--json");
     had
+}
+
+/// RFC3339 → "5m ago" / "2h ago" / "3d ago"; falls back to the date prefix.
+fn ago(iso: &str) -> String {
+    let Ok(t) = chrono::DateTime::parse_from_rfc3339(iso) else {
+        return iso.get(..10).unwrap_or(iso).to_string();
+    };
+    let s = chrono::Utc::now()
+        .signed_duration_since(t)
+        .num_seconds()
+        .max(0);
+    match s {
+        0..=89 => "just now".into(),
+        90..=3599 => format!("{}m ago", s / 60),
+        3600..=86399 => format!("{}h ago", s / 3600),
+        _ => format!("{}d ago", s / 86400),
+    }
 }
 
 fn print_json(v: &Value) -> anyhow::Result<()> {
