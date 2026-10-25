@@ -420,11 +420,11 @@ export const api = {
   projectLogs: (projectId: string, tail = 300) =>
     fetch(`/api/v1/projects/${projectId}/logs?tail=${tail}`, {
       credentials: "include",
-    }).then((r) => r.text()),
+    }).then((r) => (r.ok ? r.text() : Promise.reject(new Error(`logs ${r.status}`)))),
   deploymentLogs: (id: string, tail = 500) =>
     fetch(`/api/v1/deployments/${id}/logs?tail=${tail}`, {
       credentials: "include",
-    }).then((r) => r.text()),
+    }).then((r) => (r.ok ? r.text() : Promise.reject(new Error(`logs ${r.status}`)))),
   redeploy: (id: string) =>
     req<Deployment>(`/api/v1/deployments/${id}/redeploy`, { method: "POST" }),
   rollback: (projectId: string, envId: string) =>

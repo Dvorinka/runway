@@ -1,8 +1,8 @@
 import { api, deploymentLogsStream, type Deployment } from "@/lib/api";
-import { Badge, Button, Menu, Skeleton, StatusDot, displayStatus, isRunning, type MenuItem } from "@/components/ui";
+import { Badge, Button, EmptyState, Menu, Skeleton, StatusDot, displayStatus, isRunning, type MenuItem } from "@/components/ui";
 import { Ansi } from "@/lib/ansi";
 import { cn, duration, elapsed, firstLine, fmtBytes, timeAgo } from "@/lib/utils";
-import { ArrowUpToLine, Copy, FolderTree, Globe, History, ListPlus, RefreshCw, Repeat } from "lucide-react";
+import { ArrowUpToLine, Copy, FolderTree, Globe, History, ListPlus, RefreshCw, Repeat, Rocket } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 
@@ -634,7 +634,7 @@ function Stepper({ dep }: { dep: Deployment }) {
 
 export default function DeploymentPage() {
   const { id = "" } = useParams();
-  const [dep, setDep] = useState<Deployment | null>(null);
+  const [dep, setDep] = useState<Deployment | null | undefined>(undefined);
   const [lines, setLines] = useState<string[]>([]);
   const [filter, setFilter] = useState("");
   const [copied, setCopied] = useState(false);
@@ -650,7 +650,7 @@ export default function DeploymentPage() {
   const logRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    api.deployment(id).then(setDep).catch(() => {});
+    api.deployment(id).then(setDep).catch(() => setDep(null));
 
     // Logs come from two sources that overlap: the REST tail and the
     // SSE stream (which replays the tail as history before live lines,
@@ -692,6 +692,18 @@ export default function DeploymentPage() {
   useEffect(() => {
     if (following) logRef.current?.scrollTo(0, logRef.current.scrollHeight);
   }, [lines, following]);
+
+  if (dep === null) {
+    return (
+      <div className="page-enter mx-auto max-w-5xl p-4 sm:p-8">
+        <EmptyState
+          icon={Rocket}
+          title="Deployment not found"
+          hint="The deployment was pruned, or the link is wrong."
+        />
+      </div>
+    );
+  }
 
   function onLogScroll() {
     const el = logRef.current;
