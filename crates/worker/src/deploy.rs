@@ -1458,7 +1458,7 @@ async fn post_commit_status(
 /// Resolve the daemon a deployment's container lives on.
 async fn dep_docker(ctx: &Ctx, remote_node_id: Option<&str>) -> Option<bollard::Docker> {
     match remote_node_id {
-        Some(nid) => dkr::node_client(&ctx.db, nid).await,
+        Some(nid) => dkr::node_client(&ctx.db, nid, &ctx.crypto).await,
         None => Some(ctx.docker.clone()),
     }
 }
