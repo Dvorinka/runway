@@ -23,6 +23,12 @@ runway nodes add --command        # print the one-line enroll command
 runway nodes approve <id|name>    # admit a waiting node
 ```
 
+`--json` on the read commands (`projects`, `deployments`, `env`,
+`domains`, `nodes`, `whoami`, `status`, `stats`) prints the raw API
+payload for scripts. Destructive commands (`nodes rm`,
+`domains remove`) ask for typed confirmation on a TTY and require
+`--yes` when piped.
+
 Auth config: `~/.config/runway`. Install via release tarball, the npm
 wrapper (`npm i -g @tdvorakdev/runway`), or Homebrew
 (`homebrew/runway.rb`).
