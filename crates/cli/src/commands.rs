@@ -338,9 +338,28 @@ pub async fn redeploy(deployment: Option<String>, follow: bool) -> anyhow::Resul
     Ok(())
 }
 
+fn is_id(s: &str) -> bool {
+    s.len() == 32 && s.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// name/slug → id, from the user's visible project list.
+async fn resolve_project(client: &Client, want: &str) -> anyhow::Result<String> {
+    let res = client.get("/api/v1/projects").await?;
+    res["projects"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .find(|j| j["name"].as_str() == Some(want) || j["slug"].as_str() == Some(want))
+        .and_then(|j| j["id"].as_str().map(String::from))
+        .with_context(|| format!("no project named {want}"))
+}
+
 pub async fn link(project: Option<String>) -> anyhow::Result<()> {
     let client = Client::from_config()?;
     let project_id = match project {
+        // Names and slugs resolve through the list — the API keys by id.
+        Some(p) if !is_id(&p) => resolve_project(&client, &p).await?,
         Some(p) => p,
         None => {
             let res = client.get("/api/v1/projects").await?;
@@ -352,8 +371,13 @@ pub async fn link(project: Option<String>) -> anyhow::Result<()> {
                     p["name"].as_str().unwrap_or("?")
                 );
             }
-            prompt("Project ID to link: ")?
+            prompt("Project name or ID to link: ")?
         }
+    };
+    let project_id = if is_id(&project_id) {
+        project_id
+    } else {
+        resolve_project(&client, &project_id).await?
     };
     let p = client
         .get(&format!("/api/v1/projects/{project_id}"))
