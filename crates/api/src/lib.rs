@@ -87,9 +87,25 @@ pub fn router(state: AppState) -> Router {
             post(routes::admin::check_node),
         )
         .route(
+            "/api/v1/admin/nodes/{id}/approve",
+            post(routes::admin::approve_node),
+        )
+        .route(
             "/api/v1/admin/nodes/{id}/tls",
             post(routes::admin::provision_node_tls).delete(routes::admin::clear_node_tls),
         )
+        .route(
+            "/api/v1/admin/nodes/tokens",
+            get(routes::admin::list_node_tokens).post(routes::admin::create_node_token),
+        )
+        .route(
+            "/api/v1/admin/nodes/tokens/{id}",
+            axum::routing::delete(routes::admin::revoke_node_token),
+        )
+        // Token-gated node checkin — no session; the rnod_ token is the auth.
+        .route("/api/v1/nodes/checkin", post(routes::admin::node_checkin))
+        // The install script itself, version-locked with the binary.
+        .route("/install-node.sh", get(node_install_script))
         // GitHub integration — webhook + app-manifest registration
         .route("/api/github/webhook", post(routes::github::webhook))
         .route("/api/v1/github/app/status", get(routes::github::app_status))
@@ -398,4 +414,13 @@ pub fn router(state: AppState) -> Router {
 
 async fn health() -> Json<serde_json::Value> {
     Json(json!({ "status": "ok", "service": "runway" }))
+}
+
+/// `GET /install-node.sh` — the fleet-enrollment installer, embedded so
+/// the served copy always matches the binary's checkin contract.
+async fn node_install_script() -> impl axum::response::IntoResponse {
+    (
+        [(axum::http::header::CONTENT_TYPE, "text/x-shellscript")],
+        include_str!("../../../scripts/node-install.sh"),
+    )
 }

@@ -18,6 +18,9 @@ runway domains add app.example.com
 runway domains assign-cf app.example.com
 runway rollback                   # instant alias re-point to previous deploy
 runway open                       # current deployment URL
+runway nodes ls                   # remote Docker nodes + status
+runway nodes add --command        # print the one-line enroll command
+runway nodes approve <id|name>    # admit a waiting node
 ```
 
 Auth config: `~/.config/runway`. Install via release tarball, the npm

@@ -133,6 +133,11 @@ enum Command {
         #[arg(long)]
         print: bool,
     },
+    /// Manage remote Docker nodes: nodes [ls|add --command|approve <id|name>|rm <id|name>|token ls|token rm <id>].
+    Nodes {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Restrict sign-up: allowlist-add [--email E | --domain D | --pattern P].
     /// Empty allowlist means open registration; adding any rule restricts it.
     AllowlistAdd {
@@ -266,6 +271,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Deployments { limit } => commands::deployments(limit).await?,
         Command::Rollback { environment } => commands::rollback(environment).await?,
         Command::Open { print } => commands::open(print).await?,
+        Command::Nodes { args } => commands::nodes(args).await?,
     }
 
     Ok(())

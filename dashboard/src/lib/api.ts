@@ -138,6 +138,15 @@ export interface RemoteNode {
   status: string;
   max_deployments: number | null;
   tls: boolean;
+  meta: Record<string, unknown> | null;
+}
+
+export interface NodeToken {
+  id: string;
+  name: string;
+  expires_at: string;
+  revoked: boolean;
+  expired: boolean;
 }
 
 export interface NodeTlsProvision {
@@ -620,6 +629,16 @@ export const api = {
     req<NodeTlsProvision>(`/api/v1/admin/nodes/${id}/tls`, { method: "POST" }),
   clearNodeTls: (id: string) =>
     req<void>(`/api/v1/admin/nodes/${id}/tls`, { method: "DELETE" }),
+  createNodeToken: (body: { name?: string; expires_hours?: number }) =>
+    req<{ id: string; token: string; expires_hours: number }>("/api/v1/admin/nodes/tokens", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  listNodeTokens: () => req<{ tokens: NodeToken[] }>("/api/v1/admin/nodes/tokens"),
+  revokeNodeToken: (id: string) =>
+    req<void>(`/api/v1/admin/nodes/tokens/${id}`, { method: "DELETE" }),
+  approveNode: (id: string) =>
+    req<RemoteNode>(`/api/v1/admin/nodes/${id}/approve`, { method: "POST" }),
 
   teams: () => req<{ teams: Team[] }>("/api/v1/teams"),
   createTeam: (name: string) =>

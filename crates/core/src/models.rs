@@ -693,6 +693,11 @@ pub struct RemoteNode {
     pub labels: Value,
     pub status: String,
     pub max_deployments: i32,
+    /// Inventory the node reported at enrollment (docker version, arch,
+    /// cpu/mem, source IP). Display-only — never trusted for scheduling.
+    pub meta: Value,
+    /// Which enrollment token brought the node in, if any.
+    pub token_id: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
