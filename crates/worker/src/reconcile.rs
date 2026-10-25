@@ -146,5 +146,40 @@ async fn tick(ctx: &Ctx) -> anyhow::Result<()> {
             );
         }
     }
+
+    sweep_nodes(ctx).await;
     Ok(())
+}
+
+/// Keep `remote_node.status`/`updated_at` honest between manual checks:
+/// probe every active node with a bounded ping. `waiting` and
+/// `disabled` are skipped — approval and enablement own those.
+/// jarvis: ceiling — sequential probes, upgrade to a JoinSet if fleets grow
+async fn sweep_nodes(ctx: &Ctx) {
+    let nodes: Vec<runway_core::models::RemoteNode> =
+        match sqlx::query_as("SELECT * FROM remote_node WHERE status IN ('online','offline')")
+            .fetch_all(&ctx.db)
+            .await
+        {
+            Ok(n) => n,
+            Err(e) => {
+                tracing::warn!(error = %e, "node sweep query failed");
+                return;
+            }
+        };
+    for n in nodes {
+        let up = match dkr::node_client(&ctx.db, &n.id, &ctx.crypto).await {
+            Some(c) => tokio::time::timeout(std::time::Duration::from_secs(10), c.ping())
+                .await
+                .map(|r| r.is_ok())
+                .unwrap_or(false),
+            None => false,
+        };
+        let status = if up { "online" } else { "offline" };
+        let _ = sqlx::query("UPDATE remote_node SET status = $2, updated_at = now() WHERE id = $1")
+            .bind(&n.id)
+            .bind(status)
+            .execute(&ctx.db)
+            .await;
+    }
 }
