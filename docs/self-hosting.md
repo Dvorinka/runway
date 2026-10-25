@@ -57,6 +57,10 @@ reports which are on):
 - **OIDC** (`OIDC_*`) — enterprise SSO, discovery-URL driven.
 - **TOTP 2FA** — per-user, in Settings; no env needed.
 
+Auth endpoints are throttled in-process: five failed password or TOTP
+attempts lock the account for 15 minutes (`429`), and magic-link mail
+is limited to one send per address per minute.
+
 ## Networking
 
 Two ways to get traffic in:
