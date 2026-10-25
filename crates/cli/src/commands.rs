@@ -861,7 +861,7 @@ pub async fn nodes(mut args: Vec<String>) -> anyhow::Result<()> {
                     meta["cpus"].as_u64().map(|c| format!("{c} cpu")),
                     meta["mem_bytes"]
                         .as_u64()
-                        .map(|m| format!("{:.1} GB", m as f64 / 1e9)),
+                        .map(|m| format!("{:.1} GiB", m as f64 / 1073741824.0)),
                 ]
                 .into_iter()
                 .flatten()
