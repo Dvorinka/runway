@@ -801,7 +801,12 @@ function Environment({ id }: { id: string }) {
                 variant="ghost"
                 size="sm"
                 onClick={() =>
-                  api.patchEnv(id, [{ key: v.key, delete: true }]).then(load).catch(() => {})
+                  api
+                    .patchEnv(id, [
+                      { key: v.key, environment: v.environment ?? undefined, delete: true },
+                    ])
+                    .then(load)
+                    .catch(() => {})
                 }
               >
                 Remove
