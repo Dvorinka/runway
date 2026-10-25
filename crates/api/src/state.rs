@@ -18,4 +18,9 @@ pub struct AppState {
     pub logs: LogStore,
     /// Optional — Cloudflare tunnel handlers degrade when absent.
     pub docker: Option<Docker>,
+    /// Failed-login throttle: email → (failures, locked-until). In-memory —
+    /// the binary is single-process, and a restart clearing it is fine.
+    pub login_attempts: std::sync::Arc<
+        std::sync::Mutex<std::collections::HashMap<String, (u32, std::time::Instant)>>,
+    >,
 }

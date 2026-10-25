@@ -62,6 +62,25 @@ pub async fn login(
     axum::Json(body): axum::Json<LoginBody>,
 ) -> ApiResult<Response> {
     let email = body.email.trim().to_lowercase();
+    // Per-account throttle: 5 consecutive failures lock for 15 minutes.
+    const LOCK_SECS: u64 = 900;
+    {
+        let m = state
+            .login_attempts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some((fails, until)) = m.get(&email) {
+            if *fails >= 5 && std::time::Instant::now() < *until {
+                let wait = until
+                    .saturating_duration_since(std::time::Instant::now())
+                    .as_secs();
+                return Err(ApiError(
+                    axum::http::StatusCode::TOO_MANY_REQUESTS,
+                    format!("too many attempts — try again in {}m", wait / 60 + 1),
+                ));
+            }
+        }
+    }
     let user: Option<User> =
         sqlx::query_as("SELECT * FROM \"user\" WHERE email = $1 AND status = 'active'")
             .bind(&email)
@@ -77,8 +96,20 @@ pub async fn login(
             false
         });
     if !valid {
+        let mut m = state
+            .login_attempts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let e = m.entry(email).or_insert((0, std::time::Instant::now()));
+        e.0 += 1;
+        e.1 = std::time::Instant::now() + std::time::Duration::from_secs(LOCK_SECS);
         return Err(ApiError::unauthorized("invalid email or password"));
     }
+    state
+        .login_attempts
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&email);
     let user = user.unwrap();
     if user.totp_enabled {
         // Password verified — second factor required. The pending

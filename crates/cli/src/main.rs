@@ -201,6 +201,9 @@ async fn main() -> anyhow::Result<()> {
                 github,
                 logs: runway_core::logs::LogStore::new(&settings.data_dir, bus),
                 docker: runway_core::docker::connect(&settings).ok(),
+                login_attempts: std::sync::Arc::new(std::sync::Mutex::new(
+                    std::collections::HashMap::new(),
+                )),
             };
             let app = runway_api::router(state);
             let listener = tokio::net::TcpListener::bind(&settings.listen_addr).await?;
