@@ -34,17 +34,14 @@ pub struct Settings {
     pub encryption_key: String,
     /// Public IP for DNS verification hints. Optional — tunnel mode needs none.
     pub server_ip: Option<String>,
-    /// CPU quota per deployment (0 = unlimited).
-    pub default_cpus: f64,
+    /// CPU quota per deployment (unset = uncapped, devpush parity).
+    pub default_cpus: Option<f64>,
     /// Max CPU a project may request.
-    pub max_cpus: f64,
-    /// Memory limit per deployment in MB (0 = unlimited).
-    pub default_memory_mb: i64,
+    pub max_cpus: Option<f64>,
+    /// Memory limit per deployment in MB (unset = uncapped).
+    pub default_memory_mb: Option<i64>,
     /// Max memory a project may request in MB.
-    pub max_memory_mb: i64,
-    /// Allow projects to override CPU/memory via config.
-    pub allow_custom_cpu: bool,
-    pub allow_custom_memory: bool,
+    pub max_memory_mb: Option<i64>,
     /// Seconds a deployment may stay non-ready before failing.
     pub deployment_timeout_seconds: u64,
     /// Interval between monitor probe ticks.
@@ -149,12 +146,10 @@ impl Settings {
             secret_key: env_req("SECRET_KEY")?,
             encryption_key: env_or("ENCRYPTION_KEY", ""),
             server_ip: std::env::var("SERVER_IP").ok().filter(|s| !s.is_empty()),
-            default_cpus: env_f64("DEFAULT_CPUS", 0.25),
-            max_cpus: env_f64("MAX_CPUS", 4.0),
-            default_memory_mb: env_i64("DEFAULT_MEMORY_MB", 512),
-            max_memory_mb: env_i64("MAX_MEMORY_MB", 8192),
-            allow_custom_cpu: env_bool("ALLOW_CUSTOM_CPU", true),
-            allow_custom_memory: env_bool("ALLOW_CUSTOM_MEMORY", true),
+            default_cpus: opt("DEFAULT_CPUS").and_then(|v| v.parse().ok()),
+            max_cpus: opt("MAX_CPUS").and_then(|v| v.parse().ok()),
+            default_memory_mb: opt("DEFAULT_MEMORY_MB").and_then(|v| v.parse().ok()),
+            max_memory_mb: opt("MAX_MEMORY_MB").and_then(|v| v.parse().ok()),
             deployment_timeout_seconds: env_u64("DEPLOYMENT_TIMEOUT_SECONDS", 300),
             monitor_interval_seconds: env_u64("MONITOR_INTERVAL_SECONDS", 2),
             container_delete_grace_seconds: env_u64("CONTAINER_DELETE_GRACE_SECONDS", 30),
@@ -270,13 +265,6 @@ fn env_i64(key: &str, default: i64) -> i64 {
         .unwrap_or(default)
 }
 
-fn env_f64(key: &str, default: f64) -> f64 {
-    std::env::var(key)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(default)
-}
-
 #[cfg(test)]
 pub(crate) fn test_settings() -> Settings {
     Settings {
@@ -293,12 +281,10 @@ pub(crate) fn test_settings() -> Settings {
         secret_key: "test-secret".into(),
         encryption_key: "test-encryption-key".into(),
         server_ip: None,
-        default_cpus: 0.25,
-        max_cpus: 4.0,
-        default_memory_mb: 512,
-        max_memory_mb: 8192,
-        allow_custom_cpu: true,
-        allow_custom_memory: true,
+        default_cpus: None,
+        max_cpus: None,
+        default_memory_mb: None,
+        max_memory_mb: None,
         deployment_timeout_seconds: 300,
         monitor_interval_seconds: 2,
         container_delete_grace_seconds: 30,
