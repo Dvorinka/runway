@@ -540,10 +540,15 @@ function Nodes() {
   const [install, setInstall] = useState<{ cmd: string; hours: number } | null>(null);
   const [copied, setCopied] = useState(false);
   const [manual, setManual] = useState(false);
+  const [confirmDel, setConfirmDel] = useState<string | null>(null);
 
   const load = () => api.nodes().then((r) => setNodes(r.nodes)).catch((e) => setError(e.message));
   useEffect(() => {
     load();
+    // The reconcile loop sweeps node health server-side; poll so the
+    // status badge and "last seen" stay honest without a reload.
+    const t = setInterval(load, 30_000);
+    return () => clearInterval(t);
   }, []);
 
   async function installCommand() {
@@ -694,7 +699,30 @@ function Nodes() {
                 )
               )}
               <Badge variant={n.status === "online" ? "success" : "warning"}>{n.status}</Badge>
-              {n.status === "waiting" ? (
+              {confirmDel === n.id ? (
+                <>
+                  <span className="text-xs text-muted-foreground">
+                    {n.status === "waiting" ? "Reject" : "Delete"} {n.name}?
+                  </span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    autoFocus
+                    onClick={() =>
+                      api
+                        .deleteNode(n.id)
+                        .then(load)
+                        .catch(() => {})
+                        .finally(() => setConfirmDel(null))
+                    }
+                  >
+                    Confirm
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => setConfirmDel(null)}>
+                    Cancel
+                  </Button>
+                </>
+              ) : n.status === "waiting" ? (
                 <>
                   <Button
                     variant="ghost"
@@ -703,11 +731,7 @@ function Nodes() {
                   >
                     Approve
                   </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => api.deleteNode(n.id).then(load).catch(() => {})}
-                  >
+                  <Button variant="ghost" size="sm" onClick={() => setConfirmDel(n.id)}>
                     Reject
                   </Button>
                 </>
@@ -733,11 +757,7 @@ function Nodes() {
                       mTLS
                     </Button>
                   )}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => api.deleteNode(n.id).then(load).catch(() => {})}
-                  >
+                  <Button variant="ghost" size="sm" onClick={() => setConfirmDel(n.id)}>
                     Delete
                   </Button>
                 </>
