@@ -49,7 +49,11 @@ enum Command {
         follow: bool,
     },
     /// Show the logged-in user and instance health.
-    Whoami,
+    Whoami {
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Log out this machine (delete stored credentials).
     Logout,
     /// Unlink the current directory (delete .runway/project.json).
@@ -61,7 +65,11 @@ enum Command {
         json: bool,
     },
     /// Show instance, link, project, and latest deployment status.
-    Status,
+    Status {
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Print shell completions (bash|zsh|fish|powershell|elvish).
     Completions {
         /// Shell name.
@@ -118,6 +126,9 @@ enum Command {
     Stats {
         /// Deployment ID (defaults to latest of the linked project).
         deployment: Option<String>,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// List recent deployments for the linked project.
     Deployments {
@@ -242,11 +253,11 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::Login { server, key } => commands::login(server, key).await?,
         Command::Link { project } => commands::link(project).await?,
-        Command::Whoami => commands::whoami().await?,
+        Command::Whoami { json } => commands::whoami(json).await?,
         Command::Logout => commands::logout().await?,
         Command::Unlink => commands::unlink().await?,
         Command::Projects { json } => commands::projects(json).await?,
-        Command::Status => commands::status().await?,
+        Command::Status { json } => commands::status(json).await?,
         Command::Completions { shell } => {
             use clap::CommandFactory;
             use clap_complete::{generate, shells::*};
@@ -274,7 +285,7 @@ async fn main() -> anyhow::Result<()> {
         } => commands::logs(deployment, follow, project).await?,
         Command::Env { args, environment } => commands::env(args, environment).await?,
         Command::Domains { args } => commands::domains(args).await?,
-        Command::Stats { deployment } => commands::stats(deployment).await?,
+        Command::Stats { deployment, json } => commands::stats(deployment, json).await?,
         Command::Deployments { limit, json } => commands::deployments(limit, json).await?,
         Command::Rollback { environment } => commands::rollback(environment).await?,
         Command::Open { print } => commands::open(print).await?,
