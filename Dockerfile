@@ -32,6 +32,8 @@ RUN mkdir -p crates/cli/src crates/api/src crates/core/src crates/worker/src \
 
 COPY crates crates
 COPY migrations migrations
+# Embedded by include_str! in the API (node enrollment installer).
+COPY scripts/node-install.sh scripts/node-install.sh
 # COPY preserves checkout mtimes (often older than the stub build above),
 # and `cargo clean -p` no longer invalidates the workspace units (verified:
 # clean reports "Removed 0 files" and the next build is a silent no-op that
