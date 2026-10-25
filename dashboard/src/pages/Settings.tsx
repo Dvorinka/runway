@@ -545,6 +545,10 @@ function Nodes() {
   const load = () => api.nodes().then((r) => setNodes(r.nodes)).catch((e) => setError(e.message));
   useEffect(() => {
     load();
+    // The reconcile loop sweeps node health server-side; poll so the
+    // status badge and "last seen" stay honest without a reload.
+    const t = setInterval(load, 30_000);
+    return () => clearInterval(t);
   }, []);
 
   async function installCommand() {
