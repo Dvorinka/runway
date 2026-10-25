@@ -537,11 +537,28 @@ function Nodes() {
   const [url, setUrl] = useState("");
   const [error, setError] = useState("");
   const [bundle, setBundle] = useState<NodeTlsProvision | null>(null);
+  const [install, setInstall] = useState<{ cmd: string; hours: number } | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [manual, setManual] = useState(false);
 
   const load = () => api.nodes().then((r) => setNodes(r.nodes)).catch((e) => setError(e.message));
   useEffect(() => {
     load();
   }, []);
+
+  async function installCommand() {
+    setError("");
+    try {
+      const t = await api.createNodeToken({ expires_hours: 24 });
+      const origin = window.location.origin;
+      setInstall({
+        cmd: `curl -fsSL ${origin}/install-node.sh | sudo RUNWAY_URL=${origin} RUNWAY_TOKEN=${t.token} sh`,
+        hours: t.expires_hours,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "failed");
+    }
+  }
 
   async function provision(id: string) {
     setError("");
@@ -557,7 +574,10 @@ function Nodes() {
     e.preventDefault();
     setError("");
     try {
-      await api.createNode({ name, host, docker_url: url });
+      // New rows start life claiming "online" — probe immediately so the
+      // badge never lies longer than a request round-trip.
+      const created = await api.createNode({ name, host, docker_url: url });
+      if (created?.id) await api.checkNode(created.id).catch(() => {});
       setName("");
       setHost("");
       setUrl("");
@@ -570,70 +590,155 @@ function Nodes() {
   return (
     <Card className="p-5">
       <SectionHead icon={Server} title="Remote Docker nodes">
-        Deploy projects to remote Docker daemons. Containers publish a host port that Traefik
-        routes to — the node must be network-reachable from this instance.
+        Deploy projects to remote Docker daemons. Run one command on the machine — it installs
+        Docker if needed, configures mTLS, and the node lands here waiting for approval.
       </SectionHead>
-      <form onSubmit={add} className="mb-4 grid grid-cols-1 sm:grid-cols-[1fr_1fr_1.5fr_auto] gap-2">
-        <Input placeholder="name" value={name} onChange={(e) => setName(e.target.value)} required />
-        <Input
-          placeholder="node.example.com"
-          value={host}
-          onChange={(e) => setHost(e.target.value)}
-          required
-        />
-        <Input
-          placeholder="tcp://node.example.com:2375"
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          required
-        />
-        <Button type="submit" size="sm">
-          Add node
+
+      <div className="mb-4 flex items-center gap-2">
+        <Button size="sm" onClick={installCommand}>
+          Get install command
         </Button>
-      </form>
+        <Button variant="ghost" size="sm" onClick={() => setManual(!manual)}>
+          {manual ? "Hide manual setup" : "Manual setup"}
+        </Button>
+      </div>
+
+      {install && (
+        <div className="mb-4 rounded-md border border-border bg-muted/30 p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <p className="text-xs font-medium">
+              Run on the node — the embedded token expires in {install.hours}h
+            </p>
+            <div className="flex gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() =>
+                  navigator.clipboard.writeText(install.cmd).then(() => {
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 1500);
+                  })
+                }
+              >
+                {copied ? "Copied" : "Copy"}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setInstall(null)}>
+                Dismiss
+              </Button>
+            </div>
+          </div>
+          <pre className="overflow-auto rounded bg-background p-3 font-mono text-[11px] whitespace-pre-wrap">
+            {install.cmd}
+          </pre>
+          <p className="mt-2 text-xs text-muted-foreground">
+            The machine checks in and appears below as <em>waiting</em> — approve it to start
+            routing deployments.
+          </p>
+        </div>
+      )}
+
+      {manual && (
+        <form onSubmit={add} className="mb-4 grid grid-cols-1 sm:grid-cols-[1fr_1fr_1.5fr_auto] gap-2">
+          <Input placeholder="name" value={name} onChange={(e) => setName(e.target.value)} required />
+          <Input
+            placeholder="node.example.com"
+            value={host}
+            onChange={(e) => setHost(e.target.value)}
+            required
+          />
+          <Input
+            placeholder="tcp://node.example.com:2375"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            required
+          />
+          <Button type="submit" size="sm">
+            Add node
+          </Button>
+        </form>
+      )}
       {error && <p className="mb-3 text-xs text-destructive">{error}</p>}
       <div className="grid grid-cols-1 gap-2">
         {nodes.map((n) => (
           <div
             key={n.id}
-            className="flex items-center justify-between rounded-md border border-border px-3 py-2"
+            className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-md border border-border px-3 py-2"
           >
-            <div className="text-sm">
+            <div className="min-w-0 text-sm">
               {n.name}
               <span className="ml-2 font-mono text-xs text-muted-foreground">
                 {n.host} · {n.docker_url}
               </span>
-            </div>
-            <div className="flex items-center gap-2">
-              {n.tls && <Badge variant="success">mTLS</Badge>}
-              <Badge variant={n.status === "online" ? "success" : "warning"}>{n.status}</Badge>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => api.checkNode(n.id).then(load).catch(() => {})}
-              >
-                Check
-              </Button>
-              {n.tls ? (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => api.clearNodeTls(n.id).then(load).catch(() => {})}
-                >
-                  Clear TLS
-                </Button>
-              ) : (
-                <Button variant="ghost" size="sm" onClick={() => provision(n.id)}>
-                  mTLS
-                </Button>
+              {n.meta && Object.keys(n.meta).length > 0 && (
+                <span className="ml-2 hidden sm:inline text-xs text-muted-foreground">
+                  {[
+                    n.meta.arch,
+                    n.meta.docker_version && `docker ${n.meta.docker_version}`,
+                    n.meta.cpus && `${n.meta.cpus} cpu`,
+                    typeof n.meta.mem_bytes === "number" && fmtBytes(n.meta.mem_bytes),
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </span>
               )}
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => api.deleteNode(n.id).then(load).catch(() => {})}
-              >
-                Delete
-              </Button>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              {n.tls ? (
+                <Badge variant="success">mTLS</Badge>
+              ) : (
+                n.docker_url.startsWith("tcp://") && (
+                  <Badge variant="warning">plaintext</Badge>
+                )
+              )}
+              <Badge variant={n.status === "online" ? "success" : "warning"}>{n.status}</Badge>
+              {n.status === "waiting" ? (
+                <>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => api.approveNode(n.id).then(load).catch(() => {})}
+                  >
+                    Approve
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => api.deleteNode(n.id).then(load).catch(() => {})}
+                  >
+                    Reject
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => api.checkNode(n.id).then(load).catch(() => {})}
+                  >
+                    Check
+                  </Button>
+                  {n.tls ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => api.clearNodeTls(n.id).then(load).catch(() => {})}
+                    >
+                      Clear TLS
+                    </Button>
+                  ) : (
+                    <Button variant="ghost" size="sm" onClick={() => provision(n.id)}>
+                      mTLS
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => api.deleteNode(n.id).then(load).catch(() => {})}
+                  >
+                    Delete
+                  </Button>
+                </>
+              )}
             </div>
           </div>
         ))}

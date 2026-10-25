@@ -99,6 +99,11 @@ impl Client {
         }
     }
 
+    /// Configured instance base URL — used to compose user-facing links.
+    pub fn base_url(&self) -> &str {
+        &self.base
+    }
+
     fn url(&self, path: &str) -> String {
         format!("{}{}", self.base, path)
     }
