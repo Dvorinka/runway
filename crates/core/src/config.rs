@@ -49,6 +49,8 @@ pub struct Settings {
     pub deployment_timeout_seconds: u64,
     /// Interval between monitor probe ticks.
     pub monitor_interval_seconds: u64,
+    /// Interval between observed-state reconcile sweeps (non-live rows).
+    pub reconcile_interval_seconds: u64,
     /// Seconds before a stopped container is deleted.
     pub container_delete_grace_seconds: u64,
     /// Docker restart policy for runner containers.
@@ -157,6 +159,7 @@ impl Settings {
             allow_custom_memory: env_bool("ALLOW_CUSTOM_MEMORY", true),
             deployment_timeout_seconds: env_u64("DEPLOYMENT_TIMEOUT_SECONDS", 300),
             monitor_interval_seconds: env_u64("MONITOR_INTERVAL_SECONDS", 2),
+            reconcile_interval_seconds: env_u64("RECONCILE_INTERVAL_SECONDS", 60),
             container_delete_grace_seconds: env_u64("CONTAINER_DELETE_GRACE_SECONDS", 15),
             deployment_restart_policy: env_or("DEPLOYMENT_RESTART_POLICY", "on-failure"),
             deployment_restart_max_retries: env_i64("DEPLOYMENT_RESTART_MAX_RETRIES", 5),
@@ -301,6 +304,7 @@ pub(crate) fn test_settings() -> Settings {
         allow_custom_memory: true,
         deployment_timeout_seconds: 300,
         monitor_interval_seconds: 2,
+        reconcile_interval_seconds: 60,
         container_delete_grace_seconds: 15,
         deployment_restart_policy: "on-failure".into(),
         deployment_restart_max_retries: 5,
