@@ -108,9 +108,9 @@ enum Command {
         #[arg(long)]
         preset: Option<String>,
     },
-    /// Manage environment variables: env [list|set KEY=VAL|unset KEY|pull [file]|push [file]].
+    /// Manage environment variables: env [list|set K=V|unset K|pull [file]|push [file]|diff <a> <b>].
     Env {
-        /// list | set KEY=VALUE | unset KEY | pull [file] | push [file]
+        /// list | set KEY=VALUE | unset KEY | pull [file] | push [file] | diff <env-a> <env-b>
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
         /// Environment slug to scope the variable to.

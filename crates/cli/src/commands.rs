@@ -469,12 +469,28 @@ pub async fn rollback(environment: String) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `runway env list | set KEY=VAL | unset KEY`.
+/// `runway env list | set K=V | unset K | pull [file] | push [file] | diff <a> <b>`.
 pub async fn env(mut args: Vec<String>, environment: Option<String>) -> anyhow::Result<()> {
     let client = Client::from_config()?;
     let link = client::load_link()?;
     let base = format!("/api/v1/projects/{}/env", link.project_id);
     let json_out = strip_json_flag(&mut args);
+    // `env set K=V --environment prod` is the natural spelling, but
+    // trailing_var_arg would swallow the flag — rescue it here.
+    let environment = environment.or_else(|| {
+        let pos = args
+            .iter()
+            .position(|a| a == "--environment" || a == "-e" || a.starts_with("--environment="))?;
+        if let Some((_, v)) = args[pos].split_once('=') {
+            let v = v.to_string();
+            args.remove(pos);
+            Some(v)
+        } else {
+            let val = args.get(pos + 1)?.clone();
+            args.drain(pos..=pos + 1);
+            Some(val)
+        }
+    });
 
     match args.first().map(String::as_str) {
         None | Some("list") => {
@@ -622,7 +638,77 @@ pub async fn env(mut args: Vec<String>, environment: Option<String>) -> anyhow::
                 if vars.len() == 1 { "" } else { "s" }
             );
         }
-        Some(other) => bail!("unknown env action '{other}' — list|set|unset|pull|push"),
+        // `runway env diff <a> <b>` — key-presence diff between two
+        // environments. Values stay masked server-side; shared
+        // (unscoped) vars count toward both sides.
+        Some("diff") => {
+            let (a, b) = (
+                args.get(1)
+                    .context("usage: runway env diff <env-a> <env-b>")?,
+                args.get(2)
+                    .context("usage: runway env diff <env-a> <env-b>")?,
+            );
+            let res = client.get(&base).await?;
+            let vars = res["env"].as_array().cloned().unwrap_or_default();
+            // Scopes are stored as-passed — a var may reference an env by
+            // id or slug. Resolve each side to {id, slug} and match both.
+            let proj = client
+                .get(&format!("/api/v1/projects/{}", link.project_id))
+                .await?;
+            let env_aliases = |want: &str| -> Vec<String> {
+                proj["environments"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|e| {
+                        e["id"].as_str() == Some(want)
+                            || e["slug"].as_str() == Some(want)
+                            || e["name"].as_str().map(|n| n.eq_ignore_ascii_case(want))
+                                == Some(true)
+                    })
+                    .flat_map(|e| {
+                        [e["id"].as_str(), e["slug"].as_str()]
+                            .into_iter()
+                            .flatten()
+                            .map(String::from)
+                            .collect::<Vec<_>>()
+                    })
+                    .collect()
+            };
+            let keys_for = |env: &str| -> std::collections::BTreeSet<String> {
+                let aliases = env_aliases(env);
+                vars.iter()
+                    .filter(|v| {
+                        v["environment"]
+                            .as_str()
+                            .is_none_or(|e| e == env || aliases.iter().any(|a| a == e))
+                    })
+                    .filter_map(|v| v["key"].as_str().map(String::from))
+                    .collect()
+            };
+            let (ka, kb) = (keys_for(a), keys_for(b));
+            let only_a: Vec<&String> = ka.difference(&kb).collect();
+            let only_b: Vec<&String> = kb.difference(&ka).collect();
+            if json_out {
+                return print_json(&json!({
+                    "a": a, "b": b,
+                    "only_in_a": only_a, "only_in_b": only_b,
+                    "shared": ka.intersection(&kb).count(),
+                }));
+            }
+            if only_a.is_empty() && only_b.is_empty() {
+                println!("{a} and {b} have identical keys ({} shared).", ka.len());
+                return Ok(());
+            }
+            for k in &only_a {
+                println!("only in {a}: {k}");
+            }
+            for k in &only_b {
+                println!("only in {b}: {k}");
+            }
+        }
+        Some(other) => bail!("unknown env action '{other}' — list|set|unset|pull|push|diff"),
     }
     Ok(())
 }
