@@ -666,7 +666,7 @@ pub async fn stats(
         return Ok(Json(json!({ "running": false })).into_response());
     };
     let docker = if let Some(nid) = dep.remote_node_id.as_deref() {
-        match runway_core::docker::node_client(&state.db, nid).await {
+        match runway_core::docker::node_client(&state.db, nid, &state.crypto).await {
             Some(c) => c,
             None => return Ok(Json(json!({ "running": false })).into_response()),
         }
@@ -702,7 +702,7 @@ pub async fn reconcile(
     let (dep, project) = accessible_deployment(&state, user.user.id, &id).await?;
     if let Some(cid) = dep.container_id.clone() {
         let docker = if let Some(nid) = dep.remote_node_id.as_deref() {
-            runway_core::docker::node_client(&state.db, nid).await
+            runway_core::docker::node_client(&state.db, nid, &state.crypto).await
         } else {
             state.docker.clone()
         };

@@ -184,8 +184,11 @@ pub async fn create_node(
 
 /// Bounded dockerd probe — bollard's own request timeout is 120s, far too
 /// long to leave an admin hanging on an unreachable host.
-async fn probe_node(node: &runway_core::models::RemoteNode) -> bool {
-    let client = match runway_core::docker::node_docker_client(node) {
+async fn probe_node(
+    node: &runway_core::models::RemoteNode,
+    crypto: &runway_core::crypto::Crypto,
+) -> bool {
+    let client = match runway_core::docker::node_docker_client(node, crypto) {
         Ok(c) => c,
         Err(_) => return false,
     };
@@ -211,7 +214,7 @@ pub async fn check_node(
     let Some(node) = node else {
         return Err(ApiError::not_found("node"));
     };
-    let healthy = probe_node(&node).await;
+    let healthy = probe_node(&node, &state.crypto).await;
     let status = if healthy { "online" } else { "offline" };
     let updated: runway_core::models::RemoteNode = sqlx::query_as(
         "UPDATE remote_node SET status = $2, updated_at = now()
@@ -266,9 +269,9 @@ pub async fn provision_node_tls(
          updated_at = now() WHERE id = $1 RETURNING *",
     )
     .bind(&id)
-    .bind(&bundle.ca_pem)
-    .bind(&bundle.client_cert_pem)
-    .bind(&bundle.client_key_pem)
+    .bind(state.crypto.encrypt_field(&bundle.ca_pem)?)
+    .bind(state.crypto.encrypt_field(&bundle.client_cert_pem)?)
+    .bind(state.crypto.encrypt_field(&bundle.client_key_pem)?)
     .fetch_one(&state.db)
     .await?;
     Ok(Json(json!({
@@ -423,7 +426,7 @@ pub async fn approve_node(
     if node.status != "waiting" {
         return Err(ApiError::bad_request("node is not waiting"));
     }
-    let healthy = probe_node(&node).await;
+    let healthy = probe_node(&node, &state.crypto).await;
     let status = if healthy { "online" } else { "offline" };
     let updated: runway_core::models::RemoteNode = sqlx::query_as(
         "UPDATE remote_node SET status = $2, updated_at = now()
@@ -502,6 +505,9 @@ pub async fn node_checkin(
             .bind(&token_id)
             .fetch_optional(&state.db)
             .await?;
+    let enc_ca = state.crypto.encrypt_field(&body.tls_ca)?;
+    let enc_cert = state.crypto.encrypt_field(&body.tls_cert)?;
+    let enc_key = state.crypto.encrypt_field(&body.tls_key)?;
     let node: runway_core::models::RemoteNode = if let Some((id,)) = existing {
         sqlx::query_as(
             "UPDATE remote_node SET name = $2, docker_url = $3, tls_ca = $4,
@@ -511,9 +517,9 @@ pub async fn node_checkin(
         .bind(&id)
         .bind(&name)
         .bind(&docker_url)
-        .bind(&body.tls_ca)
-        .bind(&body.tls_cert)
-        .bind(&body.tls_key)
+        .bind(&enc_ca)
+        .bind(&enc_cert)
+        .bind(&enc_key)
         .bind(&body.meta)
         .fetch_one(&state.db)
         .await?
@@ -528,9 +534,9 @@ pub async fn node_checkin(
         .bind(&name)
         .bind(host)
         .bind(&docker_url)
-        .bind(&body.tls_ca)
-        .bind(&body.tls_cert)
-        .bind(&body.tls_key)
+        .bind(&enc_ca)
+        .bind(&enc_cert)
+        .bind(&enc_key)
         .bind(&body.meta)
         .bind(&token_id)
         .fetch_one(&state.db)

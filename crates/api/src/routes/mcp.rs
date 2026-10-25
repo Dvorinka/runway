@@ -253,10 +253,12 @@ async fn call(state: &AppState, user_id: i64, name: &str, args: &Value) -> ApiRe
                 return Ok(json!({ "running": false }));
             };
             let docker = match d.remote_node_id.as_deref() {
-                Some(nid) => match runway_core::docker::node_client(&state.db, nid).await {
-                    Some(c) => c,
-                    None => return Ok(json!({ "running": false })),
-                },
+                Some(nid) => {
+                    match runway_core::docker::node_client(&state.db, nid, &state.crypto).await {
+                        Some(c) => c,
+                        None => return Ok(json!({ "running": false })),
+                    }
+                }
                 None => match &state.docker {
                     Some(d) => d.clone(),
                     None => return Ok(json!({ "running": false })),
