@@ -760,9 +760,28 @@ pub async fn email_login(
                 .fetch_optional(&state.db)
                 .await?;
         if let Some(user) = user {
-            let raw = mint_email_token(&state, Some(user.id), &email, "login", 900.0).await?;
-            if let Err(e) = send_token_mail(&state, &email, "login", &raw).await {
-                tracing::warn!(error = %e.1, "magic-link mail failed");
+            // One mail per address per minute — the endpoint is public, so
+            // an unbounded one could mail-bomb a user with sign-in links.
+            let key = format!("mail:{email}");
+            let fresh = {
+                let mut m = state
+                    .login_attempts
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                let now = std::time::Instant::now();
+                match m.get(&key) {
+                    Some((_, until)) if now < *until => false,
+                    _ => {
+                        m.insert(key, (0, now + std::time::Duration::from_secs(60)));
+                        true
+                    }
+                }
+            };
+            if fresh {
+                let raw = mint_email_token(&state, Some(user.id), &email, "login", 900.0).await?;
+                if let Err(e) = send_token_mail(&state, &email, "login", &raw).await {
+                    tracing::warn!(error = %e.1, "magic-link mail failed");
+                }
             }
         }
     }
