@@ -101,6 +101,9 @@ idempotent — never edit an applied migration.
 ## Operations
 
 - Deploy logs: `data/logs/<deployment>.log`, 30-day retention.
+- Retention sweep (daily, at boot): analytics >90d, expired/used
+  magic-link tokens, expired/revoked node tokens >7d, read
+  notifications >30d. Unread notifications are kept.
 - Metrics: sampled every 30s per running deployment; purge via
   `config.deployment_retention`.
 - Health: `config.health_check` probes running containers; `unhealthy`
