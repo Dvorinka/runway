@@ -60,7 +60,21 @@ export default function NotificationsPage() {
             </Card>
           );
           return n.link ? (
-            <Link key={n.id} to={n.link}>
+            <Link
+              key={n.id}
+              to={n.link}
+              onClick={() => {
+                if (!n.read) {
+                  api.markRead(n.id).catch(() => {});
+                  setItems((cur) =>
+                    cur
+                      ? cur.map((x) => (x.id === n.id ? { ...x, read: true } : x))
+                      : cur,
+                  );
+                  setUnread((u) => Math.max(0, u - 1));
+                }
+              }}
+            >
               {inner}
             </Link>
           ) : (

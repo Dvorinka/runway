@@ -203,7 +203,7 @@ export interface Storage {
 }
 
 export interface AppNotification {
-  id: string;
+  id: number;
   type: string;
   title: string;
   body: string | null;
@@ -690,6 +690,11 @@ export const api = {
     req<{ notifications: AppNotification[]; unread: number }>("/api/v1/notifications"),
   markAllRead: () =>
     req<{ ok: boolean }>("/api/v1/notifications/mark-read", { method: "POST" }),
+  markRead: (id: number) =>
+    req<{ ok: boolean }>("/api/v1/notifications/mark-read", {
+      method: "POST",
+      body: JSON.stringify({ id }),
+    }),
 };
 
 export function deploymentLogsStream(id: string): EventSource {
