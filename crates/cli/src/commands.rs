@@ -805,6 +805,142 @@ pub async fn open(print_only: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn list_nodes(client: &Client) -> anyhow::Result<Vec<Value>> {
+    client
+        .get("/api/v1/admin/nodes")
+        .await
+        .map(|r| r["nodes"].as_array().cloned().unwrap_or_default())
+}
+
+async fn find_node(client: &Client, want: &str) -> anyhow::Result<Value> {
+    list_nodes(client)
+        .await?
+        .into_iter()
+        .find(|n| n["id"].as_str() == Some(want) || n["name"].as_str() == Some(want))
+        .context("no node with that id or name")
+}
+
+/// `runway nodes` — admin surface for remote Docker nodes.
+///   nodes [ls]                          list nodes with status + inventory
+///   nodes add --command [--expires H]   print the one-line install command
+///   nodes approve <id|name>             approve a waiting node
+///   nodes rm <id|name>                  delete/reject a node
+///   nodes token ls | token rm <id>      list or revoke enrollment tokens
+pub async fn nodes(args: Vec<String>) -> anyhow::Result<()> {
+    let client = Client::from_config()?;
+    let base = "/api/v1/admin/nodes";
+
+    match args.first().map(String::as_str) {
+        None | Some("ls") | Some("list") => {
+            for n in list_nodes(&client).await? {
+                let meta = &n["meta"];
+                let inv = [
+                    meta["arch"].as_str().map(str::to_string),
+                    meta["docker_version"]
+                        .as_str()
+                        .map(|v| format!("docker {v}")),
+                    meta["cpus"].as_u64().map(|c| format!("{c} cpu")),
+                    meta["mem_bytes"]
+                        .as_u64()
+                        .map(|m| format!("{:.1} GB", m as f64 / 1e9)),
+                ]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join(" · ");
+                println!(
+                    "  {:<16} {:<8} {:<32} {}",
+                    n["name"].as_str().unwrap_or(""),
+                    n["status"].as_str().unwrap_or("?"),
+                    n["docker_url"].as_str().unwrap_or(""),
+                    inv,
+                );
+            }
+        }
+        Some("add") => {
+            // nodes add --command [--expires <hours>]
+            anyhow::ensure!(
+                args.iter().any(|a| a == "--command"),
+                "usage: runway nodes add --command [--expires <hours>]"
+            );
+            let hours: i64 = args
+                .iter()
+                .position(|a| a == "--expires")
+                .and_then(|i| args.get(i + 1))
+                .map(|v| v.parse().context("--expires must be hours"))
+                .transpose()?
+                .unwrap_or(24);
+            let res = client
+                .post(
+                    &format!("{base}/tokens"),
+                    &json!({ "expires_hours": hours }),
+                )
+                .await?;
+            let token = res["token"].as_str().context("no token in response")?;
+            let server = client.base_url();
+            println!("Run this on the machine to enroll it as a deploy node:\n");
+            println!(
+                "  curl -fsSL {server}/install-node.sh | sudo RUNWAY_URL={server} RUNWAY_TOKEN={token} sh\n"
+            );
+            println!("Token expires in {hours}h. The node lands as 'waiting' — approve it with:");
+            println!("  runway nodes approve <name>");
+        }
+        Some("approve") => {
+            let want = args
+                .get(1)
+                .context("usage: runway nodes approve <id|name>")?;
+            let n = find_node(&client, want).await?;
+            let id = n["id"].as_str().unwrap();
+            let res = client
+                .post(&format!("{base}/{id}/approve"), &json!({}))
+                .await?;
+            println!(
+                "{} → {}",
+                res["name"].as_str().unwrap_or(want),
+                res["status"].as_str().unwrap_or("?")
+            );
+        }
+        Some("rm") | Some("remove") | Some("delete") => {
+            let want = args.get(1).context("usage: runway nodes rm <id|name>")?;
+            let n = find_node(&client, want).await?;
+            client
+                .delete(&format!("{base}/{}", n["id"].as_str().unwrap()))
+                .await?;
+            println!("Removed {}", n["name"].as_str().unwrap_or(want));
+        }
+        Some("token") => match args.get(1).map(String::as_str) {
+            Some("ls") | Some("list") => {
+                let res = client.get(&format!("{base}/tokens")).await?;
+                for t in res["tokens"].as_array().cloned().unwrap_or_default() {
+                    let state = if t["revoked"].as_bool() == Some(true) {
+                        "revoked"
+                    } else if t["expired"].as_bool() == Some(true) {
+                        "expired"
+                    } else {
+                        "active"
+                    };
+                    println!(
+                        "  {:<34} {:<8} expires {}",
+                        t["id"].as_str().unwrap_or(""),
+                        state,
+                        t["expires_at"].as_str().unwrap_or(""),
+                    );
+                }
+            }
+            Some("rm") | Some("revoke") => {
+                let id = args.get(2).context("usage: runway nodes token rm <id>")?;
+                client.delete(&format!("{base}/tokens/{id}")).await?;
+                println!("Revoked {id}");
+            }
+            _ => bail!("usage: runway nodes token ls | token rm <id>"),
+        },
+        Some(other) => bail!(
+            "unknown nodes action '{other}' — ls | add --command | approve | rm | token ls|rm"
+        ),
+    }
+    Ok(())
+}
+
 // -- helpers ---------------------------------------------------------------
 
 fn prompt(msg: &str) -> anyhow::Result<String> {
