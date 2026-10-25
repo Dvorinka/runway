@@ -108,6 +108,9 @@ idempotent — never edit an applied migration.
 - `scripts/backup.sh` / `scripts/restore.sh` — Postgres + data dir
   archives under `backups/`; restore replaces the current data dir and
   database after a confirmation prompt (`--yes` to skip).
+- `scripts/uninstall.sh` — removes the stack, Runway-managed
+  containers, data dir, and `.env` after a typed confirmation
+  (`--yes`, `--keep-data`, `--skip-backup`).
 - Deploy logs: `data/logs/<deployment>.log`, 30-day retention.
 - Metrics: sampled every 30s per running deployment; purge via
   `config.deployment_retention`.
