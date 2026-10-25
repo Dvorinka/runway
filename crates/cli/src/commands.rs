@@ -635,14 +635,16 @@ pub async fn domains(mut args: Vec<String>) -> anyhow::Result<()> {
             println!("Added {host}");
         }
         Some("remove") | Some("rm") => {
+            let yes = strip_flag(&mut args, "--yes");
             let host = args
                 .get(1)
-                .context("usage: runway domains remove <hostname>")?;
+                .context("usage: runway domains remove <hostname> [--yes]")?;
             let res = client.get(&base).await?;
             let id = find_id(
                 host,
                 res["domains"].as_array().map(Vec::as_slice).unwrap_or(&[]),
             )?;
+            confirm_danger(host, "remove domain", yes)?;
             client.delete(&format!("{base}/{id}")).await?;
             println!("Removed {host}");
         }
@@ -784,8 +786,12 @@ pub async fn nodes(mut args: Vec<String>) -> anyhow::Result<()> {
             );
         }
         Some("rm") | Some("remove") | Some("delete") => {
-            let want = args.get(1).context("usage: runway nodes rm <id|name>")?;
+            let yes = strip_flag(&mut args, "--yes");
+            let want = args
+                .get(1)
+                .context("usage: runway nodes rm <id|name> [--yes]")?;
             let n = find_node(&client, want).await?;
+            confirm_danger(n["name"].as_str().unwrap_or(want), "remove node", yes)?;
             client
                 .delete(&format!("{base}/{}", n["id"].as_str().unwrap()))
                 .await?;
@@ -829,12 +835,16 @@ pub async fn nodes(mut args: Vec<String>) -> anyhow::Result<()> {
 
 // -- helpers ---------------------------------------------------------------
 
-/// Pull `--json` out of trailing-var-arg command args; returns whether
-/// machine-readable output was requested.
-fn strip_json_flag(args: &mut Vec<String>) -> bool {
-    let had = args.iter().any(|a| a == "--json");
-    args.retain(|a| a != "--json");
+/// Pull a flag out of trailing-var-arg command args; returns whether
+/// it was present.
+fn strip_flag(args: &mut Vec<String>, flag: &str) -> bool {
+    let had = args.iter().any(|a| a == flag);
+    args.retain(|a| a != flag);
     had
+}
+
+fn strip_json_flag(args: &mut Vec<String>) -> bool {
+    strip_flag(args, "--json")
 }
 
 /// RFC3339 → "5m ago" / "2h ago" / "3d ago"; falls back to the date prefix.
@@ -885,6 +895,25 @@ fn prompt_default(msg: &str, default: &str) -> String {
     } else {
         s
     }
+}
+
+/// Destructive-op gate: TTY requires typing the resource name; pipes
+/// require an explicit --yes. Matches the Vercel/Ployz convention.
+fn confirm_danger(name: &str, action: &str, yes: bool) -> anyhow::Result<()> {
+    if yes {
+        return Ok(());
+    }
+    if !std::io::stdin().is_terminal() {
+        bail!("refusing to {action} {name} without --yes (non-interactive)");
+    }
+    print!("Type {name} to confirm {action}: ");
+    std::io::stdout().flush()?;
+    let mut line = String::new();
+    std::io::stdin().read_line(&mut line)?;
+    if line.trim() != name {
+        bail!("aborted — name did not match");
+    }
+    Ok(())
 }
 
 /// Yes/no prompt, defaulting to yes.
