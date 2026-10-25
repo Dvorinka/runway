@@ -283,6 +283,10 @@ pub fn router(state: AppState) -> Router {
             delete(routes::teams::revoke_invite),
         )
         .route(
+            "/api/v1/invites/{id}",
+            axum::routing::get(routes::teams::invite_preview),
+        )
+        .route(
             "/api/v1/invites/{id}/accept",
             axum::routing::post(routes::teams::accept_invite),
         )

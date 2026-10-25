@@ -695,6 +695,16 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ id }),
     }),
+  invitePreview: (id: string) =>
+    req<{
+      team_name: string;
+      email: string;
+      role: string;
+      inviter: string | null;
+      expires_at: string;
+      expired: boolean;
+      yours: boolean;
+    }>(`/api/v1/invites/${id}`),
 };
 
 export function deploymentLogsStream(id: string): EventSource {

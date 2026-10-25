@@ -529,7 +529,50 @@ pub async fn revoke_invite(
     Ok(Json(json!({ "ok": true })).into_response())
 }
 
-/// Accept — caller's email must match the invite. Creates membership.
+#[derive(sqlx::FromRow)]
+struct InvitePreviewRow {
+    team_name: String,
+    email: String,
+    role: String,
+    inviter: Option<String>,
+    expires_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// `GET /api/v1/invites/{id}` — pending-invite preview for the accept
+/// page: team name, inviter, role, expiry. Requires sign-in (the page is
+/// authed); does not expose member lists or secrets.
+pub async fn invite_preview(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path(invite_id): Path<String>,
+) -> ApiResult<Response> {
+    let inv: Option<InvitePreviewRow> = sqlx::query_as(
+        "SELECT t.name AS team_name, i.email, i.role, u.username AS inviter, i.expires_at
+             FROM team_invite i
+             JOIN team t ON t.id = i.team_id
+             LEFT JOIN \"user\" u ON u.id = i.inviter_id
+             WHERE i.id = $1 AND i.status = 'pending'",
+    )
+    .bind(&invite_id)
+    .fetch_optional(&state.db)
+    .await?;
+    let Some(inv) = inv else {
+        return Err(ApiError::not_found("invite"));
+    };
+    Ok(Json(json!({
+        "team_name": inv.team_name,
+        "email": inv.email,
+        "role": inv.role,
+        "inviter": inv.inviter,
+        "expires_at": inv.expires_at,
+        "expired": inv.expires_at < chrono::Utc::now(),
+        "yours": user.user.email.eq_ignore_ascii_case(&inv.email),
+    }))
+    .into_response())
+}
+
+/// `POST /api/v1/invites/{id}/accept` — caller's email must match the
+/// invite. Creates membership.
 pub async fn accept_invite(
     user: AuthUser,
     State(state): State<AppState>,
