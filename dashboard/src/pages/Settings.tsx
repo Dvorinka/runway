@@ -703,6 +703,7 @@ function Nodes() {
                   <Button
                     variant="ghost"
                     size="sm"
+                    autoFocus
                     onClick={() =>
                       api
                         .deleteNode(n.id)
