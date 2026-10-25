@@ -381,6 +381,7 @@ function Webhooks({ teamId, admin }: { teamId: string; admin: boolean }) {
           />
           <Input
             type="password"
+            autoComplete="new-password"
             placeholder="secret (optional)"
             value={secret}
             onChange={(e) => setSecret(e.target.value)}
@@ -485,6 +486,7 @@ function Cloudflare({ teamId, admin }: { teamId: string; admin: boolean }) {
           <form onSubmit={connect} className="flex gap-2">
             <Input
               type="password"
+              autoComplete="new-password"
               placeholder="API token (Zone.DNS edit on your zones)"
               value={token}
               onChange={(e) => setToken(e.target.value)}

@@ -77,6 +77,7 @@ function GitProviders() {
         )}
         <Input
           type="password"
+          autoComplete="new-password"
           placeholder={
             PROVIDER_GUIDES[provider as keyof typeof PROVIDER_GUIDES]?.tokenPlaceholder ?? "access token"
           }
@@ -899,11 +900,13 @@ function Account({ me }: { me: Me }) {
         <form onSubmit={saveProfile} className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <Input
             placeholder="Display name"
+            autoComplete="name"
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
           <Input
             placeholder="username"
+            autoComplete="username"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             required
@@ -912,6 +915,7 @@ function Account({ me }: { me: Me }) {
             <Input
               type="email"
               placeholder="email"
+              autoComplete="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
@@ -946,8 +950,10 @@ function Account({ me }: { me: Me }) {
       <Card className="p-5">
         <SectionHead icon={KeyRound} title="Change password" />
         <form onSubmit={savePassword} className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <input type="hidden" autoComplete="username" value={me.email} readOnly />
           <Input
             type="password"
+            autoComplete="current-password"
             placeholder="current password"
             value={cur}
             onChange={(e) => setCur(e.target.value)}
@@ -955,6 +961,7 @@ function Account({ me }: { me: Me }) {
           />
           <Input
             type="password"
+            autoComplete="new-password"
             placeholder="new password"
             value={next}
             onChange={(e) => setNext(e.target.value)}
@@ -979,6 +986,7 @@ function Account({ me }: { me: Me }) {
           <form onSubmit={deleteAccount} className="flex items-center gap-2">
             <Input
               type="password"
+              autoComplete="current-password"
               placeholder="confirm with your password"
               value={delPw}
               onChange={(e) => setDelPw(e.target.value)}
@@ -1128,6 +1136,7 @@ function TwoFactor({ enabled: initiallyEnabled }: { enabled: boolean }) {
         <form onSubmit={disable} className="flex items-center gap-2">
           <Input
             type="password"
+            autoComplete="current-password"
             placeholder="confirm with your password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
