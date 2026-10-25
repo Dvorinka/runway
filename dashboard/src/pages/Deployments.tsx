@@ -1,6 +1,6 @@
 import { api, type Deployment } from "@/lib/api";
 import { DeploymentRow } from "@/components/DeploymentRow";
-import { EmptyState, Input, Skeleton, isRunning } from "@/components/ui";
+import { EmptyState, Input, Skeleton, isFailed, isRunning } from "@/components/ui";
 import { Rocket, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
@@ -43,13 +43,9 @@ export default function Deployments() {
   const filtered = useMemo(
     () =>
       deployments?.filter((d) => {
-        if (
-          filter === "running" &&
-          !isRunning(d.status, d.conclusion)
-        )
-          return false;
-        if (filter !== "all" && filter !== "running" && d.conclusion !== filter)
-          return false;
+        if (filter === "running" && !isRunning(d.status, d.conclusion)) return false;
+        if (filter === "succeeded" && d.conclusion !== "succeeded") return false;
+        if (filter === "failed" && !isFailed(d)) return false;
         if (envs.size > 0 && !envs.has(d.environment_id)) return false;
         if (projs.size > 0 && !projs.has(d.project_name ?? "")) return false;
         const q = query.toLowerCase();

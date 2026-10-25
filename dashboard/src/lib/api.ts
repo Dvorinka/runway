@@ -605,6 +605,11 @@ export const api = {
       method: "DELETE",
     }),
 
+  adminSystem: () =>
+    req<Record<"images" | "containers" | "volumes" | "build_cache", { count: number; size: number }>>(
+      "/api/v1/admin/system",
+    ),
+
   nodes: () => req<{ nodes: RemoteNode[] }>("/api/v1/admin/nodes"),
   createNode: (body: { name: string; host: string; docker_url: string }) =>
     req<RemoteNode>("/api/v1/admin/nodes", { method: "POST", body: JSON.stringify(body) }),

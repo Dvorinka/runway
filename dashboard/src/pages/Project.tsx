@@ -10,10 +10,10 @@ import {
   type RemoteNode,
   type Webhook,
 } from "@/lib/api";
-import { Avatar, AvatarRow, Badge, Button, Card, CardFooter, ComboBox, EmptyState, Input, SectionHead, Skeleton, StatusDot } from "@/components/ui";
+import { Avatar, AvatarRow, Badge, Button, Card, CardFooter, ComboBox, EmptyState, Input, SectionHead, Skeleton, StatusDot, displayStatus } from "@/components/ui";
 import { DeploymentRow } from "@/components/DeploymentRow";
 import { filesToTarGz } from "@/lib/tarball";
-import { timeAgo } from "@/lib/utils";
+import { cn, timeAgo } from "@/lib/utils";
 import { Globe, Link2, Rocket, Webhook as WebhookIcon, ArrowRightLeft, ListFilter, CheckCircle2, Circle, KeyRound, Clock } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -586,10 +586,10 @@ function Deployments({ id, project }: { id: string; project: Project | null }) {
       <Err msg={error} />
       {(() => {
         // The production alias target is the deployment actually live;
-        // fall back to the newest concluded one when no alias exists yet.
+        // fall back to the newest succeeded one when no alias exists yet.
         const latest =
           deployments?.find((d) => d.id === project?.production_deployment_id) ??
-          deployments?.find((d) => d.conclusion === "succeeded" || d.status === "completed");
+          deployments?.find((d) => d.conclusion === "succeeded");
         const liveUrl = latest?.urls?.environment ?? latest?.urls?.immutable ?? null;
         if (!latest || !liveUrl) return null;
         return (
@@ -606,8 +606,17 @@ function Deployments({ id, project }: { id: string; project: Project | null }) {
                   computed={latest.computed_status}
                 />
                 <div className="min-w-0">
-                  <div className="text-[10px] uppercase tracking-wide text-success">
-                    Production · live
+                  <div
+                    className={cn(
+                      "text-[10px] uppercase tracking-wide",
+                      displayStatus(latest).variant === "success"
+                        ? "text-success"
+                        : displayStatus(latest).variant === "destructive"
+                          ? "text-destructive"
+                          : "text-muted-foreground",
+                    )}
+                  >
+                    Production · {displayStatus(latest).label}
                   </div>
                   <div className="truncate font-mono text-sm">
                     {liveUrl.replace(/^https?:\/\//, "")}
@@ -643,7 +652,7 @@ function Deployments({ id, project }: { id: string; project: Project | null }) {
           live:
             deployments?.some(
               (d) =>
-                (d.conclusion === "succeeded" || d.status === "completed") &&
+                d.conclusion === "succeeded" &&
                 (d.urls?.environment ?? d.urls?.immutable),
             ) ?? false,
           domain: (domainCount ?? 0) > 0,

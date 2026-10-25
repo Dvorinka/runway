@@ -1,7 +1,7 @@
 import { api, deploymentLogsStream, type Deployment } from "@/lib/api";
 import { Badge, Button, Menu, Skeleton, StatusDot, displayStatus, isRunning, type MenuItem } from "@/components/ui";
 import { Ansi } from "@/lib/ansi";
-import { cn, duration, elapsed, firstLine, timeAgo } from "@/lib/utils";
+import { cn, duration, elapsed, firstLine, fmtBytes, timeAgo } from "@/lib/utils";
 import { ArrowUpToLine, Copy, FolderTree, Globe, History, ListPlus, RefreshCw, Repeat } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
@@ -42,13 +42,6 @@ function groupLogLines(lines: string[]): LogSection[] {
 }
 
 const stepTitle = (step: string) => step.charAt(0).toUpperCase() + step.slice(1);
-
-function fmtBytes(n: number): string {
-  if (n >= 1 << 30) return `${(n / (1 << 30)).toFixed(1)} GB`;
-  if (n >= 1 << 20) return `${(n / (1 << 20)).toFixed(0)} MB`;
-  if (n >= 1 << 10) return `${(n / (1 << 10)).toFixed(0)} KB`;
-  return `${n} B`;
-}
 
 function Sparkline({ values, max }: { values: number[]; max?: number }) {
   if (values.length < 2) return null;
@@ -579,9 +572,14 @@ function FilesPanel({ id }: { id: string }) {
 }
 
 function Stepper({ dep }: { dep: Deployment }) {
-  const idx = Math.max(0, STEPS.indexOf(dep.status));
   const done = dep.conclusion === "succeeded";
-  const failed = dep.conclusion != null && !done;
+  const failed = (dep.conclusion != null && !done) || dep.status === "fail";
+  // `status='fail'` rows lost their stage; error.status carries it when present.
+  const errStage =
+    dep.status === "fail" && typeof dep.error === "object"
+      ? (dep.error?.status ?? "")
+      : dep.status;
+  const idx = Math.max(0, STEPS.indexOf(errStage));
   return (
     <div className="mb-4 flex items-center gap-0">
       {STEPS.map((s, i) => {

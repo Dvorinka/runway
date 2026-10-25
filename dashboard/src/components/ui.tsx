@@ -126,10 +126,18 @@ export function Badge({
 
 export function statusVariant(status: string, conclusion?: string | null) {
   if (conclusion === "succeeded") return "success" as const;
-  if (conclusion === "failed" || conclusion === "canceled") return "destructive" as const;
+  if (conclusion === "failed" || conclusion === "canceled" || status === "fail")
+    return "destructive" as const;
   if (status === "deploy" || status === "prepare" || status === "finalize")
     return "warning" as const;
   return "secondary" as const;
+}
+
+/** Rows can carry `status='fail'` with a NULL conclusion — the transient
+ *  write before the final `completed/failed` one that a crash never
+ *  reached. Everywhere a "failed" test appears, these rows count too. */
+export function isFailed(d: { status: string; conclusion?: string | null }) {
+  return d.conclusion === "failed" || (!d.conclusion && d.status === "fail");
 }
 
 // Observed container states that mean "not serving". `removed` is left
@@ -151,7 +159,7 @@ export function displayStatus(d: {
     };
   }
   return {
-    label: d.conclusion ?? d.status,
+    label: d.conclusion ?? (d.status === "fail" ? "failed" : d.status),
     variant: statusVariant(d.status, d.conclusion),
   };
 }
@@ -178,7 +186,8 @@ export function StatusDot({
   const bad =
     conclusion === "failed" ||
     conclusion === "canceled" ||
-    unhealthy === true && (computed === "crashed" || computed === "dead");
+    status === "fail" ||
+    (unhealthy === true && (computed === "crashed" || computed === "dead"));
   const ok =
     (conclusion === "succeeded" || status === "active" || status === "running") &&
     !unhealthy;

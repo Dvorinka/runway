@@ -9,8 +9,8 @@ import {
 } from "@/lib/api";
 import { GIT_PROVIDERS, PROVIDER_GUIDES, providerLabel } from "@/lib/gitproviders";
 import { AvatarRow, Badge, Button, Card, ComboBox, Input, SectionHead, Skeleton } from "@/components/ui";
-import { timeAgo } from "@/lib/utils";
-import { AppWindow, BookOpen, CheckCircle2, GitBranch, KeyRound, ListOrdered, Server, ShieldCheck, Smartphone, User } from "lucide-react";
+import { fmtBytes, timeAgo } from "@/lib/utils";
+import { AppWindow, BookOpen, CheckCircle2, GitBranch, HardDrive, KeyRound, ListOrdered, Server, ShieldCheck, Smartphone, User } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 function GitProviders() {
@@ -663,6 +663,47 @@ function Nodes() {
   );
 }
 
+function System() {
+  const [data, setData] = useState<Awaited<ReturnType<typeof api.adminSystem>> | null>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    api.adminSystem().then(setData).catch((e) => setError(e.message));
+  }, []);
+
+  const rows: [string, string][] = data
+    ? [
+        ["Images", `${data.images.count} · ${fmtBytes(data.images.size)}`],
+        ["Containers", `${data.containers.count} · ${fmtBytes(data.containers.size)}`],
+        ["Volumes", `${data.volumes.count} · ${fmtBytes(data.volumes.size)}`],
+        ["Build cache", `${data.build_cache.count} · ${fmtBytes(data.build_cache.size)}`],
+      ]
+    : [];
+
+  return (
+    <Card className="p-5">
+      <SectionHead icon={HardDrive} title="Docker disk usage">
+        Host-node footprint from <code className="font-mono">docker system df</code> — runner
+        images and build cache accumulate with every deploy.
+      </SectionHead>
+      {error && <p className="mb-3 text-xs text-destructive">{error}</p>}
+      {data === null && !error && <Skeleton className="h-24" />}
+      {data && (
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {rows.map(([label, value]) => (
+            <div key={label} className="rounded-md border border-border p-3">
+              <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                {label}
+              </div>
+              <div className="mt-1 font-mono text-sm">{value}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function Account({ me }: { me: Me }) {
   const [name, setName] = useState(me.name ?? "");
   const [username, setUsername] = useState(me.username);
@@ -995,6 +1036,7 @@ export default function SettingsPage({ me }: { me: Me }) {
             <Allowlist />
             <JobQueue />
             <Nodes />
+            <System />
           </>
         )}
       </div>
