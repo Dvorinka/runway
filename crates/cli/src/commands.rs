@@ -171,7 +171,7 @@ fn cwd_name() -> anyhow::Result<String> {
 }
 
 /// `runway whoami` — show the logged-in user and instance health.
-pub async fn whoami() -> anyhow::Result<()> {
+pub async fn whoami(json_out: bool) -> anyhow::Result<()> {
     let client = Client::from_config()?;
     let me = client.get("/api/auth/me").await?;
     let email = me["email"].as_str().unwrap_or("?");
@@ -183,6 +183,14 @@ pub async fn whoami() -> anyhow::Result<()> {
         .and_then(|h| h["status"].as_str().map(String::from))
         .unwrap_or_else(|| "unreachable".to_string());
     let server = client::load_config().server.unwrap_or_default();
+    if json_out {
+        return print_json(&serde_json::json!({
+            "email": email,
+            "username": username,
+            "server": server,
+            "health": health,
+        }));
+    }
     if username.is_empty() {
         println!("{email}");
     } else {
@@ -246,7 +254,7 @@ pub async fn projects(json_out: bool) -> anyhow::Result<()> {
 }
 
 /// `runway status` — instance, link, project, and latest deployment state.
-pub async fn status() -> anyhow::Result<()> {
+pub async fn status(json_out: bool) -> anyhow::Result<()> {
     let client = Client::from_config()?;
     let server = client::load_config().server.unwrap_or_default();
     let health = client
@@ -255,14 +263,37 @@ pub async fn status() -> anyhow::Result<()> {
         .ok()
         .and_then(|h| h["status"].as_str().map(String::from))
         .unwrap_or_else(|| "unreachable".to_string());
-    println!("server: {server} [{health}]");
+    if !json_out {
+        println!("server: {server} [{health}]");
+    }
     let Ok(link) = client::load_link() else {
+        if json_out {
+            return print_json(&serde_json::json!({
+                "server": server, "health": health, "linked": false,
+            }));
+        }
         println!("directory: not linked (run `runway link` or `runway create`)");
         return Ok(());
     };
     let p = client
         .get(&format!("/api/v1/projects/{}", link.project_id))
         .await?;
+    let deps = client
+        .get(&format!(
+            "/api/v1/projects/{}/deployments?limit=1",
+            link.project_id
+        ))
+        .await?;
+    let latest = deps["deployments"]
+        .as_array()
+        .and_then(|a| a.first())
+        .cloned();
+    if json_out {
+        return print_json(&serde_json::json!({
+            "server": server, "health": health, "linked": true,
+            "project": p, "latest_deployment": latest,
+        }));
+    }
     println!(
         "project: {} ({})",
         p["name"].as_str().unwrap_or("?"),
@@ -271,13 +302,7 @@ pub async fn status() -> anyhow::Result<()> {
     if let Some(url) = p["url"].as_str().filter(|u| !u.is_empty()) {
         println!("url: {url}");
     }
-    let deps = client
-        .get(&format!(
-            "/api/v1/projects/{}/deployments?limit=1",
-            link.project_id
-        ))
-        .await?;
-    if let Some(d) = deps["deployments"].as_array().and_then(|a| a.first()) {
+    if let Some(d) = latest {
         let conclusion = d["conclusion"].as_str().unwrap_or("");
         let state = if conclusion.is_empty() {
             d["status"].as_str().unwrap_or("?").to_string()
@@ -470,7 +495,7 @@ pub async fn deployments(limit: usize, json_out: bool) -> anyhow::Result<()> {
 }
 
 /// `runway stats [deployment]` — live container resource snapshot.
-pub async fn stats(deployment: Option<String>) -> anyhow::Result<()> {
+pub async fn stats(deployment: Option<String>, json_out: bool) -> anyhow::Result<()> {
     let client = Client::from_config()?;
     let dep_id = match deployment {
         Some(d) => d,
@@ -480,8 +505,16 @@ pub async fn stats(deployment: Option<String>) -> anyhow::Result<()> {
         .get(&format!("/api/v1/deployments/{dep_id}/stats"))
         .await?;
     if !s["running"].as_bool().unwrap_or(false) {
+        if json_out {
+            return print_json(&serde_json::json!({"id": dep_id, "running": false}));
+        }
         println!("{} — container not running", &dep_id[..dep_id.len().min(7)]);
         return Ok(());
+    }
+    if json_out {
+        let mut v = s.clone();
+        v["id"] = serde_json::json!(dep_id);
+        return print_json(&v);
     }
     let fmt_b = |v: &serde_json::Value| {
         let n = v.as_u64().unwrap_or(0) as f64;
