@@ -422,11 +422,20 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/v1/keys/{id}", delete(routes::api::revoke_key))
         .route("/api/deploy", post(routes::api::api_deploy))
+        // Unknown /api/* paths answer JSON, not the SPA shell.
+        .route("/api/{*rest}", axum::routing::any(api_not_found))
         .with_state(state)
         // React SPA — static assets + client-side route fallback.
         .fallback_service(tower_http::services::ServeDir::new(&web_dir).fallback(
             tower_http::services::ServeFile::new(web_dir.join("index.html")),
         ))
+}
+
+async fn api_not_found() -> impl axum::response::IntoResponse {
+    (
+        axum::http::StatusCode::NOT_FOUND,
+        Json(json!({ "error": "not found" })),
+    )
 }
 
 async fn health() -> Json<serde_json::Value> {
