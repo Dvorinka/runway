@@ -216,7 +216,7 @@ function NewProject({ onDone }: { onDone: () => void }) {
       <SectionHead icon={Plus} title="New project" />
       <form onSubmit={create} className="grid grid-cols-1 gap-3">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div className="grid grid-cols-6 gap-1 rounded-lg border border-border p-1">
+          <div className="grid grid-cols-3 gap-1 rounded-lg border border-border p-1 sm:grid-cols-6">
             {([...GIT_PROVIDERS, "upload"] as Provider[]).map((p) => (
               <button
                 key={p}
@@ -435,7 +435,7 @@ export default function Projects() {
             Deploy from git or uploads — each project gets preview URLs and rollbacks.
           </p>
         </div>
-        <Button size="sm" onClick={() => setCreating(true)} disabled={creating}>
+        <Button size="sm" className="shrink-0" onClick={() => setCreating(true)} disabled={creating}>
           New project
         </Button>
       </div>
