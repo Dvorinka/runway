@@ -75,9 +75,35 @@ Two ways to get traffic in:
 
 ## Remote Docker nodes
 
-Settings → Remote Docker nodes: register `tcp://host:2375` (or `:2376`
-for mTLS). **mTLS** — the `mTLS` button generates a per-node CA and
-returns a one-time server bundle plus the dockerd flags:
+The easy path needs one command on the machine. Settings → Remote Docker
+nodes → **Get install command** mints a 24-hour `rnod_…` token and prints:
+
+```bash
+curl -fsSL https://<your-runway>/install-node.sh | \
+  sudo RUNWAY_URL=https://<your-runway> RUNWAY_TOKEN=rnod_… sh
+```
+
+The installer checks preflights (root, systemd, openssl, curl), installs
+Docker if absent (`RUNWAY_SKIP_DOCKER_INSTALL=1` refuses instead),
+generates a dedicated CA + server + client certs under
+`/etc/docker/runway-tls/`, drops a systemd unit that puts dockerd on
+`tcp://0.0.0.0:2376 --tlsverify` alongside the unix socket, then POSTs
+the client material and machine inventory to `/api/v1/nodes/checkin`.
+The node lands as **waiting** — approve it in Settings → Nodes (or
+`runway nodes approve <name>`) before deployments can route to it.
+
+Prereqs on the node: Linux + systemd, amd64/arm64, outbound IPv4 to reach
+the control plane, and an address Runway can dial back on (`RUNWAY_HOST`
+overrides auto-detection; private IPs only work on a shared LAN/tunnel).
+Firewalls: inbound `2376/tcp` from the control plane, plus the published
+app ports Traefik proxies to (`49152+`).
+
+CLI equivalent: `runway nodes add --command [--expires <hours>]`,
+`nodes ls`, `nodes approve|rm <id|name>`, `nodes token ls|rm <id>`.
+
+Manual setup stays available under **Manual setup**: register
+`tcp://host:2375` (plaintext — trusted networks only) or `:2376` and use
+the `mTLS` action to generate a per-node CA and one-time server bundle:
 
 ```
 dockerd --tlsverify \
