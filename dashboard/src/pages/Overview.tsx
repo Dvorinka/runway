@@ -21,7 +21,7 @@ export default function Overview() {
   const week = deployments?.filter(
     (d) => Date.now() - new Date(d.created_at).getTime() < WEEK,
   );
-  const concluded = week?.filter((d) => d.conclusion);
+  const concluded = week?.filter((d) => d.conclusion || d.status === "fail");
   const successRate =
     concluded && concluded.length > 0
       ? Math.round(

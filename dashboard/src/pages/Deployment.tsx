@@ -572,9 +572,14 @@ function FilesPanel({ id }: { id: string }) {
 }
 
 function Stepper({ dep }: { dep: Deployment }) {
-  const idx = Math.max(0, STEPS.indexOf(dep.status));
   const done = dep.conclusion === "succeeded";
-  const failed = dep.conclusion != null && !done;
+  const failed = (dep.conclusion != null && !done) || dep.status === "fail";
+  // `status='fail'` rows lost their stage; error.status carries it when present.
+  const errStage =
+    dep.status === "fail" && typeof dep.error === "object"
+      ? (dep.error?.status ?? "")
+      : dep.status;
+  const idx = Math.max(0, STEPS.indexOf(errStage));
   return (
     <div className="mb-4 flex items-center gap-0">
       {STEPS.map((s, i) => {
