@@ -92,6 +92,20 @@ publish an allocated host port (`49152+`) that Traefik routes
 `http://{node.host}:{port}` to — no extra software on the node.
 Upload/static deploys stay local (artifacts are host files).
 
+## Runner images
+
+Builds run in per-runtime `ghcr.io/devpushhq/runner-*` images, pulled
+on demand. Private registries, mirrors, or an air-gapped host override
+them per slug via `$DATA_DIR/runner-overrides.json`:
+
+```json
+{ "runners": { "node-20": { "image": "registry.internal/runner-node-20:1.0.1" },
+              "bun-1.3": { "enabled": false } } }
+```
+
+`enabled: false` blocks a preset entirely. The file is read per call —
+edits take effect without a restart.
+
 ## Upgrades
 
 `scripts/update.sh` moves the install to a new ref and rebuilds the
