@@ -94,12 +94,20 @@ Upload/static deploys stay local (artifacts are host files).
 
 ## Upgrades
 
-Re-run `install.sh` (or `git pull` + `docker compose up -d --build`).
+`scripts/update.sh` moves the install to a new ref and rebuilds the
+stack — `--ref <tag>` to pin, `--backup` to snapshot first. It works
+on both install shapes: git checkouts fetch + checkout; tarball
+installs get an archive overlay that preserves `.env` and `data/`.
 Migrations are embedded and run at startup; they are numbered and
 idempotent — never edit an applied migration.
 
 ## Operations
 
+- `scripts/status.sh` — compose state, `/health` reachability, version.
+- `scripts/restart.sh` — in-place restart with a health wait.
+- `scripts/backup.sh` / `scripts/restore.sh` — Postgres + data dir
+  archives under `backups/`; restore replaces the current data dir and
+  database after a confirmation prompt (`--yes` to skip).
 - Deploy logs: `data/logs/<deployment>.log`, 30-day retention.
 - Metrics: sampled every 30s per running deployment; purge via
   `config.deployment_retention`.
