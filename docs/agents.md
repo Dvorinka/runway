@@ -17,7 +17,6 @@ runway env pull                   # .env.local from project (decrypted)
 runway domains add app.example.com
 runway domains assign-cf app.example.com
 runway rollback                   # instant alias re-point to previous deploy
-runway promote <id>               # point an environment alias at a deploy (--environment, default prod)
 runway open                       # current deployment URL
 runway nodes ls                   # remote Docker nodes + status
 runway nodes add --command        # print the one-line enroll command
@@ -49,7 +48,8 @@ Settings → API keys mint `ak_` tokens. Use as
 `get_deployment_logs`, `deployment_stats`, `deploy_project`,
 `cancel_deployment`, `skip_deployment`, `redeploy_deployment`,
 `promote_deployment`, `rollback_environment`, `list_env`, `set_env`,
-`list_domains`, `ping`.
+`list_domains`. The protocol-level `ping` method answers `{}` — it is
+not a callable tool.
 
 Write tools (`deploy_project`, `set_env`, `rollback_environment`, …)
 respect the same RBAC gates as the REST surface — issue the key to an
