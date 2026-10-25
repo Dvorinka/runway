@@ -557,7 +557,10 @@ function Nodes() {
     e.preventDefault();
     setError("");
     try {
-      await api.createNode({ name, host, docker_url: url });
+      // New rows start life claiming "online" — probe immediately so the
+      // badge never lies longer than a request round-trip.
+      const created = await api.createNode({ name, host, docker_url: url });
+      if (created?.id) await api.checkNode(created.id).catch(() => {});
       setName("");
       setHost("");
       setUrl("");
@@ -605,7 +608,13 @@ function Nodes() {
               </span>
             </div>
             <div className="flex items-center gap-2">
-              {n.tls && <Badge variant="success">mTLS</Badge>}
+              {n.tls ? (
+                <Badge variant="success">mTLS</Badge>
+              ) : (
+                n.docker_url.startsWith("tcp://") && (
+                  <Badge variant="warning">plaintext</Badge>
+                )
+              )}
               <Badge variant={n.status === "online" ? "success" : "warning"}>{n.status}</Badge>
               <Button
                 variant="ghost"
