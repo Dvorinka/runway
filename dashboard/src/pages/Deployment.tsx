@@ -574,11 +574,10 @@ function FilesPanel({ id }: { id: string }) {
 function Stepper({ dep }: { dep: Deployment }) {
   const done = dep.conclusion === "succeeded";
   const failed = (dep.conclusion != null && !done) || dep.status === "fail";
-  // `status='fail'` rows lost their stage; error.status carries it when present.
+  // error.status carries the failing stage when present; `completed`
+  // and legacy `fail` statuses would both collapse to step 0 otherwise.
   const errStage =
-    dep.status === "fail" && typeof dep.error === "object"
-      ? (dep.error?.status ?? "")
-      : dep.status;
+    (typeof dep.error === "object" ? dep.error?.status : null) ?? dep.status;
   const idx = Math.max(0, STEPS.indexOf(errStage));
   return (
     <div className="mb-4 flex items-center gap-0">
@@ -952,7 +951,7 @@ export default function DeploymentPage() {
         </div>
       )}
       <div className="relative flex h-[45vh] min-h-64 flex-col overflow-hidden rounded-lg border border-border bg-black/40">
-        <div className="flex items-center justify-between border-b border-border px-3 py-2">
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-border px-3 py-2">
           <span className="flex items-center gap-3 text-xs">
             {(["build", "runtime"] as const).map((t) => (
               <button
@@ -986,7 +985,7 @@ export default function DeploymentPage() {
               onChange={(e) => setFilter(e.target.value)}
               placeholder="filter…"
               aria-label="Filter log lines"
-              className="w-32 bg-transparent text-xs text-muted-foreground placeholder:text-muted-foreground/50 focus:text-foreground focus:outline-none"
+              className="w-16 bg-transparent text-xs text-muted-foreground placeholder:text-muted-foreground/50 focus:text-foreground focus:outline-none sm:w-32"
             />
             <button
               className="text-xs text-muted-foreground transition-colors hover:text-foreground"
