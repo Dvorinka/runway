@@ -550,6 +550,25 @@ pub async fn totp_challenge(
     let Some(uid) = crate::auth::decode_pending(&state.settings.secret_key, &body.pending) else {
         return Err(ApiError::unauthorized("invalid or expired challenge"));
     };
+    // Codes are 6 digits — throttle guesses the same as password login.
+    let throttle_key = format!("totp:{uid}");
+    {
+        let m = state
+            .login_attempts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some((fails, until)) = m.get(&throttle_key) {
+            if *fails >= 5 && std::time::Instant::now() < *until {
+                let wait = until
+                    .saturating_duration_since(std::time::Instant::now())
+                    .as_secs();
+                return Err(ApiError(
+                    axum::http::StatusCode::TOO_MANY_REQUESTS,
+                    format!("too many attempts — try again in {}m", wait / 60 + 1),
+                ));
+            }
+        }
+    }
     let user = crate::auth::user_by_id(&state, uid).await?;
     if !user.totp_enabled {
         return Err(ApiError::bad_request("two-factor not enabled"));
@@ -579,8 +598,22 @@ pub async fn totp_challenge(
         }
     }
     if !ok {
+        let mut m = state
+            .login_attempts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let e = m
+            .entry(throttle_key)
+            .or_insert((0, std::time::Instant::now()));
+        e.0 += 1;
+        e.1 = std::time::Instant::now() + std::time::Duration::from_secs(900);
         return Err(ApiError::unauthorized("invalid code"));
     }
+    state
+        .login_attempts
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&throttle_key);
     let user = ensure_personal_team(&state, user).await?;
     let jar = jar.add(session_cookie(&state, user.id)?);
     Ok((jar, axum::Json(json!({ "ok": true }))).into_response())
