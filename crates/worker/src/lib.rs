@@ -14,6 +14,7 @@ pub mod deploy;
 pub mod jobs;
 pub mod monitor;
 pub mod reconcile;
+pub mod retention;
 pub mod storage;
 pub mod tunnel;
 
@@ -172,8 +173,9 @@ pub async fn run(
     tokio::spawn(async move { monitor::run(monitor_ctx).await });
 
     reconcile::spawn(ctx.clone());
-    cron::spawn(ctx);
+    cron::spawn(ctx.clone());
+    retention::spawn(ctx);
 
-    tracing::info!("worker loops started (jobs, monitor, cron, reconcile)");
+    tracing::info!("worker loops started (jobs, monitor, cron, reconcile, retention)");
     Ok(())
 }
