@@ -5,28 +5,28 @@
 class Runway < Formula
   desc "Runway — self-hosted deployment platform CLI"
   homepage "https://github.com/Dvorinka/runway"
-  version "0.2.0"
+  version "0.3.0"
   license "MIT"
 
   on_macos do
     on_arm do
       url "https://github.com/Dvorinka/runway/releases/download/v#{version}/runway-darwin-arm64.tar.gz"
-      sha256 "b96c36c7a08c7ccdae46bcb0731f59949cdbd171cdb6b88949a909728f126cd2"
+      sha256 "6032a1d61cb28e440ace9247aab568151bd60ff65c1095c4d1fb7d716618b3ff"
     end
     on_intel do
       url "https://github.com/Dvorinka/runway/releases/download/v#{version}/runway-darwin-x64.tar.gz"
-      sha256 "0834120d965ea9d12c85e2401fbea04d25d04f447eb2bacf23440f26dcd51265"
+      sha256 "15eb05e7085c5a875517ee2501ba4e361b7c20dbb00f07f578c9a9f6adcda906"
     end
   end
 
   on_linux do
     on_arm do
       url "https://github.com/Dvorinka/runway/releases/download/v#{version}/runway-linux-arm64.tar.gz"
-      sha256 "e5f0dafacb09f0b222b66abfbc1ffdf7ff452efecbb008810002e2a085de0b5e"
+      sha256 "0147c35a879662971bc7fb95eb21a9aac938350a32db6b341fdbf864c4605e22"
     end
     on_intel do
       url "https://github.com/Dvorinka/runway/releases/download/v#{version}/runway-linux-x64.tar.gz"
-      sha256 "73827e1265d12521f463062a6af7b8a838e5fa439a1d71d88da48fa9ee70069a"
+      sha256 "0c6c5fa2bb7c839b084490e0bb9ea3e49857e2367686bfb9e41c9b93c3f0c895"
     end
   end
 
