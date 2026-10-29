@@ -153,12 +153,20 @@ enum Command {
         environment: String,
     },
     /// Promote a deployment so an environment's alias serves it.
+    /// Point an environment alias at a deployment. `--diff` previews the
+    /// env and config key changes and does not promote.
     Promote {
         /// Deployment ID (defaults to the latest of the linked project).
         deployment: Option<String>,
         /// Environment slug (default: prod).
         #[arg(long, default_value = "prod")]
         environment: String,
+        /// Print what would change. Does not promote.
+        #[arg(long)]
+        diff: bool,
+        /// Print the API payload as JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// Cancel a running deployment and stop its container.
     Cancel {
@@ -324,7 +332,9 @@ async fn main() -> anyhow::Result<()> {
         Command::Promote {
             deployment,
             environment,
-        } => commands::promote(deployment, environment).await?,
+            diff,
+            json,
+        } => commands::promote(deployment, environment, diff, json).await?,
         Command::Cancel { deployment } => commands::cancel(deployment).await?,
         Command::Skip { deployment } => commands::skip(deployment).await?,
         Command::Open { print } => commands::open(print).await?,

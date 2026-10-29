@@ -26,6 +26,7 @@ pub mod opengraph;
 pub mod password;
 pub mod pathmatch;
 pub mod presets;
+pub mod promote_diff;
 pub mod rum;
 pub mod slugify;
 pub mod traefik;

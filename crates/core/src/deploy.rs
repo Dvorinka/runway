@@ -649,7 +649,7 @@ pub async fn skip(db: &PgPool, bus: &EventBus, deployment: &Deployment) -> Resul
 
 /// Subdomain an environment's alias lives on: prod → `<slug>`, otherwise
 /// `<slug>-env-<env.slug>`.
-fn environment_subdomain(project: &Project, environment_id: &str) -> Result<String> {
+pub(crate) fn environment_subdomain(project: &Project, environment_id: &str) -> Result<String> {
     let slug = project.slug.clone().unwrap_or_else(|| project.id.clone());
     if environment_id == "prod" {
         return Ok(slug);

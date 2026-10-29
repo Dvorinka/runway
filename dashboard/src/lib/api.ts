@@ -19,6 +19,25 @@ export interface Project {
   created_at: string;
 }
 
+export interface KeyDiff {
+  added: string[];
+  removed: string[];
+  changed: string[];
+}
+
+export interface PromotionDiff {
+  environment_id: string;
+  from_deployment_id: string | null;
+  to_deployment_id: string;
+  already_current: boolean;
+  promotable: boolean;
+  alias: string;
+  env: KeyDiff;
+  config: KeyDiff;
+  domains_unchanged: string[];
+  redirects: KeyDiff;
+}
+
 export interface Deployment {
   id: string;
   project_id: string;
@@ -452,6 +471,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ environment_id: environmentId }),
     }),
+  promotionDiff: (id: string, environmentId = "prod") =>
+    req<PromotionDiff>(
+      `/api/v1/deployments/${id}/diff?environment_id=${encodeURIComponent(environmentId)}`,
+    ),
   skip: (id: string) =>
     req<{ ok: boolean }>(`/api/v1/deployments/${id}/skip`, { method: "POST" }),
   uploadDeploy: (projectId: string, body: Blob) =>

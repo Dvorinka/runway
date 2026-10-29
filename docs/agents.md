@@ -17,6 +17,7 @@ runway env pull                   # .env.local from project (decrypted)
 runway env diff prod staging      # key-presence diff between environments
 runway domains add app.example.com
 runway domains assign-cf app.example.com
+runway promote --diff             # env/config key changes a promotion would make
 runway rollback                   # instant alias re-point to previous deploy
 runway open                       # current deployment URL
 runway nodes ls                   # remote Docker nodes + status
@@ -48,7 +49,7 @@ Settings → API keys mint `ak_` tokens. Use as
 `list_projects`, `get_project`, `list_deployments`, `get_deployment`,
 `get_deployment_logs`, `deployment_stats`, `deploy_project`,
 `cancel_deployment`, `skip_deployment`, `redeploy_deployment`,
-`promote_deployment`, `rollback_environment`, `list_env`, `set_env`,
+`promote_deployment`, `promotion_diff`, `rollback_environment`, `list_env`, `set_env`,
 `list_domains`. The protocol-level `ping` method answers `{}` — it is
 not a callable tool.
 

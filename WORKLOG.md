@@ -421,3 +421,15 @@ throwaway `data-run` DB; production `~/.config/runway` was untouched
 - connect_to_network: same benign-state tolerance ported from devpush
   (404/409/403 already-exists) — stopped the startup reconcile warning
   against seeded compose networks. On PR #18.
+
+## Promotion diff (issue #61)
+
+- `GET /api/v1/deployments/{id}/diff?environment_id=` compares the
+  candidate deployment's snapshotted env and config with the deployment
+  the target environment alias serves. Response is key names only.
+- `runway promote --diff` prints that preview and does not promote.
+  MCP tool `promotion_diff`. The promote confirm banner shows the same
+  list.
+- Custom domains stay on the environment-id alias (set at deploy time).
+  Redirect rules are project-scoped. Both are reported as unchanged
+  because that is what `promote` actually does.

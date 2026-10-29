@@ -1,5 +1,6 @@
 //! Deployment routes: create (manual/latest commit), list, inspect,
-//! cancel, skip, redeploy, rollback, promote, logs (history + SSE stream).
+//! cancel, skip, redeploy, rollback, promote, promotion diff,
+//! logs (history + SSE stream).
 
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -446,6 +447,36 @@ pub async fn promote(
         "previous_deployment_id": alias.previous_deployment_id,
     }))
     .into_response())
+}
+
+#[derive(Deserialize)]
+pub struct DiffQuery {
+    pub environment_id: Option<String>,
+}
+
+/// `GET /api/v1/deployments/{id}/diff?environment_id=prod` — key-level
+/// preview of a promotion. Env values stay on the server.
+pub async fn promotion_diff(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<DiffQuery>,
+) -> ApiResult<Response> {
+    let (dep, project) = accessible_deployment(&state, user.user.id, &id).await?;
+    let environment_id = q
+        .environment_id
+        .filter(|env| !env.is_empty())
+        .unwrap_or_else(|| "prod".into());
+    let diff = runway_core::promote_diff::preview(
+        &state.db,
+        &state.crypto,
+        &state.settings,
+        &project,
+        &dep,
+        &environment_id,
+    )
+    .await?;
+    Ok(Json(diff).into_response())
 }
 
 // ---------------------------------------------------------------------------

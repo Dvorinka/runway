@@ -388,6 +388,10 @@ pub fn router(state: AppState) -> Router {
             post(routes::deployments::promote),
         )
         .route(
+            "/api/v1/deployments/{id}/diff",
+            get(routes::deployments::promotion_diff),
+        )
+        .route(
             "/api/v1/deployments/{id}/logs",
             get(routes::deployments::logs),
         )

@@ -144,6 +144,7 @@ runway env pull              # write .env.local (decrypted, 0600)
 runway domains add app.example.com
 runway domains assign-cf app.example.com   # one-click CF DNS via team tunnel
 runway promote <id>          # point the production alias at a deployment
+runway promote <id> --diff   # preview env and config key changes; does not promote
 runway rollback              # re-point the alias to the previous deployment
 runway open                  # current deployment URL
 ```

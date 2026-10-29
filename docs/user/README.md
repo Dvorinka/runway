@@ -9,7 +9,10 @@ is planned; update in the same PR as the behavior change.
   `*.DEPLOY_DOMAIN` alias and one production alias.
 - **Deploys** — `runway link` in a repo, then `runway deploy --follow`;
   lifecycle `prepare → deploy → finalize → completed`. Rollback re-points
-  the alias instantly (`runway rollback`).
+  the alias instantly (`runway rollback`). `runway promote <id> --diff`
+  lists env and config keys that would change before the alias moves;
+  values stay on the server. Custom domains and redirect rules are
+  project-scoped and are not part of that change.
 - **Env vars** — `runway env set/pull`; stored encrypted, decrypted only
   at deploy/runtime and for `env pull`.
 - **Domains** — custom domains verify then route; `assign-cf` binds one

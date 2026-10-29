@@ -581,24 +581,119 @@ pub async fn rollback(environment: String) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `runway promote [deployment] [--environment prod]` — point an
-/// environment's alias at a deployment (Vercel's "Promote to production").
-pub async fn promote(deployment: Option<String>, environment: String) -> anyhow::Result<()> {
+/// `runway promote [deployment] [--environment prod] [--diff]` — point an
+/// environment's alias at a deployment, or preview the key changes.
+pub async fn promote(
+    deployment: Option<String>,
+    environment: String,
+    diff: bool,
+    json_out: bool,
+) -> anyhow::Result<()> {
     let client = Client::from_config()?;
     let id = match deployment {
         Some(id) => id,
         None => latest_deployment(&client).await?,
     };
+    if diff {
+        let env = query_escape(&environment);
+        let res = client
+            .get(&format!(
+                "/api/v1/deployments/{id}/diff?environment_id={env}"
+            ))
+            .await?;
+        if json_out {
+            return print_json(&res);
+        }
+        print_promotion_diff(&res);
+        return Ok(());
+    }
     let res = client
         .post(
             &format!("/api/v1/deployments/{id}/promote"),
             &json!({ "environment_id": &environment }),
         )
         .await?;
+    if json_out {
+        return print_json(&res);
+    }
     let env = res["environment_id"].as_str().unwrap_or(&environment);
     let dep = res["deployment_id"].as_str().unwrap_or(&id);
     println!("{env} now serves deployment {dep}");
     Ok(())
+}
+
+fn query_escape(value: &str) -> String {
+    let mut out = String::new();
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' => out.push(byte as char),
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
+fn short_id(value: Option<&str>) -> String {
+    match value {
+        Some(id) if !id.is_empty() => id.chars().take(7).collect(),
+        _ => "none".into(),
+    }
+}
+
+fn print_key_diff(label: &str, diff: &Value) {
+    let mut parts = Vec::new();
+    for key in diff["added"].as_array().into_iter().flatten() {
+        if let Some(key) = key.as_str() {
+            parts.push(format!("+{key}"));
+        }
+    }
+    for key in diff["removed"].as_array().into_iter().flatten() {
+        if let Some(key) = key.as_str() {
+            parts.push(format!("-{key}"));
+        }
+    }
+    for key in diff["changed"].as_array().into_iter().flatten() {
+        if let Some(key) = key.as_str() {
+            parts.push(format!("~{key}"));
+        }
+    }
+    if parts.is_empty() {
+        println!("  {label}  no changes");
+    } else {
+        println!("  {label}  {}", parts.join("  "));
+    }
+}
+
+fn print_promotion_diff(diff: &Value) {
+    let env = diff["environment_id"].as_str().unwrap_or("prod");
+    let alias = diff["alias"].as_str().unwrap_or("");
+    let to = short_id(diff["to_deployment_id"].as_str());
+    if diff["already_current"].as_bool() == Some(true) {
+        println!("{env} already serves {to} ({alias})");
+        return;
+    }
+    let from = short_id(diff["from_deployment_id"].as_str());
+    println!("{env}  {alias}");
+    if diff["from_deployment_id"].is_null() {
+        println!("  {to} would become the first deployment");
+    } else {
+        println!("  {to} would replace {from}");
+    }
+    print_key_diff("env", &diff["env"]);
+    print_key_diff("config", &diff["config"]);
+    let domains: Vec<&str> = diff["domains_unchanged"]
+        .as_array()
+        .map(|rows| rows.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+    if !domains.is_empty() {
+        println!(
+            "  domains stay on the current deployment: {}",
+            domains.join(", ")
+        );
+    }
+    if diff["promotable"].as_bool() == Some(false) {
+        println!("  not promotable — only a successful deployment can be promoted");
+    }
 }
 
 /// `runway cancel [deployment]` — cancel a running deployment.

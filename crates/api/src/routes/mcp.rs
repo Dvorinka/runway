@@ -102,6 +102,13 @@ fn tools() -> Value {
                                   "environment_id": {"type": "string", "default": "prod"}}})
         ),
         tool(
+            "promotion_diff",
+            "Preview what promoting a deployment would change. Env and config values are omitted. Does not promote.",
+            json!({"type": "object", "required": ["deployment_id"],
+                   "properties": {"deployment_id": {"type": "string"},
+                                  "environment_id": {"type": "string", "default": "prod"}}})
+        ),
+        tool(
             "list_env",
             "List a project's env vars (values masked)",
             json!({"type": "object", "required": ["project_id"],
@@ -406,6 +413,20 @@ async fn call(state: &AppState, user_id: i64, name: &str, args: &Value) -> ApiRe
                     .await
                     .map_err(|e| ApiError::bad_request(e.to_string()))?;
             Ok(json!({ "environment_id": env, "deployment_id": alias.deployment_id }))
+        }
+        "promotion_diff" => {
+            let (d, p) = deployment_for(state, user_id, arg(args, "deployment_id")?).await?;
+            let env = args["environment_id"].as_str().unwrap_or("prod");
+            let diff = runway_core::promote_diff::preview(
+                &state.db,
+                &state.crypto,
+                &state.settings,
+                &p,
+                &d,
+                env,
+            )
+            .await?;
+            Ok(serde_json::to_value(diff).map_err(ApiError::internal)?)
         }
         "list_env" => {
             let p = project_for(state, user_id, arg(args, "project_id")?).await?;

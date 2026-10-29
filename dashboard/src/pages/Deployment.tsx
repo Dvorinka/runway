@@ -1,4 +1,4 @@
-import { api, deploymentLogsStream, type Deployment } from "@/lib/api";
+import { api, deploymentLogsStream, type Deployment, type KeyDiff, type PromotionDiff } from "@/lib/api";
 import { Badge, Button, EmptyState, Menu, Skeleton, StatusDot, displayStatus, isRunning, type MenuItem } from "@/components/ui";
 import { Ansi } from "@/lib/ansi";
 import { cn, duration, elapsed, firstLine, fmtBytes, timeAgo } from "@/lib/utils";
@@ -636,6 +636,46 @@ function Stepper({ dep }: { dep: Deployment }) {
   );
 }
 
+function keyLine(diff: KeyDiff): string | null {
+  const parts = [
+    ...diff.added.map((key) => `+${key}`),
+    ...diff.removed.map((key) => `-${key}`),
+    ...diff.changed.map((key) => `~${key}`),
+  ];
+  return parts.length ? parts.join("  ") : null;
+}
+
+function PromotePreview({ diff }: { diff: PromotionDiff | null | undefined }) {
+  if (diff === undefined) {
+    return <p className="mt-2 text-[11px] text-muted-foreground">Checking env and config…</p>;
+  }
+  if (diff === null) {
+    return (
+      <p className="mt-2 text-[11px] text-muted-foreground">
+        Could not load the change list. Promoting still only moves the production alias.
+      </p>
+    );
+  }
+  const env = keyLine(diff.env);
+  const config = keyLine(diff.config);
+  const from = diff.from_deployment_id?.slice(0, 7);
+  return (
+    <div className="mt-2 space-y-1 font-mono text-[11px] leading-5 text-foreground/90">
+      <p>
+        {diff.alias}
+        {from ? ` · replaces ${from}` : " · first deployment on this alias"}
+      </p>
+      <p>{env ? `env  ${env}` : "env  no changes"}</p>
+      <p>{config ? `config  ${config}` : "config  no changes"}</p>
+      {diff.domains_unchanged.length > 0 && (
+        <p className="font-sans text-muted-foreground">
+          Custom domains stay on the current deployment: {diff.domains_unchanged.join(", ")}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export default function DeploymentPage() {
   const { id = "" } = useParams();
   const [dep, setDep] = useState<Deployment | null | undefined>(undefined);
@@ -650,6 +690,28 @@ export default function DeploymentPage() {
     phase: "confirm" | "busy" | "done" | "error";
     error?: string;
   } | null>(null);
+  // undefined = still loading, null = the preview request failed.
+  const [promoteDiff, setPromoteDiff] = useState<PromotionDiff | null | undefined>(undefined);
+  const promoteConfirm = aliasAction?.kind === "promote" && aliasAction.phase === "confirm";
+  useEffect(() => {
+    if (!promoteConfirm) {
+      setPromoteDiff(undefined);
+      return;
+    }
+    let gone = false;
+    setPromoteDiff(undefined);
+    api
+      .promotionDiff(id)
+      .then((diff) => {
+        if (!gone) setPromoteDiff(diff);
+      })
+      .catch(() => {
+        if (!gone) setPromoteDiff(null);
+      });
+    return () => {
+      gone = true;
+    };
+  }, [promoteConfirm, id]);
   const [, setTick] = useState(0);
   const logRef = useRef<HTMLDivElement>(null);
 
@@ -905,44 +967,47 @@ export default function DeploymentPage() {
         </div>
       </div>
       {aliasAction && dep && (
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2">
-          <p className="text-xs text-amber-200/90">
-            {aliasAction.phase === "confirm" &&
-              aliasAction.kind === "rollback" &&
-              `Instant rollback — ${envLabel(dep)} will serve ${dep.commit_sha.slice(0, 7)} again, replacing the current deployment.`}
-            {aliasAction.phase === "confirm" &&
-              aliasAction.kind === "promote" &&
-              `Promote to production — production will serve ${dep.commit_sha.slice(0, 7)}, replacing the current deployment.`}
-            {aliasAction.phase === "busy" &&
-              (aliasAction.kind === "rollback"
-                ? `Rolling back ${envLabel(dep)}…`
-                : "Promoting to production…")}
-            {aliasAction.phase === "done" &&
-              (aliasAction.kind === "rollback"
-                ? `${envLabel(dep)} now serves this deployment.`
-                : "Production now serves this deployment.")}
-            {aliasAction.phase === "error" &&
-              `${aliasAction.kind === "rollback" ? "Rollback" : "Promote"} failed — ${aliasAction.error}`}
-          </p>
-          {aliasAction.phase === "confirm" && (
-            <span className="flex gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => doAliasAction(aliasAction.kind)}
-              >
-                {aliasAction.kind === "rollback" ? "Roll back" : "Promote"}
-              </Button>
+        <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-xs text-amber-200/90">
+              {aliasAction.phase === "confirm" &&
+                aliasAction.kind === "rollback" &&
+                `Instant rollback — ${envLabel(dep)} will serve ${dep.commit_sha.slice(0, 7)} again, replacing the current deployment.`}
+              {aliasAction.phase === "confirm" &&
+                aliasAction.kind === "promote" &&
+                `Promote to production — production will serve ${dep.commit_sha.slice(0, 7)}, replacing the current deployment.`}
+              {aliasAction.phase === "busy" &&
+                (aliasAction.kind === "rollback"
+                  ? `Rolling back ${envLabel(dep)}…`
+                  : "Promoting to production…")}
+              {aliasAction.phase === "done" &&
+                (aliasAction.kind === "rollback"
+                  ? `${envLabel(dep)} now serves this deployment.`
+                  : "Production now serves this deployment.")}
+              {aliasAction.phase === "error" &&
+                `${aliasAction.kind === "rollback" ? "Rollback" : "Promote"} failed — ${aliasAction.error}`}
+            </p>
+            {aliasAction.phase === "confirm" && (
+              <span className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => doAliasAction(aliasAction.kind)}
+                >
+                  {aliasAction.kind === "rollback" ? "Roll back" : "Promote"}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setAliasAction(null)}>
+                  Dismiss
+                </Button>
+              </span>
+            )}
+            {(aliasAction.phase === "done" || aliasAction.phase === "error") && (
               <Button size="sm" variant="ghost" onClick={() => setAliasAction(null)}>
                 Dismiss
               </Button>
-            </span>
-          )}
-          {(aliasAction.phase === "done" || aliasAction.phase === "error") && (
-            <Button size="sm" variant="ghost" onClick={() => setAliasAction(null)}>
-              Dismiss
-            </Button>
-          )}
+            )}
+          </div>
+          {promoteConfirm && <PromotePreview diff={promoteDiff} />}
         </div>
       )}
       {dep && firstLine(dep.commit_meta?.message) && (
