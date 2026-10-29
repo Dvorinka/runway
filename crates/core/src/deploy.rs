@@ -647,6 +647,34 @@ pub async fn skip(db: &PgPool, bus: &EventBus, deployment: &Deployment) -> Resul
     .await
 }
 
+/// Subdomain an environment's alias lives on: prod → `<slug>`, otherwise
+/// `<slug>-env-<env.slug>`.
+pub(crate) fn environment_subdomain(project: &Project, environment_id: &str) -> Result<String> {
+    let slug = project.slug.clone().unwrap_or_else(|| project.id.clone());
+    if environment_id == "prod" {
+        return Ok(slug);
+    }
+    let env = project
+        .environment_by_id(environment_id)
+        .ok_or_else(|| Error::NotFound("environment".into()))?;
+    Ok(format!("{slug}-env-{}", env.slug))
+}
+
+/// Fetch the alias row an environment currently resolves to. None until a
+/// deployment has held the alias.
+pub async fn environment_alias(
+    db: &PgPool,
+    project: &Project,
+    environment_id: &str,
+) -> Result<Option<Alias>> {
+    let subdomain = environment_subdomain(project, environment_id)?;
+    sqlx::query_as("SELECT * FROM alias WHERE subdomain = $1")
+        .bind(&subdomain)
+        .fetch_optional(db)
+        .await
+        .map_err(Error::from)
+}
+
 /// Rollback an environment to its previous deployment — port of rollback.
 pub async fn rollback(
     db: &PgPool,
@@ -655,20 +683,7 @@ pub async fn rollback(
     project: &Project,
     environment_id: &str,
 ) -> Result<Alias> {
-    let slug = project.slug.clone().unwrap_or_else(|| project.id.clone());
-    let subdomain = if environment_id == "prod" {
-        slug.clone()
-    } else {
-        let env = project
-            .environment_by_id(environment_id)
-            .ok_or_else(|| Error::NotFound("environment".into()))?;
-        format!("{slug}-env-{}", env.slug)
-    };
-
-    let alias: Option<Alias> = sqlx::query_as("SELECT * FROM alias WHERE subdomain = $1")
-        .bind(&subdomain)
-        .fetch_optional(db)
-        .await?;
+    let alias = environment_alias(db, project, environment_id).await?;
     let Some(alias) = alias else {
         return Err(Error::Validation(
             "no previous deployment to roll back to".into(),
@@ -705,6 +720,62 @@ pub async fn rollback(
 
     sqlx::query_as("SELECT * FROM alias WHERE id = $1")
         .bind(alias.id)
+        .fetch_one(db)
+        .await
+        .map_err(Error::from)
+}
+
+/// Promote a deployment as current for an environment — port of devpush's
+/// (stubbed) `DeploymentService.promote`; Vercel's "Promote to
+/// production". The env alias is created when the environment has never
+/// been deployed to.
+pub async fn promote(
+    db: &PgPool,
+    bus: &EventBus,
+    settings: &Settings,
+    project: &Project,
+    environment_id: &str,
+    deployment: &Deployment,
+) -> Result<Alias> {
+    if deployment.status != "completed" || deployment.conclusion.as_deref() != Some("succeeded") {
+        return Err(Error::Validation(
+            "only a successful deployment can be promoted".into(),
+        ));
+    }
+    let subdomain = environment_subdomain(project, environment_id)?;
+    let alias = environment_alias(db, project, environment_id).await?;
+    if let Some(a) = &alias {
+        if a.deployment_id == deployment.id {
+            return Ok(alias.unwrap());
+        }
+    }
+    let previous = alias.as_ref().map(|a| a.deployment_id.clone());
+
+    alias_update_or_create(
+        db,
+        &subdomain,
+        &deployment.id,
+        "environment",
+        Some(environment_id),
+        environment_id,
+    )
+    .await?;
+
+    traefik::update_project_config(db, project, settings, &[]).await?;
+
+    bus.publish(
+        &format!("project:{}:updates", project.id),
+        &json!({
+            "event_type": "deployment_promotion",
+            "environment_id": environment_id,
+            "deployment_id": deployment.id,
+            "previous_deployment_id": previous,
+            "timestamp": Utc::now().to_rfc3339(),
+        }),
+    );
+
+    sqlx::query_as("SELECT * FROM alias WHERE subdomain = $1")
+        .bind(&subdomain)
         .fetch_one(db)
         .await
         .map_err(Error::from)

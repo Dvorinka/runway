@@ -206,6 +206,9 @@ pub async fn openapi() -> Response {
         ("/api/v1/deployments/{id}/cancel", &[("post", "Cancel a running deployment")]),
         ("/api/v1/deployments/{id}/skip", &[("post", "Skip a queued deployment")]),
         ("/api/v1/deployments/{id}/redeploy", &[("post", "New deployment, same commit")]),
+        ("/api/v1/deployments/{id}/promote", &[("post", "Point an environment alias at this deployment {environment_id?} — default prod")]),
+        ("/api/v1/deployments/{id}/diff", &[("get", "Preview a promotion: env and config key changes, values omitted (?environment_id=prod)")]),
+        ("/api/v1/deployments/{id}/files", &[("get", "Deployed static-output file inventory")]),
         ("/api/v1/deployments/{id}/logs", &[("get", "Plain-text log tail (?tail=N)")]),
         ("/api/v1/deployments/{id}/logs/stream", &[("get", "SSE live log stream")]),
         ("/api/v1/teams", &[("get", "List teams for the current user")]),
@@ -221,6 +224,7 @@ pub async fn openapi() -> Response {
         ]),
         ("/api/v1/keys/{id}", &[("delete", "Revoke an API key")]),
         ("/api/deploy", &[("post", "Trigger deploy with rw_ token {project, branch?}")]),
+        ("/api/v1/admin/system", &[("get", "Docker disk-usage inventory (superadmin)")]),
         ("/api/mcp", &[("post", "MCP JSON-RPC 2.0 (initialize, tools/list, tools/call) — Bearer ak_ auth")]),
     ];
 

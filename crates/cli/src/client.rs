@@ -59,12 +59,14 @@ pub fn link_path() -> PathBuf {
 
 pub fn load_link() -> anyhow::Result<LinkFile> {
     let path = link_path();
-    let raw = std::fs::read_to_string(&path).with_context(|| {
-        format!(
+    let raw = match std::fs::read_to_string(&path) {
+        Ok(r) => r,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => anyhow::bail!(
             "no linked project ({}) — run `runway link <project-id>`",
             path.display()
-        )
-    })?;
+        ),
+        Err(e) => return Err(e).with_context(|| format!("cannot read {}", path.display())),
+    };
     serde_json::from_str(&raw).context("corrupt .runway/project.json")
 }
 
@@ -97,6 +99,11 @@ impl Client {
             key: key.to_string(),
             http: reqwest::Client::new(),
         }
+    }
+
+    /// Configured instance base URL — used to compose user-facing links.
+    pub fn base_url(&self) -> &str {
+        &self.base
     }
 
     fn url(&self, path: &str) -> String {

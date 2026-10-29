@@ -9,7 +9,12 @@ use serde_json::{json, Value};
 use crate::client::{self, CliConfig, Client, LinkFile};
 
 /// `runway login` — store instance URL + API key after validating them.
-pub async fn login(server: Option<String>, key: Option<String>) -> anyhow::Result<()> {
+pub async fn login(
+    server: Option<String>,
+    key: Option<String>,
+    email: Option<String>,
+    password: Option<String>,
+) -> anyhow::Result<()> {
     let server = match server {
         Some(s) => s.trim_end_matches('/').to_string(),
         None => prompt("Instance URL (e.g. https://runway.example.com): ")?,
@@ -17,9 +22,14 @@ pub async fn login(server: Option<String>, key: Option<String>) -> anyhow::Resul
     if !(server.starts_with("http://") || server.starts_with("https://")) {
         bail!("server must start with http:// or https://");
     }
+
     let key = match key {
         Some(k) => k,
-        None => prompt("API key (ak_...): ")?,
+        None => {
+            // No key — email/password sign-in mints one, so a fresh
+            // machine never needs the dashboard (or `bootstrap`).
+            login_mint_key(&server, email, password).await?
+        }
     };
     if !key.starts_with("ak_") {
         bail!("expected an ak_ API key (run `runway bootstrap` or the dashboard)");
@@ -41,6 +51,82 @@ pub async fn login(server: Option<String>, key: Option<String>) -> anyhow::Resul
         client::config_path().display()
     );
     Ok(())
+}
+
+/// Sign in with email + password and mint an `ak_` API key. Handles the
+/// TOTP challenge when the account has 2FA enabled.
+async fn login_mint_key(
+    server: &str,
+    email: Option<String>,
+    password: Option<String>,
+) -> anyhow::Result<String> {
+    let email = match email {
+        Some(e) if !e.trim().is_empty() => e,
+        _ => prompt("Email: ")?,
+    };
+    let password = match password {
+        Some(p) if !p.is_empty() => p,
+        _ => prompt_secret("Password: ")?,
+    };
+    let http = reqwest::Client::new();
+    let resp = http
+        .post(format!("{server}/api/auth/login"))
+        .json(&json!({ "email": email, "password": password }))
+        .send()
+        .await
+        .context("login request failed")?;
+    let mut cookie = first_set_cookie(&resp);
+    let body: Value = resp.json().await.unwrap_or_default();
+    if body["two_factor"].as_bool() == Some(true) {
+        let pending = body["pending"].as_str().unwrap_or_default().to_string();
+        let code = prompt("Two-factor or recovery code: ")?;
+        let resp = http
+            .post(format!("{server}/api/auth/totp/challenge"))
+            .json(&json!({ "pending": pending, "code": code }))
+            .send()
+            .await
+            .context("2FA challenge failed")?;
+        if !resp.status().is_success() {
+            bail!("invalid two-factor code");
+        }
+        cookie = first_set_cookie(&resp).or(cookie);
+    }
+    let cookie = cookie.context("no session cookie returned — check email and password")?;
+
+    // Session → named API key. Name ties the key to this machine so the
+    // dashboard's key list stays auditable.
+    let host = std::env::var("HOSTNAME").unwrap_or_else(|_| "machine".into());
+    let resp = http
+        .post(format!("{server}/api/v1/keys"))
+        .header("cookie", cookie)
+        .json(&json!({ "name": format!("cli-{host}") }))
+        .send()
+        .await
+        .context("key mint failed")?;
+    if !resp.status().is_success() {
+        bail!("could not mint API key ({})", resp.status());
+    }
+    let body: Value = resp.json().await.unwrap_or_default();
+    body["token"]
+        .as_str()
+        .map(String::from)
+        .context("no token in key response")
+}
+
+/// First `name=value` pair from a response's Set-Cookie header.
+fn first_set_cookie(resp: &reqwest::Response) -> Option<String> {
+    resp.headers()
+        .get(reqwest::header::SET_COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(';').next().map(str::to_string))
+}
+
+fn prompt_secret(msg: &str) -> anyhow::Result<String> {
+    let s = rpassword::prompt_password(msg)?;
+    if s.is_empty() {
+        bail!("empty input");
+    }
+    Ok(s)
 }
 
 /// `runway link [project-id]` — bind CWD to a project (`.runway/project.json`).
@@ -85,7 +171,7 @@ fn cwd_name() -> anyhow::Result<String> {
 }
 
 /// `runway whoami` — show the logged-in user and instance health.
-pub async fn whoami() -> anyhow::Result<()> {
+pub async fn whoami(json_out: bool) -> anyhow::Result<()> {
     let client = Client::from_config()?;
     let me = client.get("/api/auth/me").await?;
     let email = me["email"].as_str().unwrap_or("?");
@@ -97,6 +183,14 @@ pub async fn whoami() -> anyhow::Result<()> {
         .and_then(|h| h["status"].as_str().map(String::from))
         .unwrap_or_else(|| "unreachable".to_string());
     let server = client::load_config().server.unwrap_or_default();
+    if json_out {
+        return print_json(&serde_json::json!({
+            "email": email,
+            "username": username,
+            "server": server,
+            "health": health,
+        }));
+    }
     if username.is_empty() {
         println!("{email}");
     } else {
@@ -131,9 +225,12 @@ pub async fn unlink() -> anyhow::Result<()> {
 }
 
 /// `runway projects` — list all projects on the instance.
-pub async fn projects() -> anyhow::Result<()> {
+pub async fn projects(json_out: bool) -> anyhow::Result<()> {
     let client = Client::from_config()?;
     let res = client.get("/api/v1/projects").await?;
+    if json_out {
+        return print_json(&res);
+    }
     let list = res["projects"].as_array().cloned().unwrap_or_default();
     if list.is_empty() {
         println!("No projects yet — run `runway create <name>`.");
@@ -157,7 +254,7 @@ pub async fn projects() -> anyhow::Result<()> {
 }
 
 /// `runway status` — instance, link, project, and latest deployment state.
-pub async fn status() -> anyhow::Result<()> {
+pub async fn status(json_out: bool) -> anyhow::Result<()> {
     let client = Client::from_config()?;
     let server = client::load_config().server.unwrap_or_default();
     let health = client
@@ -166,14 +263,37 @@ pub async fn status() -> anyhow::Result<()> {
         .ok()
         .and_then(|h| h["status"].as_str().map(String::from))
         .unwrap_or_else(|| "unreachable".to_string());
-    println!("server: {server} [{health}]");
+    if !json_out {
+        println!("server: {server} [{health}]");
+    }
     let Ok(link) = client::load_link() else {
+        if json_out {
+            return print_json(&serde_json::json!({
+                "server": server, "health": health, "linked": false,
+            }));
+        }
         println!("directory: not linked (run `runway link` or `runway create`)");
         return Ok(());
     };
     let p = client
         .get(&format!("/api/v1/projects/{}", link.project_id))
         .await?;
+    let deps = client
+        .get(&format!(
+            "/api/v1/projects/{}/deployments?limit=1",
+            link.project_id
+        ))
+        .await?;
+    let latest = deps["deployments"]
+        .as_array()
+        .and_then(|a| a.first())
+        .cloned();
+    if json_out {
+        return print_json(&serde_json::json!({
+            "server": server, "health": health, "linked": true,
+            "project": p, "latest_deployment": latest,
+        }));
+    }
     println!(
         "project: {} ({})",
         p["name"].as_str().unwrap_or("?"),
@@ -182,13 +302,7 @@ pub async fn status() -> anyhow::Result<()> {
     if let Some(url) = p["url"].as_str().filter(|u| !u.is_empty()) {
         println!("url: {url}");
     }
-    let deps = client
-        .get(&format!(
-            "/api/v1/projects/{}/deployments?limit=1",
-            link.project_id
-        ))
-        .await?;
-    if let Some(d) = deps["deployments"].as_array().and_then(|a| a.first()) {
+    if let Some(d) = latest {
         let conclusion = d["conclusion"].as_str().unwrap_or("");
         let state = if conclusion.is_empty() {
             d["status"].as_str().unwrap_or("?").to_string()
@@ -224,9 +338,28 @@ pub async fn redeploy(deployment: Option<String>, follow: bool) -> anyhow::Resul
     Ok(())
 }
 
+fn is_id(s: &str) -> bool {
+    s.len() == 32 && s.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// name/slug → id, from the user's visible project list.
+async fn resolve_project(client: &Client, want: &str) -> anyhow::Result<String> {
+    let res = client.get("/api/v1/projects").await?;
+    res["projects"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .find(|j| j["name"].as_str() == Some(want) || j["slug"].as_str() == Some(want))
+        .and_then(|j| j["id"].as_str().map(String::from))
+        .with_context(|| format!("no project named {want}"))
+}
+
 pub async fn link(project: Option<String>) -> anyhow::Result<()> {
     let client = Client::from_config()?;
     let project_id = match project {
+        // Names and slugs resolve through the list — the API keys by id.
+        Some(p) if !is_id(&p) => resolve_project(&client, &p).await?,
         Some(p) => p,
         None => {
             let res = client.get("/api/v1/projects").await?;
@@ -238,8 +371,13 @@ pub async fn link(project: Option<String>) -> anyhow::Result<()> {
                     p["name"].as_str().unwrap_or("?")
                 );
             }
-            prompt("Project ID to link: ")?
+            prompt("Project name or ID to link: ")?
         }
+    };
+    let project_id = if is_id(&project_id) {
+        project_id
+    } else {
+        resolve_project(&client, &project_id).await?
     };
     let p = client
         .get(&format!("/api/v1/projects/{project_id}"))
@@ -320,25 +458,27 @@ pub async fn logs(deployment: Option<String>, follow: bool, project: bool) -> an
         let text = client
             .get_text(&format!("/api/v1/projects/{}/logs", link.project_id))
             .await?;
-        print!("{text}");
+        for line in text.lines() {
+            print_log_line(line, false);
+        }
         return Ok(());
     }
     let dep_id = match deployment {
         Some(d) => d,
         None => latest_deployment(&client).await?,
     };
-    let mut printed = print_logs(&client, &dep_id, 0).await?;
+    let mut printed = print_logs(&client, &dep_id, 0, false).await?;
     if !follow {
         return Ok(());
     }
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        printed = print_logs(&client, &dep_id, printed).await?;
+        printed = print_logs(&client, &dep_id, printed, false).await?;
         // Terminal signal is `conclusion` — status='completed' covers
         // succeeded AND failed (devpush lifecycle semantics).
         let dep = client.get(&format!("/api/v1/deployments/{dep_id}")).await?;
         if let Some(conclusion) = dep["conclusion"].as_str() {
-            let _ = print_logs(&client, &dep_id, printed).await?;
+            let _ = print_logs(&client, &dep_id, printed, false).await?;
             println!("-- deployment concluded: {conclusion}");
             break;
         }
@@ -347,7 +487,7 @@ pub async fn logs(deployment: Option<String>, follow: bool, project: bool) -> an
 }
 
 /// `runway deployments [--limit N]`.
-pub async fn deployments(limit: usize) -> anyhow::Result<()> {
+pub async fn deployments(limit: usize, json_out: bool) -> anyhow::Result<()> {
     let client = Client::from_config()?;
     let link = client::load_link()?;
     let res = client
@@ -356,6 +496,9 @@ pub async fn deployments(limit: usize) -> anyhow::Result<()> {
             link.project_id
         ))
         .await?;
+    if json_out {
+        return print_json(&res);
+    }
     let deps = res["deployments"].as_array().cloned().unwrap_or_default();
     if deps.is_empty() {
         println!("No deployments yet.");
@@ -376,7 +519,7 @@ pub async fn deployments(limit: usize) -> anyhow::Result<()> {
 }
 
 /// `runway stats [deployment]` — live container resource snapshot.
-pub async fn stats(deployment: Option<String>) -> anyhow::Result<()> {
+pub async fn stats(deployment: Option<String>, json_out: bool) -> anyhow::Result<()> {
     let client = Client::from_config()?;
     let dep_id = match deployment {
         Some(d) => d,
@@ -386,8 +529,16 @@ pub async fn stats(deployment: Option<String>) -> anyhow::Result<()> {
         .get(&format!("/api/v1/deployments/{dep_id}/stats"))
         .await?;
     if !s["running"].as_bool().unwrap_or(false) {
+        if json_out {
+            return print_json(&serde_json::json!({"id": dep_id, "running": false}));
+        }
         println!("{} — container not running", &dep_id[..dep_id.len().min(7)]);
         return Ok(());
+    }
+    if json_out {
+        let mut v = s.clone();
+        v["id"] = serde_json::json!(dep_id);
+        return print_json(&v);
     }
     let fmt_b = |v: &serde_json::Value| {
         let n = v.as_u64().unwrap_or(0) as f64;
@@ -430,15 +581,179 @@ pub async fn rollback(environment: String) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `runway env list | set KEY=VAL | unset KEY`.
-pub async fn env(args: Vec<String>, environment: Option<String>) -> anyhow::Result<()> {
+/// `runway promote [deployment] [--environment prod] [--diff]` — point an
+/// environment's alias at a deployment, or preview the key changes.
+pub async fn promote(
+    deployment: Option<String>,
+    environment: String,
+    diff: bool,
+    json_out: bool,
+) -> anyhow::Result<()> {
+    let client = Client::from_config()?;
+    let id = match deployment {
+        Some(id) => id,
+        None => latest_deployment(&client).await?,
+    };
+    if diff {
+        let env = query_escape(&environment);
+        let res = client
+            .get(&format!(
+                "/api/v1/deployments/{id}/diff?environment_id={env}"
+            ))
+            .await?;
+        if json_out {
+            return print_json(&res);
+        }
+        print_promotion_diff(&res);
+        return Ok(());
+    }
+    let res = client
+        .post(
+            &format!("/api/v1/deployments/{id}/promote"),
+            &json!({ "environment_id": &environment }),
+        )
+        .await?;
+    if json_out {
+        return print_json(&res);
+    }
+    let env = res["environment_id"].as_str().unwrap_or(&environment);
+    let dep = res["deployment_id"].as_str().unwrap_or(&id);
+    println!("{env} now serves deployment {dep}");
+    Ok(())
+}
+
+fn query_escape(value: &str) -> String {
+    let mut out = String::new();
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' => out.push(byte as char),
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
+fn short_id(value: Option<&str>) -> String {
+    match value {
+        Some(id) if !id.is_empty() => id.chars().take(7).collect(),
+        _ => "none".into(),
+    }
+}
+
+fn print_key_diff(label: &str, diff: &Value) {
+    let mut parts = Vec::new();
+    for key in diff["added"].as_array().into_iter().flatten() {
+        if let Some(key) = key.as_str() {
+            parts.push(format!("+{key}"));
+        }
+    }
+    for key in diff["removed"].as_array().into_iter().flatten() {
+        if let Some(key) = key.as_str() {
+            parts.push(format!("-{key}"));
+        }
+    }
+    for key in diff["changed"].as_array().into_iter().flatten() {
+        if let Some(key) = key.as_str() {
+            parts.push(format!("~{key}"));
+        }
+    }
+    if parts.is_empty() {
+        println!("  {label}  no changes");
+    } else {
+        println!("  {label}  {}", parts.join("  "));
+    }
+}
+
+fn print_promotion_diff(diff: &Value) {
+    let env = diff["environment_id"].as_str().unwrap_or("prod");
+    let alias = diff["alias"].as_str().unwrap_or("");
+    let to = short_id(diff["to_deployment_id"].as_str());
+    if diff["already_current"].as_bool() == Some(true) {
+        println!("{env} already serves {to} ({alias})");
+        return;
+    }
+    let from = short_id(diff["from_deployment_id"].as_str());
+    println!("{env}  {alias}");
+    if diff["from_deployment_id"].is_null() {
+        println!("  {to} would become the first deployment");
+    } else {
+        println!("  {to} would replace {from}");
+    }
+    print_key_diff("env", &diff["env"]);
+    print_key_diff("config", &diff["config"]);
+    let domains: Vec<&str> = diff["domains_unchanged"]
+        .as_array()
+        .map(|rows| rows.iter().filter_map(|v| v.as_str()).collect())
+        .unwrap_or_default();
+    if !domains.is_empty() {
+        println!(
+            "  domains stay on the current deployment: {}",
+            domains.join(", ")
+        );
+    }
+    if diff["promotable"].as_bool() == Some(false) {
+        println!("  not promotable — only a successful deployment can be promoted");
+    }
+}
+
+/// `runway cancel [deployment]` — cancel a running deployment.
+pub async fn cancel(deployment: Option<String>) -> anyhow::Result<()> {
+    let client = Client::from_config()?;
+    let id = match deployment {
+        Some(id) => id,
+        None => latest_deployment(&client).await?,
+    };
+    let res = client
+        .post(&format!("/api/v1/deployments/{id}/cancel"), &json!({}))
+        .await?;
+    let status = res["status"].as_str().unwrap_or("canceled");
+    println!("Deployment {id} {status}");
+    Ok(())
+}
+
+/// `runway skip [deployment]` — drop a queued deployment before it runs.
+pub async fn skip(deployment: Option<String>) -> anyhow::Result<()> {
+    let client = Client::from_config()?;
+    let id = match deployment {
+        Some(id) => id,
+        None => latest_deployment(&client).await?,
+    };
+    client
+        .post(&format!("/api/v1/deployments/{id}/skip"), &json!({}))
+        .await?;
+    println!("Deployment {id} skipped");
+    Ok(())
+}
+
+/// `runway env list | set K=V | unset K | pull [file] | push [file] | diff <a> <b>`.
+pub async fn env(mut args: Vec<String>, environment: Option<String>) -> anyhow::Result<()> {
     let client = Client::from_config()?;
     let link = client::load_link()?;
     let base = format!("/api/v1/projects/{}/env", link.project_id);
+    let json_out = strip_json_flag(&mut args);
+    // `env set K=V --environment prod` is the natural spelling, but
+    // trailing_var_arg would swallow the flag — rescue it here.
+    let environment = environment.or_else(|| {
+        let pos = args
+            .iter()
+            .position(|a| a == "--environment" || a == "-e" || a.starts_with("--environment="))?;
+        if let Some((_, v)) = args[pos].split_once('=') {
+            let v = v.to_string();
+            args.remove(pos);
+            Some(v)
+        } else {
+            let val = args.get(pos + 1)?.clone();
+            args.drain(pos..=pos + 1);
+            Some(val)
+        }
+    });
 
     match args.first().map(String::as_str) {
         None | Some("list") => {
             let res = client.get(&base).await?;
+            if json_out {
+                return print_json(&res);
+            }
             let vars = res["env"].as_array().cloned().unwrap_or_default();
             if vars.is_empty() {
                 println!("No variables — `runway env set KEY=VALUE` or `runway env push [file]`.");
@@ -579,16 +894,87 @@ pub async fn env(args: Vec<String>, environment: Option<String>) -> anyhow::Resu
                 if vars.len() == 1 { "" } else { "s" }
             );
         }
-        Some(other) => bail!("unknown env action '{other}' — list|set|unset|pull|push"),
+        // `runway env diff <a> <b>` — key-presence diff between two
+        // environments. Values stay masked server-side; shared
+        // (unscoped) vars count toward both sides.
+        Some("diff") => {
+            let (a, b) = (
+                args.get(1)
+                    .context("usage: runway env diff <env-a> <env-b>")?,
+                args.get(2)
+                    .context("usage: runway env diff <env-a> <env-b>")?,
+            );
+            let res = client.get(&base).await?;
+            let vars = res["env"].as_array().cloned().unwrap_or_default();
+            // Scopes are stored as-passed — a var may reference an env by
+            // id or slug. Resolve each side to {id, slug} and match both.
+            let proj = client
+                .get(&format!("/api/v1/projects/{}", link.project_id))
+                .await?;
+            let env_aliases = |want: &str| -> Vec<String> {
+                proj["environments"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|e| {
+                        e["id"].as_str() == Some(want)
+                            || e["slug"].as_str() == Some(want)
+                            || e["name"].as_str().map(|n| n.eq_ignore_ascii_case(want))
+                                == Some(true)
+                    })
+                    .flat_map(|e| {
+                        [e["id"].as_str(), e["slug"].as_str()]
+                            .into_iter()
+                            .flatten()
+                            .map(String::from)
+                            .collect::<Vec<_>>()
+                    })
+                    .collect()
+            };
+            let keys_for = |env: &str| -> std::collections::BTreeSet<String> {
+                let aliases = env_aliases(env);
+                vars.iter()
+                    .filter(|v| {
+                        v["environment"]
+                            .as_str()
+                            .is_none_or(|e| e == env || aliases.iter().any(|a| a == e))
+                    })
+                    .filter_map(|v| v["key"].as_str().map(String::from))
+                    .collect()
+            };
+            let (ka, kb) = (keys_for(a), keys_for(b));
+            let only_a: Vec<&String> = ka.difference(&kb).collect();
+            let only_b: Vec<&String> = kb.difference(&ka).collect();
+            if json_out {
+                return print_json(&json!({
+                    "a": a, "b": b,
+                    "only_in_a": only_a, "only_in_b": only_b,
+                    "shared": ka.intersection(&kb).count(),
+                }));
+            }
+            if only_a.is_empty() && only_b.is_empty() {
+                println!("{a} and {b} have identical keys ({} shared).", ka.len());
+                return Ok(());
+            }
+            for k in &only_a {
+                println!("only in {a}: {k}");
+            }
+            for k in &only_b {
+                println!("only in {b}: {k}");
+            }
+        }
+        Some(other) => bail!("unknown env action '{other}' — list|set|unset|pull|push|diff"),
     }
     Ok(())
 }
 
 /// `runway domains list | add <host> | remove <host> | assign-cf <host>`.
-pub async fn domains(args: Vec<String>) -> anyhow::Result<()> {
+pub async fn domains(mut args: Vec<String>) -> anyhow::Result<()> {
     let client = Client::from_config()?;
     let link = client::load_link()?;
     let base = format!("/api/v1/projects/{}/domains", link.project_id);
+    let json_out = strip_json_flag(&mut args);
 
     let find_id = |hostname: &str, list: &[Value]| -> anyhow::Result<i64> {
         list.iter()
@@ -600,6 +986,9 @@ pub async fn domains(args: Vec<String>) -> anyhow::Result<()> {
     match args.first().map(String::as_str) {
         None | Some("list") => {
             let res = client.get(&base).await?;
+            if json_out {
+                return print_json(&res);
+            }
             for d in res["domains"].as_array().cloned().unwrap_or_default() {
                 println!(
                     "  {:<40} {} [{}]",
@@ -621,14 +1010,16 @@ pub async fn domains(args: Vec<String>) -> anyhow::Result<()> {
             println!("Added {host}");
         }
         Some("remove") | Some("rm") => {
+            let yes = strip_flag(&mut args, "--yes");
             let host = args
                 .get(1)
-                .context("usage: runway domains remove <hostname>")?;
+                .context("usage: runway domains remove <hostname> [--yes]")?;
             let res = client.get(&base).await?;
             let id = find_id(
                 host,
                 res["domains"].as_array().map(Vec::as_slice).unwrap_or(&[]),
             )?;
+            confirm_danger(host, "remove domain", yes)?;
             client.delete(&format!("{base}/{id}")).await?;
             println!("Removed {host}");
         }
@@ -668,7 +1059,190 @@ pub async fn open(print_only: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn list_nodes(client: &Client) -> anyhow::Result<Vec<Value>> {
+    client
+        .get("/api/v1/admin/nodes")
+        .await
+        .map(|r| r["nodes"].as_array().cloned().unwrap_or_default())
+}
+
+async fn find_node(client: &Client, want: &str) -> anyhow::Result<Value> {
+    list_nodes(client)
+        .await?
+        .into_iter()
+        .find(|n| n["id"].as_str() == Some(want) || n["name"].as_str() == Some(want))
+        .context("no node with that id or name")
+}
+
+/// `runway nodes` — admin surface for remote Docker nodes.
+///   nodes [ls]                          list nodes with status + inventory
+///   nodes add --command [--expires H]   print the one-line install command
+///   nodes approve <id|name>             approve a waiting node
+///   nodes rm <id|name>                  delete/reject a node
+///   nodes token ls | token rm <id>      list or revoke enrollment tokens
+pub async fn nodes(mut args: Vec<String>) -> anyhow::Result<()> {
+    let client = Client::from_config()?;
+    let base = "/api/v1/admin/nodes";
+    let json_out = strip_json_flag(&mut args);
+
+    match args.first().map(String::as_str) {
+        None | Some("ls") | Some("list") => {
+            if json_out {
+                let res = client.get(base).await?;
+                return print_json(&res);
+            }
+            for n in list_nodes(&client).await? {
+                let meta = &n["meta"];
+                let inv = [
+                    meta["arch"].as_str().map(str::to_string),
+                    meta["docker_version"]
+                        .as_str()
+                        .map(|v| format!("docker {v}")),
+                    meta["cpus"].as_u64().map(|c| format!("{c} cpu")),
+                    meta["mem_bytes"]
+                        .as_u64()
+                        .map(|m| format!("{:.1} GiB", m as f64 / 1073741824.0)),
+                ]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join(" · ");
+                println!(
+                    "  {:<16} {:<8} {:<32} {} · seen {}",
+                    n["name"].as_str().unwrap_or(""),
+                    n["status"].as_str().unwrap_or("?"),
+                    n["docker_url"].as_str().unwrap_or(""),
+                    inv,
+                    n["updated_at"].as_str().map(ago).unwrap_or_default(),
+                );
+            }
+        }
+        Some("add") => {
+            // nodes add --command [--expires <hours>]
+            anyhow::ensure!(
+                args.iter().any(|a| a == "--command"),
+                "usage: runway nodes add --command [--expires <hours>]"
+            );
+            let hours: i64 = args
+                .iter()
+                .position(|a| a == "--expires")
+                .and_then(|i| args.get(i + 1))
+                .map(|v| v.parse().context("--expires must be hours"))
+                .transpose()?
+                .unwrap_or(24);
+            let res = client
+                .post(
+                    &format!("{base}/tokens"),
+                    &json!({ "expires_hours": hours }),
+                )
+                .await?;
+            let token = res["token"].as_str().context("no token in response")?;
+            let server = client.base_url();
+            println!("Run this on the machine to enroll it as a deploy node:\n");
+            println!(
+                "  curl -fsSL {server}/install-node.sh | sudo RUNWAY_URL={server} RUNWAY_TOKEN={token} sh\n"
+            );
+            println!("Token expires in {hours}h. The node lands as 'waiting' — approve it with:");
+            println!("  runway nodes approve <name>");
+        }
+        Some("approve") => {
+            let want = args
+                .get(1)
+                .context("usage: runway nodes approve <id|name>")?;
+            let n = find_node(&client, want).await?;
+            let id = n["id"].as_str().unwrap();
+            let res = client
+                .post(&format!("{base}/{id}/approve"), &json!({}))
+                .await?;
+            println!(
+                "{} → {}",
+                res["name"].as_str().unwrap_or(want),
+                res["status"].as_str().unwrap_or("?")
+            );
+        }
+        Some("rm") | Some("remove") | Some("delete") => {
+            let yes = strip_flag(&mut args, "--yes");
+            let want = args
+                .get(1)
+                .context("usage: runway nodes rm <id|name> [--yes]")?;
+            let n = find_node(&client, want).await?;
+            confirm_danger(n["name"].as_str().unwrap_or(want), "remove node", yes)?;
+            client
+                .delete(&format!("{base}/{}", n["id"].as_str().unwrap()))
+                .await?;
+            println!("Removed {}", n["name"].as_str().unwrap_or(want));
+        }
+        Some("token") => match args.get(1).map(String::as_str) {
+            Some("ls") | Some("list") => {
+                let res = client.get(&format!("{base}/tokens")).await?;
+                if json_out {
+                    return print_json(&res);
+                }
+                for t in res["tokens"].as_array().cloned().unwrap_or_default() {
+                    let state = if t["revoked"].as_bool() == Some(true) {
+                        "revoked"
+                    } else if t["expired"].as_bool() == Some(true) {
+                        "expired"
+                    } else {
+                        "active"
+                    };
+                    println!(
+                        "  {:<34} {:<8} expires {}",
+                        t["id"].as_str().unwrap_or(""),
+                        state,
+                        t["expires_at"].as_str().unwrap_or(""),
+                    );
+                }
+            }
+            Some("rm") | Some("revoke") => {
+                let id = args.get(2).context("usage: runway nodes token rm <id>")?;
+                client.delete(&format!("{base}/tokens/{id}")).await?;
+                println!("Revoked {id}");
+            }
+            _ => bail!("usage: runway nodes token ls | token rm <id>"),
+        },
+        Some(other) => bail!(
+            "unknown nodes action '{other}' — ls | add --command | approve | rm | token ls|rm"
+        ),
+    }
+    Ok(())
+}
+
 // -- helpers ---------------------------------------------------------------
+
+/// Pull a flag out of trailing-var-arg command args; returns whether
+/// it was present.
+fn strip_flag(args: &mut Vec<String>, flag: &str) -> bool {
+    let had = args.iter().any(|a| a == flag);
+    args.retain(|a| a != flag);
+    had
+}
+
+fn strip_json_flag(args: &mut Vec<String>) -> bool {
+    strip_flag(args, "--json")
+}
+
+/// RFC3339 → "5m ago" / "2h ago" / "3d ago"; falls back to the date prefix.
+fn ago(iso: &str) -> String {
+    let Ok(t) = chrono::DateTime::parse_from_rfc3339(iso) else {
+        return iso.get(..10).unwrap_or(iso).to_string();
+    };
+    let s = chrono::Utc::now()
+        .signed_duration_since(t)
+        .num_seconds()
+        .max(0);
+    match s {
+        0..=89 => "just now".into(),
+        90..=3599 => format!("{}m ago", s / 60),
+        3600..=86399 => format!("{}h ago", s / 3600),
+        _ => format!("{}d ago", s / 86400),
+    }
+}
+
+fn print_json(v: &Value) -> anyhow::Result<()> {
+    println!("{}", serde_json::to_string_pretty(v)?);
+    Ok(())
+}
 
 fn prompt(msg: &str) -> anyhow::Result<String> {
     print!("{msg}");
@@ -696,6 +1270,25 @@ fn prompt_default(msg: &str, default: &str) -> String {
     } else {
         s
     }
+}
+
+/// Destructive-op gate: TTY requires typing the resource name; pipes
+/// require an explicit --yes. Matches the Vercel/Ployz convention.
+fn confirm_danger(name: &str, action: &str, yes: bool) -> anyhow::Result<()> {
+    if yes {
+        return Ok(());
+    }
+    if !std::io::stdin().is_terminal() {
+        bail!("refusing to {action} {name} without --yes (non-interactive)");
+    }
+    print!("Type {name} to confirm {action}: ");
+    std::io::stdout().flush()?;
+    let mut line = String::new();
+    std::io::stdin().read_line(&mut line)?;
+    if line.trim() != name {
+        bail!("aborted — name did not match");
+    }
+    Ok(())
 }
 
 /// Yes/no prompt, defaulting to yes.
@@ -743,26 +1336,48 @@ async fn latest_deployment(client: &Client) -> anyhow::Result<String> {
         .context("no deployments for linked project")
 }
 
-/// Print log lines after `skip`; returns the new line count.
-async fn print_logs(client: &Client, dep_id: &str, skip: usize) -> anyhow::Result<usize> {
+/// Print one stored log line; `step` markers render as section headers
+/// instead of the raw `<ts>\tstep\t<name>` triple.
+fn print_log_line(line: &str, strip_ts: bool) {
+    let mut parts = line.splitn(3, '\t');
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some(_), Some("step"), Some(name)) => println!("--- {name} ---"),
+        (Some(_), Some(_), Some(text)) if strip_ts => println!("{text}"),
+        _ => println!("{line}"),
+    }
+}
+
+/// Print log lines after `skip`; returns the new line count. `strip_ts`
+/// drops the timestamp column — nicer while a deploy streams.
+async fn print_logs(
+    client: &Client,
+    dep_id: &str,
+    skip: usize,
+    strip_ts: bool,
+) -> anyhow::Result<usize> {
     let text = client
         .get_text(&format!("/api/v1/deployments/{dep_id}/logs?tail=5000"))
         .await?;
     let lines: Vec<&str> = text.lines().collect();
     for line in lines.iter().skip(skip) {
-        println!("{line}");
+        print_log_line(line, strip_ts);
     }
     Ok(lines.len())
 }
 
-/// Poll a deployment until terminal status, printing transitions.
+/// Poll a deployment until terminal status, streaming new log lines and
+/// printing transitions (Vercel-style `deploy` output).
 async fn follow_deployment(client: &Client, dep_id: &str) -> anyhow::Result<()> {
     let mut last = String::new();
+    let mut printed = 0usize;
     loop {
+        printed = print_logs(client, dep_id, printed, true)
+            .await
+            .unwrap_or(printed);
         let dep = client.get(&format!("/api/v1/deployments/{dep_id}")).await?;
         let status = dep["status"].as_str().unwrap_or("?").to_string();
         let computed = dep["computed_status"].as_str().unwrap_or("");
-        let label = if computed.is_empty() || computed == status {
+        let label = if computed.is_empty() || computed == "unknown" || computed == status {
             status.clone()
         } else {
             format!("{status} ({computed})")
@@ -783,6 +1398,7 @@ async fn follow_deployment(client: &Client, dep_id: &str) -> anyhow::Result<()> 
                 return Ok(());
             }
             Some(other) => {
+                let _ = print_logs(client, dep_id, printed, true).await;
                 let err = dep["error"]["message"]
                     .as_str()
                     .or(dep["error"].as_str())

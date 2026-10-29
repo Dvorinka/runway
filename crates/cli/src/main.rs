@@ -36,28 +36,40 @@ enum Command {
     },
     /// Deploy the current directory (upload tarball to the linked project).
     Deploy {
-        /// Stream build logs until the deployment settles (default: on).
-        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        /// Stream build logs until the deployment settles (default: on; pass --follow=false to disable).
+        #[arg(long, default_value_t = true, num_args = 0..=1, default_missing_value = "true", action = clap::ArgAction::Set)]
         follow: bool,
     },
     /// New deployment from the same source (latest or a given ID).
     Redeploy {
         /// Deployment ID (defaults to the latest of the linked project).
         deployment: Option<String>,
-        /// Stream build logs until the deployment settles (default: on).
-        #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+        /// Stream build logs until the deployment settles (default: on; pass --follow=false to disable).
+        #[arg(long, default_value_t = true, num_args = 0..=1, default_missing_value = "true", action = clap::ArgAction::Set)]
         follow: bool,
     },
     /// Show the logged-in user and instance health.
-    Whoami,
+    Whoami {
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Log out this machine (delete stored credentials).
     Logout,
     /// Unlink the current directory (delete .runway/project.json).
     Unlink,
     /// List all projects on the instance.
-    Projects,
+    Projects {
+        /// Print the raw API response as JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Show instance, link, project, and latest deployment status.
-    Status,
+    Status {
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Print shell completions (bash|zsh|fish|powershell|elvish).
     Completions {
         /// Shell name.
@@ -79,9 +91,16 @@ enum Command {
         /// Instance URL (e.g. http://localhost:8000).
         #[arg(long)]
         server: Option<String>,
-        /// API key (ak_...).
+        /// API key (ak_...). Omit to sign in with email + password —
+        /// a key is minted for you.
         #[arg(long)]
         key: Option<String>,
+        /// Account email (key-minting sign-in).
+        #[arg(long)]
+        email: Option<String>,
+        /// Account password (key-minting sign-in; prefer the prompt).
+        #[arg(long)]
+        password: Option<String>,
     },
     /// Link the current directory to a project.
     Link {
@@ -96,9 +115,9 @@ enum Command {
         #[arg(long)]
         preset: Option<String>,
     },
-    /// Manage environment variables: env [list|set KEY=VAL|unset KEY|pull [file]|push [file]].
+    /// Manage environment variables: env [list|set K=V|unset K|pull [file]|push [file]|diff <a> <b>].
     Env {
-        /// list | set KEY=VALUE | unset KEY | pull [file] | push [file]
+        /// list | set KEY=VALUE | unset KEY | pull [file] | push [file] | diff <env-a> <env-b>
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
         /// Environment slug to scope the variable to.
@@ -114,12 +133,18 @@ enum Command {
     Stats {
         /// Deployment ID (defaults to latest of the linked project).
         deployment: Option<String>,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// List recent deployments for the linked project.
     Deployments {
         /// Max rows to print.
         #[arg(long, default_value_t = 15)]
         limit: usize,
+        /// Print the raw API response as JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// Roll back an environment to its previous deployment.
     Rollback {
@@ -127,11 +152,42 @@ enum Command {
         #[arg(default_value = "prod")]
         environment: String,
     },
+    /// Promote a deployment so an environment's alias serves it.
+    /// Point an environment alias at a deployment. `--diff` previews the
+    /// env and config key changes and does not promote.
+    Promote {
+        /// Deployment ID (defaults to the latest of the linked project).
+        deployment: Option<String>,
+        /// Environment slug (default: prod).
+        #[arg(long, default_value = "prod")]
+        environment: String,
+        /// Print what would change. Does not promote.
+        #[arg(long)]
+        diff: bool,
+        /// Print the API payload as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Cancel a running deployment and stop its container.
+    Cancel {
+        /// Deployment ID (defaults to the latest of the linked project).
+        deployment: Option<String>,
+    },
+    /// Skip a queued deployment so the worker never picks it up.
+    Skip {
+        /// Deployment ID (defaults to the latest of the linked project).
+        deployment: Option<String>,
+    },
     /// Open the project's deployment URL in the browser.
     Open {
         /// Print the URL instead of opening a browser.
         #[arg(long)]
         print: bool,
+    },
+    /// Manage remote Docker nodes: nodes [ls|add --command|approve <id|name>|rm <id|name>|token ls|token rm <id>].
+    Nodes {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
     },
     /// Restrict sign-up: allowlist-add [--email E | --domain D | --pattern P].
     /// Empty allowlist means open registration; adding any rule restricts it.
@@ -201,6 +257,9 @@ async fn main() -> anyhow::Result<()> {
                 github,
                 logs: runway_core::logs::LogStore::new(&settings.data_dir, bus),
                 docker: runway_core::docker::connect(&settings).ok(),
+                login_attempts: std::sync::Arc::new(std::sync::Mutex::new(
+                    std::collections::HashMap::new(),
+                )),
             };
             let app = runway_api::router(state);
             let listener = tokio::net::TcpListener::bind(&settings.listen_addr).await?;
@@ -228,13 +287,18 @@ async fn main() -> anyhow::Result<()> {
             runway_core::db::migrate(&db).await?;
             allowlist_add(&db, email, domain, pattern).await?;
         }
-        Command::Login { server, key } => commands::login(server, key).await?,
+        Command::Login {
+            server,
+            key,
+            email,
+            password,
+        } => commands::login(server, key, email, password).await?,
         Command::Link { project } => commands::link(project).await?,
-        Command::Whoami => commands::whoami().await?,
+        Command::Whoami { json } => commands::whoami(json).await?,
         Command::Logout => commands::logout().await?,
         Command::Unlink => commands::unlink().await?,
-        Command::Projects => commands::projects().await?,
-        Command::Status => commands::status().await?,
+        Command::Projects { json } => commands::projects(json).await?,
+        Command::Status { json } => commands::status(json).await?,
         Command::Completions { shell } => {
             use clap::CommandFactory;
             use clap_complete::{generate, shells::*};
@@ -262,10 +326,19 @@ async fn main() -> anyhow::Result<()> {
         } => commands::logs(deployment, follow, project).await?,
         Command::Env { args, environment } => commands::env(args, environment).await?,
         Command::Domains { args } => commands::domains(args).await?,
-        Command::Stats { deployment } => commands::stats(deployment).await?,
-        Command::Deployments { limit } => commands::deployments(limit).await?,
+        Command::Stats { deployment, json } => commands::stats(deployment, json).await?,
+        Command::Deployments { limit, json } => commands::deployments(limit, json).await?,
         Command::Rollback { environment } => commands::rollback(environment).await?,
+        Command::Promote {
+            deployment,
+            environment,
+            diff,
+            json,
+        } => commands::promote(deployment, environment, diff, json).await?,
+        Command::Cancel { deployment } => commands::cancel(deployment).await?,
+        Command::Skip { deployment } => commands::skip(deployment).await?,
         Command::Open { print } => commands::open(print).await?,
+        Command::Nodes { args } => commands::nodes(args).await?,
     }
 
     Ok(())

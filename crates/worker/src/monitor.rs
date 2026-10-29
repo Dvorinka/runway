@@ -60,6 +60,13 @@ pub async fn run(ctx: Ctx) {
                 sqlx::query("DELETE FROM deployment_metric WHERE ts < now() - interval '24 hours'")
                     .execute(&ctx.db)
                     .await;
+            let _ = sqlx::query(
+                "DELETE FROM notification WHERE
+                    (read AND created_at < now() - interval '30 days') OR
+                    created_at < now() - interval '90 days'",
+            )
+            .execute(&ctx.db)
+            .await;
             let removed = ctx.logs.prune_older_than(7).await;
             if removed > 0 {
                 tracing::info!(removed, "pruned stale deployment logs");
@@ -108,7 +115,7 @@ async fn tick(
         let node_client = match dep.remote_node_id.as_deref() {
             Some(nid) => {
                 if !node_clients.contains_key(nid) {
-                    if let Some(c) = dkr::node_client(&ctx.db, nid).await {
+                    if let Some(c) = dkr::node_client(&ctx.db, nid, &ctx.crypto).await {
                         node_clients.insert(nid.to_string(), c);
                     }
                 }
@@ -149,13 +156,14 @@ async fn tick(
             ctx.logs
                 .info(&dep.id, &format!("Container exited (code {exit})"))
                 .await;
-            enqueue_fail(
-                ctx,
-                &dep.id,
-                "deploy",
-                &format!("container exited (code {exit})"),
-            )
-            .await;
+            // devpush exit-code reasons — keep verbatim for parity.
+            let reason = match exit {
+                0 => "App exited unexpectedly. Ensure your app keeps running and doesn't exit on its own.".to_string(),
+                137 => "App was killed (out of memory or manually stopped). Try increasing memory limits.".to_string(),
+                1 => "App crashed on startup. Check deployment logs for error details.".to_string(),
+                c => format!("App exited with code {c}. Check deployment logs for error details."),
+            };
+            enqueue_fail(ctx, &dep.id, "deploy", &reason).await;
             continue;
         }
 
@@ -232,8 +240,8 @@ async fn tick(
                 &dep.id,
                 "deploy",
                 &format!(
-                    "app did not become ready within {}s",
-                    ctx.settings.deployment_timeout_seconds
+                    "Timed out waiting for app to respond on port {}. Ensure your app starts an HTTP server on the configured port.",
+                    dep.serve_port()
                 ),
             )
             .await;
@@ -262,7 +270,7 @@ async fn tick(
         let docker = match dep.remote_node_id.as_deref() {
             Some(nid) => {
                 if !node_clients.contains_key(nid) {
-                    if let Some(c) = dkr::node_client(&ctx.db, nid).await {
+                    if let Some(c) = dkr::node_client(&ctx.db, nid, &ctx.crypto).await {
                         node_clients.insert(nid.to_string(), c);
                     }
                 }
@@ -290,17 +298,17 @@ async fn tick(
             health_state.remove(&dep.id);
         }
 
-        // Notify once on the running → down transition. The previous
-        // observed_status gates repeats, so a restart-loop flap can't
-        // spam one row per tick.
+        // Notify once per crash episode. The conditional UPDATE claims
+        // the running → down transition — only the writer that flips
+        // the row may alert — and crash_notified_recently absorbs flap
+        // between instances that disagree on container state (e.g. a
+        // second instance pointed at a different daemon) and restart
+        // loops.
         let down = match (observed.as_str(), exit_code) {
             ("dead", _) | ("not_found", _) | ("unhealthy", _) => true,
             ("exited", c) => c != Some(0),
             _ => false,
         };
-        if down && matches!(dep.observed_status.as_deref(), None | Some("running")) {
-            notify_crash(ctx, &dep, &observed, exit_code.map(|c| c as i32)).await;
-        }
         // Reconcile-parity: consecutive 404s accumulate so other
         // consumers can tell "blip" from "gone".
         let missing_count = if observed == "not_found" {
@@ -308,17 +316,39 @@ async fn tick(
         } else {
             0
         };
-        sqlx::query(
-            "UPDATE deployment SET observed_status = $1, observed_exit_code = $2,
-             observed_at = now(), observed_last_seen_at = now(),
-             observed_missing_count = $4 WHERE id = $3",
-        )
-        .bind(&observed)
-        .bind(exit_code)
-        .bind(&dep.id)
-        .bind(missing_count)
-        .execute(&ctx.db)
-        .await?;
+        let mut claimed = false;
+        if down && matches!(dep.observed_status.as_deref(), None | Some("running")) {
+            claimed = sqlx::query(
+                "UPDATE deployment SET observed_status = $1, observed_exit_code = $2,
+                 observed_at = now(), observed_last_seen_at = now(),
+                 observed_missing_count = $4 WHERE id = $3
+                   AND (observed_status IS NULL OR observed_status = 'running')",
+            )
+            .bind(&observed)
+            .bind(exit_code)
+            .bind(&dep.id)
+            .bind(missing_count)
+            .execute(&ctx.db)
+            .await?
+            .rows_affected()
+                == 1;
+            if claimed && !crash_notified_recently(ctx, &dep).await {
+                notify_crash(ctx, &dep, &observed, exit_code.map(|c| c as i32)).await;
+            }
+        }
+        if !claimed {
+            sqlx::query(
+                "UPDATE deployment SET observed_status = $1, observed_exit_code = $2,
+                 observed_at = now(), observed_last_seen_at = now(),
+                 observed_missing_count = $4 WHERE id = $3",
+            )
+            .bind(&observed)
+            .bind(exit_code)
+            .bind(&dep.id)
+            .bind(missing_count)
+            .execute(&ctx.db)
+            .await?;
+        }
 
         // Throttled stats sample → deployment_metric for sparklines.
         if observed == "running" {
@@ -475,6 +505,23 @@ async fn detach_from_unused(ctx: &Ctx, self_id: &str, used: &HashSet<String>) {
     }
 }
 
+/// True when a `deployment.crashed` notification for this deployment
+/// already exists in the last 15 minutes. Rows are matched on the
+/// deployment link. A failed check counts as clear — a crash alert is
+/// the safer side to err on.
+async fn crash_notified_recently(ctx: &Ctx, dep: &Deployment) -> bool {
+    sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM notification
+         WHERE type = 'deployment.crashed' AND link LIKE $1
+           AND created_at > now() - interval '15 minutes'",
+    )
+    .bind(format!("%/deployments/{}", dep.id))
+    .fetch_one(&ctx.db)
+    .await
+    .unwrap_or(0)
+        > 0
+}
+
 /// Team notification + `deployment.crashed` webhook when a serving
 /// container goes down. Best-effort — a lookup failure just skips it.
 async fn notify_crash(ctx: &Ctx, dep: &Deployment, observed: &str, exit_code: Option<i32>) {
@@ -501,10 +548,7 @@ async fn notify_crash(ctx: &Ctx, dep: &Deployment, observed: &str, exit_code: Op
         &format!("App down: {}", project.name),
         runway_core::audit::Notify {
             body: Some(&format!("{} — {}", &dep.id[..7.min(dep.id.len())], reason)),
-            link: Some(&format!(
-                "/projects/{}/deployments/{}",
-                dep.project_id, dep.id
-            )),
+            link: Some(&format!("/deployments/{}", dep.id)),
             project_id: Some(&dep.project_id),
             ..Default::default()
         },

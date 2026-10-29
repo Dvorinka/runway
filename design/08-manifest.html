@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RUNWAY — MANIFEST</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #F6F3EA;
+    --sheet: #FCFAF3;
+    --ink: #211E18;
+    --dim: #79715F;
+    --faint: #B0A892;
+    --rule: #DDD6C4;
+    --brand: #E8490F;
+    --ok: #2E7D46;
+    --bad: #B3321F;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background:var(--paper); color:var(--ink);
+    font-family:"IBM Plex Mono", ui-monospace, monospace;
+    font-size:13px; line-height:1.6; min-height:100vh;
+    padding:0 0 90px;
+  }
+  ::selection { background:var(--brand); color:#fff; }
+
+  .topbar {
+    display:flex; align-items:center; justify-content:space-between;
+    padding:14px 4vw; border-bottom:1px solid var(--ink);
+    font-size:10px; letter-spacing:.18em; text-transform:uppercase;
+  }
+  .topbar .l { display:flex; align-items:center; gap:10px; font-weight:600; }
+  .topbar nav { display:flex; gap:18px; }
+  .topbar nav a { color:var(--dim); text-decoration:none; }
+  .topbar nav a.on { color:var(--ink); font-weight:600; }
+  .topbar nav a:hover { color:var(--ink); }
+
+  .doc { max-width:880px; margin:44px auto 0; padding:0 24px; }
+
+  /* doc head */
+  .dochead {
+    display:flex; justify-content:space-between; align-items:flex-end;
+    border-bottom:3px solid var(--ink); padding-bottom:14px; flex-wrap:wrap; gap:14px;
+  }
+  .dochead h1 { font-family:Archivo,sans-serif; font-weight:800; font-size:34px; letter-spacing:-.01em; text-transform:uppercase; line-height:1; }
+  .dochead h1 i { font-style:normal; color:var(--brand); }
+  .dochead .meta { text-align:right; font-size:10px; color:var(--dim); letter-spacing:.12em; line-height:1.9; }
+  .dochead .meta b { color:var(--ink); }
+
+  /* ===== TOC ===== */
+  .toc { margin-top:26px; }
+  .toc-h { font-size:10px; letter-spacing:.22em; color:var(--dim); text-transform:uppercase; margin-bottom:6px; display:flex; justify-content:space-between; }
+  .toc-row {
+    display:flex; align-items:baseline; gap:8px; padding:9px 4px;
+    border-bottom:1px solid var(--rule); cursor:pointer;
+    transition:background .1s;
+  }
+  .toc-row:hover { background:rgba(232,73,15,.05); }
+  .toc-row.sel { background:rgba(232,73,15,.07); }
+  .toc-row .no { font-size:11px; color:var(--faint); width:38px; flex:none; }
+  .toc-row .t { font-weight:600; font-size:13px; }
+  .toc-row .leaders { flex:1; border-bottom:1px dotted var(--faint); margin:0 8px; transform:translateY(-4px); }
+  .toc-row .to { font-size:11px; color:var(--dim); }
+  .toc-row .st { font-size:10px; font-weight:600; letter-spacing:.12em; width:88px; text-align:right; text-transform:uppercase; }
+  .st.cleared { color:var(--ok); }
+  .st.filed { color:var(--brand); }
+  .st.held { color:#8A6D1A; }
+  .st.refused { color:var(--bad); }
+
+  /* ===== MANIFEST SHEET ===== */
+  .sheet {
+    margin-top:40px; background:var(--sheet);
+    border:1px solid var(--rule);
+    box-shadow:0 1px 0 #fff inset, 0 18px 40px rgba(33,30,24,.10);
+    padding:34px 40px 30px; position:relative;
+  }
+  .sheet::before { /* form number in the corner, like real aeronautical forms */
+    content:"FORM RWY-D"; position:absolute; top:10px; right:14px;
+    font-size:8.5px; letter-spacing:.2em; color:var(--faint);
+  }
+  .sheet-head { display:flex; justify-content:space-between; align-items:baseline; border-bottom:2px solid var(--ink); padding-bottom:10px; }
+  .sheet-head h2 { font-family:Archivo,sans-serif; font-weight:800; font-size:19px; text-transform:uppercase; letter-spacing:.04em; }
+  .sheet-head .no { font-size:11px; color:var(--brand); font-weight:600; }
+
+  .sec { margin-top:20px; }
+  .sec-t {
+    font-family:Archivo,sans-serif; font-weight:700; font-size:10px; letter-spacing:.2em;
+    color:var(--dim); text-transform:uppercase; margin-bottom:8px;
+    display:flex; align-items:center; gap:10px;
+  }
+  .sec-t::after { content:""; flex:1; border-top:1px solid var(--rule); }
+  .sec-t .n { color:var(--brand); }
+  .flds { display:grid; grid-template-columns:1fr 1fr; gap:0 40px; }
+  .fld { display:flex; justify-content:space-between; gap:14px; padding:5px 0; border-bottom:1px dotted var(--rule); font-size:12px; }
+  .fld .k { color:var(--dim); }
+  .fld .v { font-weight:500; text-align:right; word-break:break-all; }
+  .fld .v.brand { color:var(--brand); font-weight:600; }
+
+  .clearance {
+    display:flex; gap:0; margin-top:6px; border:1px solid var(--rule); border-radius:4px; overflow:hidden;
+  }
+  .clr { flex:1; padding:9px 10px 8px; text-align:center; border-right:1px solid var(--rule); background:#fff; }
+  .clr:last-child { border-right:none; }
+  .clr .s { font-size:9px; letter-spacing:.16em; color:var(--faint); text-transform:uppercase; }
+  .clr .m { margin-top:5px; width:18px; height:18px; margin-left:auto; margin-right:auto; border:1.5px solid var(--rule); border-radius:50%; display:grid; place-items:center; font-size:10px; color:transparent; }
+  .clr.done .s { color:var(--ink); font-weight:600; }
+  .clr.done .m { background:var(--ok); border-color:var(--ok); color:#fff; }
+  .clr.cur .s { color:var(--brand); font-weight:600; }
+  .clr.cur .m { border-color:var(--brand); background:var(--brand); color:#fff; animation:pulse 1.4s ease infinite; }
+  @keyframes pulse { 50% { box-shadow:0 0 0 5px rgba(232,73,15,.15); } }
+  .clr.bad .s { color:var(--bad); font-weight:600; }
+  .clr.bad .m { border-color:var(--bad); background:var(--bad); color:#fff; }
+
+  .sigrow { display:flex; justify-content:space-between; align-items:flex-end; margin-top:28px; padding-top:14px; border-top:1px solid var(--rule); font-size:10px; color:var(--dim); letter-spacing:.1em; }
+  .sig { font-family:Archivo,sans-serif; }
+  .sig .stamp {
+    display:inline-block; border:2px solid var(--ok); color:var(--ok); border-radius:3px;
+    font-weight:800; font-size:12px; letter-spacing:.14em; padding:4px 12px 3px;
+    transform:rotate(-3deg); text-transform:uppercase;
+  }
+  .sig .stamp.bad { border-color:var(--bad); color:var(--bad); }
+  .sig .stamp.pend { border-color:var(--brand); color:var(--brand); }
+
+  @media (max-width: 720px) {
+    .flds { grid-template-columns:1fr; }
+    .sheet { padding:24px 20px; }
+    .toc-row .to { display:none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="l">
+    <svg width="17" height="17" viewBox="0 0 240 240"><g transform="translate(0 -14) rotate(22.5 120 120)"><g fill="none" stroke="#211E18" stroke-width="18" stroke-linecap="round"><path d="M56 204 L196 64"/><path d="M44 160 C 94 160 122 140 150 110"/></g><circle cx="150" cy="110" r="13" fill="#E8490F"/></g></svg>
+    RUNWAY · OPERATIONS
+  </div>
+  <nav>
+    <a href="#">Fleet</a><a href="#" class="on">Manifests</a><a href="#">Crew</a><a href="#">Tower</a>
+  </nav>
+  <div>DEVS-TEAM · 10 OCT 2026</div>
+</div>
+
+<div class="doc">
+  <div class="dochead">
+    <h1>Deployment<br><i>Manifests</i></h1>
+    <div class="meta">
+      PERIOD: LAST 24 HOURS<br>
+      FILED: <b>8</b> · CLEARED: <b>5</b> · REFUSED: <b>1</b><br>
+      DOC <b>RWY-OPS-0447</b>
+    </div>
+  </div>
+
+  <div class="toc" id="toc">
+    <div class="toc-h"><span>Index of filed plans</span><span>disposition</span></div>
+  </div>
+
+  <div class="sheet" id="sheet"></div>
+</div>
+
+<script>
+const F = [
+  {n:1, id:"RWY-9C1E", proj:"api",        to:"env-prod",   cls:"filed",   st:"ON FINAL",  sha:"9c1e44d", branch:"main",       commit:"fix: token refresh race",   dur:"48s",   preset:"dockerfile", env:"production", health:"probe 200 OK · 214ms", stage:3},
+  {n:2, id:"RWY-77BD", proj:"docs",       to:"branch-docs",cls:"filed",   st:"CLIMBING",  sha:"77bd08a", branch:"docs",       commit:"docs: self-hosting guide",  dur:"31s",   preset:"vite",       env:"preview",    health:"build 41%",            stage:2},
+  {n:3, id:"RWY-4F2A", proj:"storefront", to:"env-prod",   cls:"cleared", st:"CLEARED",   sha:"4f2a9e1", branch:"main",       commit:"feat: cart totals rework",  dur:"2m04s", preset:"nextjs",     env:"production", health:"healthy · p95 214ms",  stage:4},
+  {n:4, id:"RWY-B3F9", proj:"landing",    to:"env-prod",   cls:"cleared", st:"CLEARED",   sha:"b3f97c2", branch:"main",       commit:"chore: bump hero copy",     dur:"38s",   preset:"astro",      env:"production", health:"static publish",       stage:4},
+  {n:5, id:"RWY-2E8C", proj:"storefront", to:"env-staging",cls:"held",    st:"HELD",      sha:"2e8c5b0", branch:"staging",    commit:"wip: checkout experiments", dur:"—",     preset:"nextjs",     env:"staging",    health:"queue depth 1",        stage:0},
+  {n:6, id:"RWY-A110", proj:"api",        to:"id-a1104f",  cls:"refused", st:"DIVERTED",  sha:"a1104f9", branch:"retry-sched",commit:"feat: retry scheduler",    dur:"1m31s", preset:"dockerfile", env:"preview",    health:"runner OOM",           stage:-1},
+  {n:7, id:"RWY-8C31", proj:"api",        to:"env-prod",   cls:"cleared", st:"CLEARED",   sha:"8c31d02", branch:"main",       commit:"chore: deps bump",          dur:"1m12s", preset:"dockerfile", env:"production", health:"rollback target",      stage:4},
+  {n:8, id:"RWY-F044", proj:"docs",       to:"env-prod",   cls:"cleared", st:"CLEARED",   sha:"f044caa", branch:"main",       commit:"fix: nav anchors",          dur:"26s",   preset:"vite",       env:"production", health:"superseded",           stage:4},
+];
+const STAGES = ["QUEUE","TAXI","CLIMB","FINAL","LANDED"];
+let sel = 0;
+
+function renderTOC() {
+  const toc = document.getElementById('toc');
+  toc.innerHTML = toc.innerHTML.split('<div class="toc-row"')[0] + F.map((f,i) => `
+    <div class="toc-row ${i===sel?'sel':''}" data-i="${i}">
+      <span class="no">${String(f.n).padStart(2,'0')}</span>
+      <span class="t">${f.id} — ${f.proj}</span>
+      <span class="leaders"></span>
+      <span class="to">${f.to}</span>
+      <span class="st ${f.cls}">${f.st}</span>
+    </div>`).join('');
+  [...toc.querySelectorAll('.toc-row')].forEach(el => el.onclick = () => { sel = +el.dataset.i; renderTOC(); renderSheet(); });
+}
+
+function renderSheet() {
+  const f = F[sel];
+  const refused = f.cls === 'refused';
+  const stampCls = refused ? 'bad' : f.cls === 'cleared' ? '' : 'pend';
+  const stampTxt = refused ? 'DIVERTED' : f.cls === 'cleared' ? 'CLEARED' : 'IN PROGRESS';
+  document.getElementById('sheet').innerHTML = `
+    <div class="sheet-head"><h2>Flight plan</h2><span class="no">NO. ${f.id}</span></div>
+
+    <div class="sec"><div class="sec-t"><span class="n">01</span> Route</div>
+      <div class="flds">
+        <div class="fld"><span class="k">Origin</span><span class="v">${f.proj} · ${f.branch}@${f.sha}</span></div>
+        <div class="fld"><span class="k">Destination</span><span class="v brand">${f.env} (${f.to})</span></div>
+        <div class="fld"><span class="k">Filed at</span><span class="v">19:${39 + f.n}Z · push webhook</span></div>
+        <div class="fld"><span class="k">Est. enroute</span><span class="v">${f.dur}</span></div>
+      </div>
+    </div>
+
+    <div class="sec"><div class="sec-t"><span class="n">02</span> Aircraft</div>
+      <div class="flds">
+        <div class="fld"><span class="k">Type</span><span class="v">${f.preset} · node:22 runner</span></div>
+        <div class="fld"><span class="k">Registration</span><span class="v">runway_edge_${f.id.toLowerCase()}</span></div>
+        <div class="fld"><span class="k">Operator</span><span class="v">devs-team · owner</span></div>
+        <div class="fld"><span class="k">Protection</span><span class="v">${f.env === 'production' ? 'public' : 'basicAuth'}</span></div>
+      </div>
+    </div>
+
+    <div class="sec"><div class="sec-t"><span class="n">03</span> Cargo</div>
+      <div class="flds">
+        <div class="fld"><span class="k">Manifest</span><span class="v">${f.commit}</span></div>
+        <div class="fld"><span class="k">Env vars</span><span class="v">12 set · encrypted at rest</span></div>
+        <div class="fld"><span class="k">Aliases</span><span class="v">-id-${f.sha.slice(0,7)} · -branch-${f.branch} · -env-${f.env === 'production' ? 'prod' : f.env}</span></div>
+        <div class="fld"><span class="k">Health</span><span class="v">${f.health}</span></div>
+      </div>
+    </div>
+
+    <div class="sec"><div class="sec-t"><span class="n">04</span> Clearance</div>
+      <div class="clearance">
+        ${STAGES.map((s,i) => `<div class="clr ${refused && i===4 ? 'bad' : i < f.stage ? 'done' : i === f.stage ? 'cur' : ''}">
+          <div class="s">${s}</div><div class="m">${i < f.stage ? '✓' : i === f.stage ? '●' : ''}</div>
+        </div>`).join('')}
+      </div>
+    </div>
+
+    <div class="sec"><div class="sec-t"><span class="n">05</span> Remarks</div>
+      <div style="font-size:12px;color:var(--dim)">
+        Claimed via <b style="color:var(--ink)">SELECT … FOR UPDATE SKIP LOCKED</b> · logs at
+        data/logs/${f.id.toLowerCase()}.log · traefik config written atomically on alias swap.${refused ? ' <b style="color:var(--bad)">Runner OOM during climb — container stopped, record retained for inspection.</b>' : ''}
+      </div>
+    </div>
+
+    <div class="sigrow">
+      <span>FILED BY: github push · WEBHOOK ✓<br>CONTROL: runway worker-0</span>
+      <div class="sig"><span class="stamp ${stampCls}">${stampTxt}</span></div>
+    </div>`;
+}
+renderTOC(); renderSheet();
+</script>
+</body>
+</html>

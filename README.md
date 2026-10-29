@@ -143,6 +143,9 @@ runway env set KEY=value
 runway env pull              # write .env.local (decrypted, 0600)
 runway domains add app.example.com
 runway domains assign-cf app.example.com   # one-click CF DNS via team tunnel
+runway promote <id>          # point the production alias at a deployment
+runway promote <id> --diff   # preview env and config key changes; does not promote
+runway rollback              # re-point the alias to the previous deployment
 runway open                  # current deployment URL
 ```
 
@@ -165,7 +168,7 @@ crates/
   worker/  runway-worker  — deploy pipeline, monitor, cron, reconcile
   cli/     runway         — single binary: serve + user CLI
 migrations/               — sqlx migrations (Postgres is also the job queue)
-web/                      — React + Vite + Tailwind dashboard
+dashboard/                  — React + Vite + Tailwind dashboard
 compose/                  — development and production stacks
 ```
 
@@ -183,8 +186,8 @@ full model.
 cargo build
 docker compose -f compose/development.yml up -d --build
 
-# Dashboard (web/)
-cd web && pnpm install && pnpm dev
+# Dashboard (dashboard/)
+cd dashboard && pnpm install && pnpm dev
 
 # Verify before pushing
 cargo fmt && cargo clippy --workspace -- -D warnings && cargo test

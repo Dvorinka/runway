@@ -8,6 +8,7 @@ use axum::Json;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use runway_core::deploy;
 use runway_core::models::{DeployToken, Deployment, Domain, Environment, Project};
 use runway_core::slugify::token_hex;
 
@@ -156,6 +157,28 @@ pub struct CreateProject {
     pub config: Option<Value>,
 }
 
+/// Stamp a detected preset's runner fields into a config map. Shared by
+/// creation-time detection (git providers) and upload-deploy detection.
+pub(crate) fn apply_preset(config: &mut Value, preset: &'static runway_core::presets::Preset) {
+    let obj = config.as_object_mut().unwrap();
+    obj.entry("runner".to_string())
+        .or_insert_with(|| preset.runner.into());
+    obj.entry("build_command".to_string())
+        .or_insert_with(|| preset.build_command.into());
+    obj.entry("start_command".to_string())
+        .or_insert_with(|| preset.start_command.into());
+    obj.entry("port".to_string())
+        .or_insert_with(|| preset.port.into());
+    if let Some(output_dir) = preset.output_dir {
+        obj.entry("output_directory".to_string())
+            .or_insert_with(|| output_dir.into());
+        obj.entry("spa_fallback".to_string())
+            .or_insert_with(|| preset.spa_fallback.into());
+    }
+    obj.entry("preset".to_string())
+        .or_insert_with(|| preset.slug.into());
+}
+
 pub async fn create(
     user: AuthUser,
     State(state): State<AppState>,
@@ -167,25 +190,6 @@ pub async fn create(
 
     // Resolve the runner image up front so bad presets fail fast.
     let mut config = body.config.unwrap_or_else(|| json!({}));
-    let apply_preset = |config: &mut Value, preset: &'static runway_core::presets::Preset| {
-        let obj = config.as_object_mut().unwrap();
-        obj.entry("runner".to_string())
-            .or_insert_with(|| preset.runner.into());
-        obj.entry("build_command".to_string())
-            .or_insert_with(|| preset.build_command.into());
-        obj.entry("start_command".to_string())
-            .or_insert_with(|| preset.start_command.into());
-        obj.entry("port".to_string())
-            .or_insert_with(|| preset.port.into());
-        if let Some(output_dir) = preset.output_dir {
-            obj.entry("output_directory".to_string())
-                .or_insert_with(|| output_dir.into());
-            obj.entry("spa_fallback".to_string())
-                .or_insert_with(|| preset.spa_fallback.into());
-        }
-        obj.entry("preset".to_string())
-            .or_insert_with(|| preset.slug.into());
-    };
     if let Some(preset_slug) = &body.preset {
         let preset = runway_core::presets::preset(preset_slug)
             .ok_or_else(|| ApiError::bad_request("unknown preset"))?;
@@ -368,7 +372,7 @@ pub async fn get(
     Path(id): Path<String>,
 ) -> ApiResult<Response> {
     let project = accessible_project(&state, user.user.id, &id).await?;
-    Ok(Json(project_json(&state, &project)).into_response())
+    Ok(Json(project_json(&state, &project).await).into_response())
 }
 
 #[derive(Deserialize)]
@@ -466,7 +470,7 @@ pub async fn patch(
     if edge_dirty {
         rewrite_traefik(&state, &updated).await?;
     }
-    Ok(Json(project_json(&state, &updated)).into_response())
+    Ok(Json(project_json(&state, &updated).await).into_response())
 }
 
 #[derive(Deserialize)]
@@ -506,7 +510,14 @@ pub async fn delete(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
-fn project_json(state: &AppState, p: &Project) -> Value {
+async fn project_json(state: &AppState, p: &Project) -> Value {
+    // Deployment the production alias currently resolves to — the source
+    // of truth for "what is live", as opposed to the newest deployment.
+    let production_deployment_id = deploy::environment_alias(&state.db, p, "prod")
+        .await
+        .ok()
+        .flatten()
+        .map(|a| a.deployment_id);
     json!({
         "id": p.id,
         "team_id": p.team_id,
@@ -527,6 +538,7 @@ fn project_json(state: &AppState, p: &Project) -> Value {
         "has_avatar": p.has_avatar,
         "config": p.config,
         "environments": p.environments,
+        "production_deployment_id": production_deployment_id,
         "status": p.status,
         "created_at": p.created_at,
         "updated_at": p.updated_at,
@@ -545,7 +557,14 @@ pub async fn get_env(
     let project = accessible_project(&state, user.user.id, &id).await?;
     // Keys returned; values masked except empty. Port keeps them hidden in
     // the API — full values visible only in the dashboard session flow.
-    let vars = project.env_vars(&state.crypto)?;
+    let vars = project.env_vars(&state.crypto).map_err(|e| {
+        tracing::error!(
+            error = %e,
+            project = %project.id,
+            "env decrypt failed — ENCRYPTION_KEY likely differs from the key these vars were written with"
+        );
+        e
+    })?;
     let masked: Vec<Value> = vars
         .iter()
         .map(|v| {
@@ -784,17 +803,18 @@ pub async fn add_domain(
     }
     // DNS verification lands with the domain service (Phase 3); for now
     // domains start pending and are activated by verify.
-    sqlx::query(
+    let domain: runway_core::models::Domain = sqlx::query_as(
         "INSERT INTO domain (project_id, hostname, type, environment_id, status)
-         VALUES ($1,$2,$3,$4,'pending')",
+         VALUES ($1,$2,$3,$4,'pending')
+         RETURNING *",
     )
     .bind(&project.id)
     .bind(&hostname)
     .bind(&body.r#type)
     .bind(&body.environment_id)
-    .execute(&state.db)
+    .fetch_one(&state.db)
     .await?;
-    Ok(StatusCode::CREATED.into_response())
+    Ok((StatusCode::CREATED, Json(domain)).into_response())
 }
 
 /// Mark a domain active (manual flow until DNS/CF verification lands).

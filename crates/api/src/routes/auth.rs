@@ -62,6 +62,25 @@ pub async fn login(
     axum::Json(body): axum::Json<LoginBody>,
 ) -> ApiResult<Response> {
     let email = body.email.trim().to_lowercase();
+    // Per-account throttle: 5 consecutive failures lock for 15 minutes.
+    const LOCK_SECS: u64 = 900;
+    {
+        let m = state
+            .login_attempts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some((fails, until)) = m.get(&email) {
+            if *fails >= 5 && std::time::Instant::now() < *until {
+                let wait = until
+                    .saturating_duration_since(std::time::Instant::now())
+                    .as_secs();
+                return Err(ApiError(
+                    axum::http::StatusCode::TOO_MANY_REQUESTS,
+                    format!("too many attempts — try again in {}m", wait / 60 + 1),
+                ));
+            }
+        }
+    }
     let user: Option<User> =
         sqlx::query_as("SELECT * FROM \"user\" WHERE email = $1 AND status = 'active'")
             .bind(&email)
@@ -77,8 +96,20 @@ pub async fn login(
             false
         });
     if !valid {
+        let mut m = state
+            .login_attempts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let e = m.entry(email).or_insert((0, std::time::Instant::now()));
+        e.0 += 1;
+        e.1 = std::time::Instant::now() + std::time::Duration::from_secs(LOCK_SECS);
         return Err(ApiError::unauthorized("invalid email or password"));
     }
+    state
+        .login_attempts
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&email);
     let user = user.unwrap();
     if user.totp_enabled {
         // Password verified — second factor required. The pending
@@ -519,6 +550,25 @@ pub async fn totp_challenge(
     let Some(uid) = crate::auth::decode_pending(&state.settings.secret_key, &body.pending) else {
         return Err(ApiError::unauthorized("invalid or expired challenge"));
     };
+    // Codes are 6 digits — throttle guesses the same as password login.
+    let throttle_key = format!("totp:{uid}");
+    {
+        let m = state
+            .login_attempts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some((fails, until)) = m.get(&throttle_key) {
+            if *fails >= 5 && std::time::Instant::now() < *until {
+                let wait = until
+                    .saturating_duration_since(std::time::Instant::now())
+                    .as_secs();
+                return Err(ApiError(
+                    axum::http::StatusCode::TOO_MANY_REQUESTS,
+                    format!("too many attempts — try again in {}m", wait / 60 + 1),
+                ));
+            }
+        }
+    }
     let user = crate::auth::user_by_id(&state, uid).await?;
     if !user.totp_enabled {
         return Err(ApiError::bad_request("two-factor not enabled"));
@@ -548,8 +598,22 @@ pub async fn totp_challenge(
         }
     }
     if !ok {
+        let mut m = state
+            .login_attempts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let e = m
+            .entry(throttle_key)
+            .or_insert((0, std::time::Instant::now()));
+        e.0 += 1;
+        e.1 = std::time::Instant::now() + std::time::Duration::from_secs(900);
         return Err(ApiError::unauthorized("invalid code"));
     }
+    state
+        .login_attempts
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&throttle_key);
     let user = ensure_personal_team(&state, user).await?;
     let jar = jar.add(session_cookie(&state, user.id)?);
     Ok((jar, axum::Json(json!({ "ok": true }))).into_response())
@@ -696,9 +760,28 @@ pub async fn email_login(
                 .fetch_optional(&state.db)
                 .await?;
         if let Some(user) = user {
-            let raw = mint_email_token(&state, Some(user.id), &email, "login", 900.0).await?;
-            if let Err(e) = send_token_mail(&state, &email, "login", &raw).await {
-                tracing::warn!(error = %e.1, "magic-link mail failed");
+            // One mail per address per minute — the endpoint is public, so
+            // an unbounded one could mail-bomb a user with sign-in links.
+            let key = format!("mail:{email}");
+            let fresh = {
+                let mut m = state
+                    .login_attempts
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                let now = std::time::Instant::now();
+                match m.get(&key) {
+                    Some((_, until)) if now < *until => false,
+                    _ => {
+                        m.insert(key, (0, now + std::time::Duration::from_secs(60)));
+                        true
+                    }
+                }
+            };
+            if fresh {
+                let raw = mint_email_token(&state, Some(user.id), &email, "login", 900.0).await?;
+                if let Err(e) = send_token_mail(&state, &email, "login", &raw).await {
+                    tracing::warn!(error = %e.1, "magic-link mail failed");
+                }
             }
         }
     }

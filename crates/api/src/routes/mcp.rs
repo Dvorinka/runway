@@ -82,10 +82,30 @@ fn tools() -> Value {
                    "properties": {"deployment_id": {"type": "string"}}})
         ),
         tool(
+            "skip_deployment",
+            "Skip a queued deployment so it never runs",
+            json!({"type": "object", "required": ["deployment_id"],
+                   "properties": {"deployment_id": {"type": "string"}}})
+        ),
+        tool(
             "rollback_environment",
             "Roll an environment back to its previous deployment",
             json!({"type": "object", "required": ["project_id"],
                    "properties": {"project_id": {"type": "string"},
+                                  "environment_id": {"type": "string", "default": "prod"}}})
+        ),
+        tool(
+            "promote_deployment",
+            "Point an environment's alias at a successful deployment",
+            json!({"type": "object", "required": ["deployment_id"],
+                   "properties": {"deployment_id": {"type": "string"},
+                                  "environment_id": {"type": "string", "default": "prod"}}})
+        ),
+        tool(
+            "promotion_diff",
+            "Preview what promoting a deployment would change. Env and config values are omitted. Does not promote.",
+            json!({"type": "object", "required": ["deployment_id"],
+                   "properties": {"deployment_id": {"type": "string"},
                                   "environment_id": {"type": "string", "default": "prod"}}})
         ),
         tool(
@@ -240,10 +260,12 @@ async fn call(state: &AppState, user_id: i64, name: &str, args: &Value) -> ApiRe
                 return Ok(json!({ "running": false }));
             };
             let docker = match d.remote_node_id.as_deref() {
-                Some(nid) => match runway_core::docker::node_client(&state.db, nid).await {
-                    Some(c) => c,
-                    None => return Ok(json!({ "running": false })),
-                },
+                Some(nid) => {
+                    match runway_core::docker::node_client(&state.db, nid, &state.crypto).await {
+                        Some(c) => c,
+                        None => return Ok(json!({ "running": false })),
+                    }
+                }
                 None => match &state.docker {
                     Some(d) => d.clone(),
                     None => return Ok(json!({ "running": false })),
@@ -367,6 +389,13 @@ async fn call(state: &AppState, user_id: i64, name: &str, args: &Value) -> ApiRe
                 .map_err(|e| ApiError::bad_request(e.to_string()))?;
             Ok(json!({ "deployment_id": d.id, "conclusion": "canceled" }))
         }
+        "skip_deployment" => {
+            let (d, _p) = deployment_for(state, user_id, arg(args, "deployment_id")?).await?;
+            runway_core::deploy::skip(&state.db, &state.bus, &d)
+                .await
+                .map_err(|e| ApiError::bad_request(e.to_string()))?;
+            Ok(json!({ "deployment_id": d.id, "conclusion": "skipped" }))
+        }
         "rollback_environment" => {
             let p = project_for(state, user_id, arg(args, "project_id")?).await?;
             let env = args["environment_id"].as_str().unwrap_or("prod");
@@ -375,6 +404,29 @@ async fn call(state: &AppState, user_id: i64, name: &str, args: &Value) -> ApiRe
                     .await
                     .map_err(|e| ApiError::bad_request(e.to_string()))?;
             Ok(json!({ "environment_id": env, "deployment_id": alias.deployment_id }))
+        }
+        "promote_deployment" => {
+            let (d, p) = deployment_for(state, user_id, arg(args, "deployment_id")?).await?;
+            let env = args["environment_id"].as_str().unwrap_or("prod");
+            let alias =
+                runway_core::deploy::promote(&state.db, &state.bus, &state.settings, &p, env, &d)
+                    .await
+                    .map_err(|e| ApiError::bad_request(e.to_string()))?;
+            Ok(json!({ "environment_id": env, "deployment_id": alias.deployment_id }))
+        }
+        "promotion_diff" => {
+            let (d, p) = deployment_for(state, user_id, arg(args, "deployment_id")?).await?;
+            let env = args["environment_id"].as_str().unwrap_or("prod");
+            let diff = runway_core::promote_diff::preview(
+                &state.db,
+                &state.crypto,
+                &state.settings,
+                &p,
+                &d,
+                env,
+            )
+            .await?;
+            Ok(serde_json::to_value(diff).map_err(ApiError::internal)?)
         }
         "list_env" => {
             let p = project_for(state, user_id, arg(args, "project_id")?).await?;

@@ -73,6 +73,7 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/admin/jobs/{id}/retry",
             post(routes::admin::retry_job),
         )
+        .route("/api/v1/admin/system", get(routes::admin::system))
         // Admin — remote Docker nodes
         .route(
             "/api/v1/admin/nodes",
@@ -87,9 +88,25 @@ pub fn router(state: AppState) -> Router {
             post(routes::admin::check_node),
         )
         .route(
+            "/api/v1/admin/nodes/{id}/approve",
+            post(routes::admin::approve_node),
+        )
+        .route(
             "/api/v1/admin/nodes/{id}/tls",
             post(routes::admin::provision_node_tls).delete(routes::admin::clear_node_tls),
         )
+        .route(
+            "/api/v1/admin/nodes/tokens",
+            get(routes::admin::list_node_tokens).post(routes::admin::create_node_token),
+        )
+        .route(
+            "/api/v1/admin/nodes/tokens/{id}",
+            axum::routing::delete(routes::admin::revoke_node_token),
+        )
+        // Token-gated node checkin — no session; the rnod_ token is the auth.
+        .route("/api/v1/nodes/checkin", post(routes::admin::node_checkin))
+        // The install script itself, version-locked with the binary.
+        .route("/install-node.sh", get(node_install_script))
         // GitHub integration — webhook + app-manifest registration
         .route("/api/github/webhook", post(routes::github::webhook))
         .route("/api/v1/github/app/status", get(routes::github::app_status))
@@ -282,6 +299,10 @@ pub fn router(state: AppState) -> Router {
             delete(routes::teams::revoke_invite),
         )
         .route(
+            "/api/v1/invites/{id}",
+            axum::routing::get(routes::teams::invite_preview),
+        )
+        .route(
             "/api/v1/invites/{id}/accept",
             axum::routing::post(routes::teams::accept_invite),
         )
@@ -363,6 +384,14 @@ pub fn router(state: AppState) -> Router {
             post(routes::deployments::redeploy),
         )
         .route(
+            "/api/v1/deployments/{id}/promote",
+            post(routes::deployments::promote),
+        )
+        .route(
+            "/api/v1/deployments/{id}/diff",
+            get(routes::deployments::promotion_diff),
+        )
+        .route(
             "/api/v1/deployments/{id}/logs",
             get(routes::deployments::logs),
         )
@@ -379,6 +408,14 @@ pub fn router(state: AppState) -> Router {
             get(routes::deployments::metrics),
         )
         .route(
+            "/api/v1/deployments/{id}/og",
+            get(routes::deployments::open_graph),
+        )
+        .route(
+            "/api/v1/deployments/{id}/files",
+            get(routes::deployments::files),
+        )
+        .route(
             "/api/v1/deployments/{id}/reconcile",
             post(routes::deployments::reconcile),
         )
@@ -389,13 +426,52 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/v1/keys/{id}", delete(routes::api::revoke_key))
         .route("/api/deploy", post(routes::api::api_deploy))
+        // Unknown /api/* paths answer JSON, not the SPA shell.
+        .route("/api/{*rest}", axum::routing::any(api_not_found))
         .with_state(state)
         // React SPA — static assets + client-side route fallback.
         .fallback_service(tower_http::services::ServeDir::new(&web_dir).fallback(
             tower_http::services::ServeFile::new(web_dir.join("index.html")),
         ))
+        .layer(axum::middleware::map_response(security_headers))
+}
+
+async fn api_not_found() -> impl axum::response::IntoResponse {
+    (
+        axum::http::StatusCode::NOT_FOUND,
+        Json(json!({ "error": "not found" })),
+    )
 }
 
 async fn health() -> Json<serde_json::Value> {
     Json(json!({ "status": "ok", "service": "runway" }))
+}
+
+/// `GET /install-node.sh` — the fleet-enrollment installer, embedded so
+/// the served copy always matches the binary's checkin contract.
+async fn node_install_script() -> impl axum::response::IntoResponse {
+    (
+        [(axum::http::header::CONTENT_TYPE, "text/x-shellscript")],
+        include_str!("../../../scripts/node-install.sh"),
+    )
+}
+
+/// Baseline hardening headers on every response, API and SPA alike.
+async fn security_headers(mut res: axum::response::Response) -> axum::response::Response {
+    let h = res.headers_mut();
+    h.insert(
+        "content-security-policy",
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
+         img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; \
+         base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+            .parse()
+            .unwrap(),
+    );
+    h.insert("x-content-type-options", "nosniff".parse().unwrap());
+    h.insert("x-frame-options", "DENY".parse().unwrap());
+    h.insert(
+        "referrer-policy",
+        "strict-origin-when-cross-origin".parse().unwrap(),
+    );
+    res
 }

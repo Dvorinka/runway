@@ -14,11 +14,22 @@ runway logs --project             # merged tail across recent deployments
 runway stats                      # live CPU/mem/net snapshot
 runway env set KEY=value          # env vars
 runway env pull                   # .env.local from project (decrypted)
+runway env diff prod staging      # key-presence diff between environments
 runway domains add app.example.com
 runway domains assign-cf app.example.com
+runway promote --diff             # env/config key changes a promotion would make
 runway rollback                   # instant alias re-point to previous deploy
 runway open                       # current deployment URL
+runway nodes ls                   # remote Docker nodes + status
+runway nodes add --command        # print the one-line enroll command
+runway nodes approve <id|name>    # admit a waiting node
 ```
+
+`--json` on the read commands (`projects`, `deployments`, `env`,
+`domains`, `nodes`, `whoami`, `status`, `stats`) prints the raw API
+payload for scripts. Destructive commands (`nodes rm`,
+`domains remove`) ask for typed confirmation on a TTY and require
+`--yes` when piped.
 
 Auth config: `~/.config/runway`. Install via release tarball, the npm
 wrapper (`npm i -g @tdvorakdev/runway`), or Homebrew
@@ -37,8 +48,10 @@ Settings → API keys mint `ak_` tokens. Use as
 
 `list_projects`, `get_project`, `list_deployments`, `get_deployment`,
 `get_deployment_logs`, `deployment_stats`, `deploy_project`,
-`cancel_deployment`, `redeploy_deployment`, `rollback_environment`,
-`list_env`, `set_env`, `list_domains`, `ping`.
+`cancel_deployment`, `skip_deployment`, `redeploy_deployment`,
+`promote_deployment`, `promotion_diff`, `rollback_environment`, `list_env`, `set_env`,
+`list_domains`. The protocol-level `ping` method answers `{}` — it is
+not a callable tool.
 
 Write tools (`deploy_project`, `set_env`, `rollback_environment`, …)
 respect the same RBAC gates as the REST surface — issue the key to an

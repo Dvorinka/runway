@@ -1,0 +1,94 @@
+import { api, type AppNotification } from "@/lib/api";
+import { Badge, Button, Card, EmptyState, Skeleton, TimeAgo } from "@/components/ui";
+import { Bell } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+
+export default function NotificationsPage() {
+  const [items, setItems] = useState<AppNotification[] | null>(null);
+  const [unread, setUnread] = useState(0);
+  const [error, setError] = useState("");
+
+  const load = () =>
+    api
+      .notifications()
+      .then((r) => {
+        setItems(r.notifications);
+        setUnread(r.unread);
+      })
+      .catch((e) => setError(e.message));
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  return (
+    <div className="page-enter mx-auto max-w-5xl p-4 sm:p-8">
+      <div className="mb-6 flex items-center justify-between">
+        <h1 className="text-xl font-semibold">
+          Notifications
+          {unread > 0 && (
+            <Badge variant="warning" className="ml-2">
+              {unread} unread
+            </Badge>
+          )}
+        </h1>
+        {unread > 0 && (
+          <Button size="sm" variant="outline" onClick={() => api.markAllRead().then(load)}>
+            Mark all read
+          </Button>
+        )}
+      </div>
+      {error && <p className="mb-4 text-xs text-destructive">{error}</p>}
+      <div className="stagger grid grid-cols-1 gap-2">
+        {items === null && [0, 1, 2].map((i) => <Skeleton key={i} className="h-[64px]" />)}
+        {items?.map((n) => {
+          const inner = (
+            <Card
+              className={`flex items-center justify-between p-4 transition-colors hover:border-muted-foreground/40 hover:bg-accent/50 ${
+                n.read ? "opacity-60" : ""
+              }`}
+            >
+              <div className="flex items-start gap-3">
+                {!n.read && <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-info" />}
+                <div>
+                  <div className="text-sm">{n.title}</div>
+                  {n.body && <div className="mt-1 text-xs text-muted-foreground">{n.body}</div>}
+                </div>
+              </div>
+              <div className="shrink-0 text-xs text-muted-foreground"><TimeAgo at={n.created_at} /></div>
+            </Card>
+          );
+          return n.link ? (
+            <Link
+              key={n.id}
+              to={n.link}
+              onClick={() => {
+                if (!n.read) {
+                  api.markRead(n.id).catch(() => {});
+                  setItems((cur) =>
+                    cur
+                      ? cur.map((x) => (x.id === n.id ? { ...x, read: true } : x))
+                      : cur,
+                  );
+                  setUnread((u) => Math.max(0, u - 1));
+                }
+              }}
+            >
+              {inner}
+            </Link>
+          ) : (
+            <div key={n.id}>{inner}</div>
+          );
+        })}
+        {items?.length === 0 && (
+          <EmptyState
+            icon={Bell}
+            title="Nothing yet"
+            hint="Deploy events and alerts show up here."
+          />
+        )}
+      </div>
+    </div>
+  );
+}

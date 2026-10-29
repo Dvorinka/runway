@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RUNWAY — THE HANGAR · 10 design directions</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #0F131A;
+    --paper: #EDEBE4;
+    --brand: #FF4D00;
+    --dim: #5C6672;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background:var(--ink); color:var(--paper);
+    font-family:"IBM Plex Mono",ui-monospace,monospace;
+    min-height:100vh;
+    background-image:
+      radial-gradient(ellipse at 70% -20%, rgba(255,77,0,.10), transparent 50%);
+  }
+  ::selection { background:var(--brand); color:#fff; }
+
+  header {
+    padding:34px 5vw 0; display:flex; align-items:center; gap:16px;
+  }
+  .mark { width:34px; height:34px; }
+  .brandline { font-family:Archivo,sans-serif; font-weight:700; font-size:15px; letter-spacing:.2em; }
+  header .sp { flex:1; }
+  header .tag { font-size:10px; letter-spacing:.2em; color:var(--dim); }
+
+  .hero { padding:9vh 5vw 7vh; max-width:1100px; }
+  .hero .k { font-size:11px; letter-spacing:.3em; color:var(--brand); font-weight:600; margin-bottom:22px; }
+  .hero h1 {
+    font-family:Archivo,sans-serif; font-weight:900;
+    font-size:clamp(40px, 6.4vw, 88px); line-height:.95; letter-spacing:-.02em;
+    text-transform:uppercase;
+  }
+  .hero h1 em { font-style:normal; color:var(--brand); }
+  .hero p {
+    margin-top:26px; max-width:60ch; color:#98A1AC; font-size:13.5px; line-height:1.9;
+  }
+  .hero p b { color:var(--paper); font-weight:600; }
+
+  /* ===== GATES ===== */
+  .gates { padding:0 5vw 10vh; display:flex; flex-direction:column; gap:2px; }
+  .gate {
+    display:grid; grid-template-columns:120px 1fr 300px 60px; align-items:center;
+    gap:24px; padding:26px 28px;
+    background:rgba(237,235,228,.03);
+    border:1px solid rgba(237,235,228,.09);
+    text-decoration:none; color:var(--paper);
+    transition:background .18s, border-color .18s;
+    position:relative; overflow:hidden;
+  }
+  .gate:first-child { border-radius:10px 10px 0 0; }
+  .gate:last-child { border-radius:0 0 10px 10px; }
+  .gate:hover { background:rgba(255,77,0,.07); border-color:rgba(255,77,0,.4); }
+  .gate::after { /* runway threshold dashes */
+    content:""; position:absolute; left:0; top:0; bottom:0; width:4px;
+    background:repeating-linear-gradient(0deg, transparent 0 8px, rgba(255,77,0,0) 8px 16px);
+    transition:.2s;
+  }
+  .gate:hover::after { background:repeating-linear-gradient(0deg, var(--brand) 0 8px, transparent 8px 16px); }
+
+  .gnum { font-family:Archivo,sans-serif; font-weight:900; font-size:34px; color:rgba(237,235,228,.16); letter-spacing:.02em; }
+  .gate:hover .gnum { color:var(--brand); }
+  .gmain h2 { font-family:Archivo,sans-serif; font-weight:800; font-size:22px; letter-spacing:.02em; text-transform:uppercase; }
+  .gmain .sub { margin-top:5px; font-size:11.5px; color:#8B939D; line-height:1.7; max-width:64ch; }
+  .gmain .sub i { font-style:normal; color:var(--brand); }
+
+  /* motif chips — pure-CSS previews */
+  .motif { height:64px; border-radius:6px; border:1px solid rgba(237,235,228,.12); position:relative; overflow:hidden; }
+  .m-tower { background:#060805; }
+  .m-tower::before {
+    content:""; position:absolute; left:50%; top:50%; width:110px; height:110px; border-radius:50%;
+    transform:translate(-50%,-50%);
+    background:repeating-radial-gradient(circle, transparent 0 15px, rgba(255,77,0,.28) 15px 16px);
+  }
+  .m-tower::after {
+    content:""; position:absolute; left:50%; top:50%; width:55px; height:55px;
+    transform-origin:0 0;
+    background:conic-gradient(from 0deg, transparent 0deg, rgba(255,77,0,.8) 30deg, transparent 32deg);
+    animation:sw 4s linear infinite;
+  }
+  @keyframes sw { to { transform:rotate(360deg); } }
+  .m-strip { background:#EDE6D4; }
+  .m-strip::before {
+    content:""; position:absolute; inset:14px 18px;
+    background:repeating-linear-gradient(0deg, #FBF8EF 0 10px, #D8D0BC 10px 11px);
+    box-shadow:2px 2px 0 rgba(34,31,26,.3); transform:rotate(-1.5deg);
+  }
+  .m-strip::after {
+    content:"LANDED"; position:absolute; right:14px; top:24px;
+    font-family:Archivo; font-weight:800; font-size:9px; color:#3D6B33;
+    border:1.5px solid #3D6B33; padding:1px 5px; transform:rotate(-6deg); border-radius:2px;
+  }
+  .m-dep { background:#0C0C0E; }
+  .m-dep::before {
+    content:""; position:absolute; inset:12px 16px;
+    background:repeating-linear-gradient(0deg, #1C1C22 0 7px, #000 7px 8px);
+  }
+  .m-dep::after {
+    content:""; position:absolute; left:16px; right:16px; top:50%; height:1px; background:rgba(255,77,0,.5);
+  }
+  .m-sect { background:#EFE8D3; }
+  .m-sect::before {
+    content:""; position:absolute; inset:0;
+    background:
+      radial-gradient(circle at 30% 60%, transparent 14px, rgba(58,99,144,.5) 14px 15px, transparent 15px),
+      radial-gradient(circle at 65% 35%, transparent 20px, rgba(255,77,0,.6) 20px 21px, transparent 21px),
+      radial-gradient(circle at 65% 35%, transparent 30px, rgba(255,77,0,.35) 30px 31px, transparent 31px);
+  }
+  .m-rec { background:linear-gradient(160deg,#FF6A26,#C53A00); }
+  .m-rec::before {
+    content:""; position:absolute; inset:14px 16px; border-radius:4px;
+    background:#170E03; box-shadow:inset 0 0 12px rgba(0,0,0,.9);
+    border:1px solid rgba(0,0,0,.5);
+  }
+  .m-rec::after {
+    content:"0x4F2A"; position:absolute; left:26px; top:33px;
+    font-size:10px; color:#FFB84D; letter-spacing:.1em;
+  }
+
+  /* series B motifs */
+  .series-label {
+    padding:0 5vw; margin:36px 0 14px;
+    font-family:Archivo,sans-serif; font-weight:800; font-size:11px;
+    letter-spacing:.28em; color:var(--dim);
+  }
+  .m-line { background:#15181E; }
+  .m-line::before {
+    content:""; position:absolute; left:20px; right:20px; top:50%; height:2px;
+    background:linear-gradient(90deg, var(--brand) 60%, #2A2F3A 60%);
+  }
+  .m-line::after {
+    content:""; position:absolute; left:60%; top:50%; width:7px; height:7px;
+    background:#fff; border-radius:50%; transform:translate(-50%,-50%);
+    box-shadow:0 0 8px #fff;
+  }
+  .m-apron { background:#EDECE7; }
+  .m-apron::before {
+    content:""; position:absolute; left:14px; right:14px; top:12px; bottom:12px;
+    background:
+      linear-gradient(90deg, transparent 25%, rgba(25,27,31,.15) 25% calc(25% + 1px), transparent calc(25% + 1px)),
+      linear-gradient(90deg, transparent 50%, rgba(25,27,31,.15) 50% calc(50% + 1px), transparent calc(50% + 1px)),
+      linear-gradient(90deg, transparent 75%, rgba(25,27,31,.15) 75% calc(75% + 1px), transparent calc(75% + 1px));
+  }
+  .m-apron::after {
+    content:""; position:absolute; left:30%; top:22px; width:26%; height:7px; border-radius:3px;
+    background:#191B1F;
+    box-shadow:40px 14px 0 -1px var(--brand), 8px 28px 0 -1px #191B1F;
+  }
+  .m-manif { background:#F6F3EA; }
+  .m-manif::before {
+    content:""; position:absolute; inset:12px 16px;
+    background:repeating-linear-gradient(0deg, transparent 0 5px, rgba(33,30,24,.35) 5px 6px);
+  }
+  .m-manif::after {
+    content:"CLEARED"; position:absolute; right:18px; top:16px;
+    font-family:Archivo; font-weight:800; font-size:9px; color:#2E7D46;
+    border:1.5px solid #2E7D46; padding:1px 5px; transform:rotate(-5deg); border-radius:2px;
+  }
+  .m-tick { background:#1A1C20; }
+  .m-tick::before {
+    content:""; position:absolute; left:18px; top:12px; bottom:12px; width:80%;
+    background:#F5F1E6; border-radius:5px;
+    box-shadow:inset -26px 0 0 -22px transparent;
+  }
+  .m-tick::after {
+    content:""; position:absolute; left:calc(18px + 80% - 30px); top:12px; bottom:12px;
+    border-left:2px dashed rgba(25,27,31,.35);
+  }
+  .m-radio { background:#0B0D10; }
+  .m-radio::before {
+    content:""; position:absolute; left:16px; right:16px; top:14px; bottom:14px;
+    background:repeating-linear-gradient(0deg, transparent 0 9px, rgba(213,217,223,.14) 9px 10px);
+  }
+  .m-radio::after {
+    content:"▸"; position:absolute; left:16px; bottom:6px; color:var(--brand); font-size:12px;
+  }
+  .m-board { background:#0C0C0E; }
+  .m-board::before {
+    content:""; position:absolute; left:14px; top:14px; width:62%; height:56%;
+    background:#F5F1E6; border-radius:4px;
+    border-right:2px dashed rgba(25,27,31,.3);
+    box-shadow:inset -20px 0 0 -17px #F5F1E6, inset -22px 0 0 -20px rgba(25,27,31,.3);
+  }
+  .m-board::after {
+    content:""; position:absolute; left:20px; bottom:16px; right:20px; height:6px;
+    background:repeating-linear-gradient(90deg, #1C1C22 0 10px, transparent 10px 14px);
+    border-top:1px solid rgba(255,77,0,.5);
+  }
+  .gate.final { border-color:rgba(255,77,0,.45); }
+  .gate.final .gnum { color:var(--brand); }
+
+  .go { font-family:Archivo,sans-serif; font-weight:800; font-size:20px; color:var(--dim); text-align:right; transition:.18s; }
+  .gate:hover .go { color:var(--brand); transform:translateX(6px); }
+
+  footer { padding:0 5vw 40px; font-size:10px; letter-spacing:.16em; color:#4A525C; display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px; }
+
+  @media (max-width: 900px) {
+    .gate { grid-template-columns:60px 1fr 40px; }
+    .motif { display:none; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <svg class="mark" viewBox="0 0 240 240"><g transform="translate(0 -14) rotate(22.5 120 120)"><g fill="none" stroke="#EDEBE4" stroke-width="18" stroke-linecap="round"><path d="M56 204 L196 64"/><path d="M44 160 C 94 160 122 140 150 110"/></g><circle cx="150" cy="110" r="13" fill="#FF4D00"/></g></svg>
+  <div class="brandline">RUNWAY</div>
+  <div class="sp"></div>
+  <div class="tag">SELF-HOSTED DEPLOY PLATFORM · DESIGN STUDY</div>
+</header>
+
+<section class="hero">
+  <div class="k">ELEVEN DIRECTIONS · ONE BRAND ROOT</div>
+  <h1>Every push<br>is a <em>departure.</em></h1>
+  <p>
+    Two series. <b>Series B — the cockpit</b> is production thinking: real information
+    architecture, filters, selection, density. Aviation lives in the system — status names,
+    the flight-path progress track, the ticket stub — not in the chrome.
+    <b>Series A — the museum</b> is the pure-metaphor set: beautiful, less shippable.
+    Same six deployments everywhere so the ergonomics compare directly.
+  </p>
+</section>
+
+<div class="series-label">SERIES B — THE COCKPIT · SHIPPABLE UX</div>
+<section class="gates">
+  <a class="gate" href="06-flightline.html">
+    <div class="gnum">06</div>
+    <div class="gmain">
+      <h2>Flightline</h2>
+      <div class="sub">The honest evolution of the current dashboard. Signature element: the logo's approach path flattened into a <i>flight-path progress track</i> on every row — QUEUE→TAXI→CLIMB→FINAL→LANDED. Filters, expandable detail, instrument counters.</div>
+    </div>
+    <div class="motif m-line"></div>
+    <div class="go">→</div>
+  </a>
+  <a class="gate" href="07-apron.html">
+    <div class="gnum">07</div>
+    <div class="gmain">
+      <h2>Apron</h2>
+      <div class="sub">Operations board: deployments parked on a <i>time axis</i> by environment lane instead of a list. Deploy frequency and duration are visible at a glance — the thing teams actually ask. Light ops-whiteboard palette.</div>
+    </div>
+    <div class="motif m-apron"></div>
+    <div class="go">→</div>
+  </a>
+  <a class="gate" href="08-manifest.html">
+    <div class="gnum">08</div>
+    <div class="gmain">
+      <h2>Manifest</h2>
+      <div class="sub">Every deploy files a <i>flight plan</i>: numbered sections (route, aircraft, cargo, clearance, remarks), a stamped disposition. Document UX — linear, scannable, prints beautifully. Aviation as paperwork, not decoration.</div>
+    </div>
+    <div class="motif m-manif"></div>
+    <div class="go">→</div>
+  </a>
+  <a class="gate" href="09-ticket.html">
+    <div class="gnum">09</div>
+    <div class="gmain">
+      <h2>Ticket</h2>
+      <div class="sub">Deployments as <i>boarding passes</i>: REPO → ENV route letters, gate = alias, barcode = sha, perforated stub that tears open into the flight record. Playful but a real, dense, filterable card grid.</div>
+    </div>
+    <div class="motif m-tick"></div>
+    <div class="go">→</div>
+  </a>
+  <a class="gate" href="10-radio.html">
+    <div class="gnum">10</div>
+    <div class="gmain">
+      <h2>Radio</h2>
+      <div class="sub">The app as a command frequency. Channels for views, transmissions for events, a transmit line that filters and runs the same verbs as the CLI/MCP. <i>Keyboard-only, maximum density — the devs' tower.</i></div>
+    </div>
+    <div class="motif m-radio"></div>
+    <div class="go">→</div>
+  </a>
+</section>
+
+<div class="series-label">THE MERGED DIRECTION — ONE PRODUCT, FIVE PAGES</div>
+<section class="gates">
+  <a class="gate final" href="11-boarding/index.html">
+    <div class="gnum">11</div>
+    <div class="gmain">
+      <h2>Boarding <span style="font-family:'IBM Plex Mono';font-size:10px;font-weight:400;color:var(--brand);letter-spacing:.1em;vertical-align:middle;margin-left:8px">09 TICKET × 06 FLIGHTLINE × 03 DEPARTURES</span></h2>
+      <div class="sub">Your picks, merged into one product. <i>Projects hold the pass</i> — paper standing documents with legs per env; every deploy files a dark <i>ATC strip in the rack</i> carrying the flight-path track; the overview runs a live <i>split-flap board</i>. Five linked pages: overview, departures rack, flight detail, projects, check-in. <i>This is the one that could ship.</i></div>
+    </div>
+    <div class="motif m-board"></div>
+    <div class="go">→</div>
+  </a>
+</section>
+
+<div class="series-label">SERIES A — THE MUSEUM · PURE METAPHOR</div>
+
+<section class="gates">
+  <a class="gate" href="01-tower.html">
+    <div class="gnum">01</div>
+    <div class="gmain">
+      <h2>Tower</h2>
+      <div class="sub">The dashboard as an ATC radar scope. Deployments are tracked flights — callsigns are SHAs, altitude is build progress, aliases are squawk codes. <i>Phosphor orange on ink, live sweep, teletype feed.</i></div>
+    </div>
+    <div class="motif m-tower"></div>
+    <div class="go">→</div>
+  </a>
+  <a class="gate" href="02-stripbay.html">
+    <div class="gnum">02</div>
+    <div class="gmain">
+      <h2>Strip Bay</h2>
+      <div class="sub">Analog flight-progress strips in metal rack bays — the paper system real towers used for decades. Rubber-stamp statuses, grease-pencil notes, perforation edges. <i>The only light-mode direction; tactile, warm, human.</i></div>
+    </div>
+    <div class="motif m-strip"></div>
+    <div class="go">→</div>
+  </a>
+  <a class="gate" href="03-departures.html">
+    <div class="gnum">03</div>
+    <div class="gmain">
+      <h2>Departures</h2>
+      <div class="sub">A Solari split-flap board under airport wayfinding signage. Rows flap-shuffle into place, BOARDING blinks, announcements crawl. <i>Pure typographic kinetic energy — nothing else in devtools looks like this.</i></div>
+    </div>
+    <div class="motif m-dep"></div>
+    <div class="go">→</div>
+  </a>
+  <a class="gate" href="04-sectional.html">
+    <div class="gnum">04</div>
+    <div class="gmain">
+      <h2>Sectional</h2>
+      <div class="sub">The whole instance as an aeronautical chart. Projects are airfields with runway glyphs, teams are airspace, deployments flow along corridors from the Git sector. <i>Cartographic, parchment, a chart supplement for the data.</i></div>
+    </div>
+    <div class="motif m-sect"></div>
+    <div class="go">→</div>
+  </a>
+  <a class="gate" href="05-recorder.html">
+    <div class="gnum">05</div>
+    <div class="gmain">
+      <h2>Flight Recorder</h2>
+      <div class="sub">The app inside the black box — which is orange, like the brand. Riveted casing, serial plate, toggle-switch nav, amber LCD memory dumps. <i>Industrial object design: your deploys, crash-survivable.</i></div>
+    </div>
+    <div class="motif m-rec"></div>
+    <div class="go">→</div>
+  </a>
+</section>
+
+<footer>
+  <span>RUNWAY — SHIP IT FROM YOUR OWN RUNWAY</span>
+  <span>PREPARE → DEPLOY → FINALIZE → TOUCHDOWN</span>
+</footer>
+
+</body>
+</html>

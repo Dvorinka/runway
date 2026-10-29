@@ -39,6 +39,7 @@ translate into the static server's config on static deploys.
 | `deploy_branches` | string[] | branch rules (`"*"` for all) |
 | `preview_environments` | bool | `false` disables preview-env fallback |
 | `preview_template` | string | env slug cloned for unmatched branches |
+| `preview_domain` | string | staging base for branch previews (`<project>-branch-<branch>.<domain>`) |
 | `deployment_rules.preview_comment` | bool | `false` disables PR comments |
 | `health_check` | string \| object | `"/healthz"` or `{path, interval_seconds, failures}` |
 | `deployment_retention` | int | keep newest N completed deploys per env |

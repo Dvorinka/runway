@@ -3,6 +3,15 @@
 .env
 data/
 data-test/
+data-run/
+screenshots/
+/*.png
+OVERNIGHT-PROMPT.md
 node_modules/
 dist/
+*.tsbuildinfo
+__pycache__/
 .playwright-mcp/
+
+# vite pre-bundle cache
+dashboard/.vite/

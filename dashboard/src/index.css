@@ -1,0 +1,106 @@
+@import "tailwindcss";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+
+@theme {
+  /* dashboard/DESIGN.md token table — dark-only product UI. */
+  --color-background: #0a0a0a;
+  --color-foreground: #ededed;
+  --color-card: #161616;
+  --color-card-foreground: #ededed;
+  --color-raised: #1c1c1c;
+  --color-primary: #ededed;
+  --color-primary-foreground: #0a0a0a;
+  --color-muted: #1c1c1c;
+  --color-muted-foreground: #888888;
+  --color-accent: #1c1c1c;
+  --color-border: #262626;
+  --color-ring: #ff4d00;
+  --color-brand: #ff4d00;
+  --color-brand-foreground: #ffffff;
+  --color-intent-soft: rgb(255 77 0 / 0.12);
+  --color-intent-border: rgb(255 77 0 / 0.4);
+  --color-success: #3fb67f;
+  --color-warning: #d9a524;
+  --color-danger: #e5484d;
+  --color-info: #4d9fff;
+  --color-destructive: #e5484d;
+  --radius: 0.625rem;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--color-background);
+  color: var(--color-foreground);
+  font-family: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.font-mono,
+pre {
+  font-family: "Geist Mono Variable", ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.page-enter {
+  animation: rise 0.3s ease both;
+}
+
+.stagger > * {
+  animation: rise 0.35s ease both;
+}
+.stagger > *:nth-child(2) { animation-delay: 0.04s; }
+.stagger > *:nth-child(3) { animation-delay: 0.08s; }
+.stagger > *:nth-child(4) { animation-delay: 0.12s; }
+.stagger > *:nth-child(5) { animation-delay: 0.16s; }
+.stagger > *:nth-child(6) { animation-delay: 0.2s; }
+.stagger > *:nth-child(7) { animation-delay: 0.24s; }
+.stagger > *:nth-child(n + 8) { animation-delay: 0.28s; }
+
+::selection {
+  background: #ff4d00;
+  color: #fff;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: oklch(1 0 0 / 14%) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: oklch(1 0 0 / 14%);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: oklch(1 0 0 / 22%);
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Fallback for any remaining native selects: keep option text readable. */
+select option {
+  background-color: oklch(0.18 0 0);
+  color: oklch(0.985 0 0);
+}

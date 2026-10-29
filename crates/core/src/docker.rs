@@ -283,6 +283,9 @@ pub async fn connect_to_network(
     let (Some(container), Some(network)) = (container, network) else {
         return Ok(());
     };
+    // Attach is load-bearing so real failures propagate, but the benign
+    // states devpush tolerates must not retry the caller: already
+    // attached (403 "already exists") and 409 conflict are success.
     docker
         .connect_network(
             network,
@@ -292,7 +295,28 @@ pub async fn connect_to_network(
             },
         )
         .await
-        .or_else(|e| if is_not_found(&e) { Ok(()) } else { Err(e) })?;
+        .or_else(|e| {
+            let benign = is_not_found(&e)
+                || matches!(
+                    e,
+                    BollardError::DockerResponseServerError {
+                        status_code: 409,
+                        ..
+                    }
+                )
+                || (matches!(
+                    e,
+                    BollardError::DockerResponseServerError {
+                        status_code: 403,
+                        ..
+                    }
+                ) && e.to_string().contains("already exists"));
+            if benign {
+                Ok(())
+            } else {
+                Err(e)
+            }
+        })?;
     Ok(())
 }
 
@@ -306,7 +330,11 @@ pub async fn disconnect_from_network(
     let (Some(container), Some(network)) = (container, network) else {
         return Ok(());
     };
-    docker
+    // Detach is best-effort cleanup: the container may already be gone or
+    // never connected (deploy failed before the edge attach). devpush
+    // tolerates 404/409 and warns on the rest — a failed detach must not
+    // retry the whole `fail_deployment` job.
+    if let Err(e) = docker
         .disconnect_network(
             network,
             DisconnectNetworkOptions {
@@ -315,7 +343,20 @@ pub async fn disconnect_from_network(
             },
         )
         .await
-        .or_else(|e| if is_not_found(&e) { Ok(()) } else { Err(e) })?;
+    {
+        let benign = is_not_found(&e)
+            || matches!(
+                e,
+                BollardError::DockerResponseServerError {
+                    status_code: 409,
+                    ..
+                }
+            )
+            || e.to_string().contains("is not connected to network");
+        if !benign {
+            tracing::warn!("failed to detach {container} from {network}: {e}");
+        }
+    }
     Ok(())
 }
 
@@ -330,7 +371,11 @@ pub const REMOTE_PORT_END: i32 = 49651;
 
 /// Docker client for a remote node — `None` when the node is gone,
 /// disabled, or unreachable at connect time.
-pub async fn node_client(db: &sqlx::PgPool, node_id: &str) -> Option<Docker> {
+pub async fn node_client(
+    db: &sqlx::PgPool,
+    node_id: &str,
+    crypto: &crate::crypto::Crypto,
+) -> Option<Docker> {
     let node: crate::models::RemoteNode = sqlx::query_as("SELECT * FROM remote_node WHERE id = $1")
         .bind(node_id)
         .fetch_optional(db)
@@ -340,15 +385,23 @@ pub async fn node_client(db: &sqlx::PgPool, node_id: &str) -> Option<Docker> {
     if node.status != "online" || node.is_local() {
         return None;
     }
-    node_docker_client(&node).ok()
+    node_docker_client(&node, crypto).ok()
 }
 
 /// Client for one node honoring its stored mTLS material: all three PEMs
-/// present → `connect_with_ssl`, otherwise plain `docker_client`.
-pub fn node_docker_client(node: &crate::models::RemoteNode) -> Result<Docker> {
+/// present → `connect_with_ssl`, otherwise plain `docker_client`. Stored
+/// material is `enc:v1:`-encrypted since 0023; legacy plaintext rows still
+/// read until they're rewritten.
+pub fn node_docker_client(
+    node: &crate::models::RemoteNode,
+    crypto: &crate::crypto::Crypto,
+) -> Result<Docker> {
     let (Some(ca), Some(cert), Some(key)) = (&node.tls_ca, &node.tls_cert, &node.tls_key) else {
         return docker_client(&node.docker_url);
     };
+    let ca = crypto.decrypt_field(ca)?;
+    let cert = crypto.decrypt_field(cert)?;
+    let key = crypto.decrypt_field(key)?;
     // bollard's ssl feature is providerless: install ring once or
     // `ClientConfig::builder()` panics on first connect.
     static CRYPTO: std::sync::Once = std::sync::Once::new();
@@ -357,9 +410,9 @@ pub fn node_docker_client(node: &crate::models::RemoteNode) -> Result<Docker> {
     });
     let dir = std::env::temp_dir().join(format!("runway-node-tls-{}", node.id));
     std::fs::create_dir_all(&dir)?;
-    write_pem(&dir.join("ca.pem"), ca)?;
-    write_pem(&dir.join("cert.pem"), cert)?;
-    write_pem(&dir.join("key.pem"), key)?;
+    write_pem(&dir.join("ca.pem"), &ca)?;
+    write_pem(&dir.join("cert.pem"), &cert)?;
+    write_pem(&dir.join("key.pem"), &key)?;
     Docker::connect_with_ssl(
         &node.docker_url,
         &dir.join("key.pem"),

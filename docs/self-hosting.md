@@ -57,6 +57,10 @@ reports which are on):
 - **OIDC** (`OIDC_*`) — enterprise SSO, discovery-URL driven.
 - **TOTP 2FA** — per-user, in Settings; no env needed.
 
+Auth endpoints are throttled in-process: five failed password or TOTP
+attempts lock the account for 15 minutes (`429`), and magic-link mail
+is limited to one send per address per minute.
+
 ## Networking
 
 Two ways to get traffic in:
@@ -73,11 +77,63 @@ Two ways to get traffic in:
   `DEPLOY_DOMAIN`. The account ID is on the zone Overview page sidebar.
   The domain's DNS must already live on Cloudflare.
 
+> **Docker Desktop caveat.** `runway serve` run directly on the host
+> against a Docker Desktop socket (the `desktop` docker context on
+> macOS/Windows/Linux) cannot complete deployments: the readiness probe
+> reaches containers on their bridge IPs, which are not routable from
+> outside the Docker Desktop VM. Builds succeed; deployments then time
+> out at `Timed out waiting for app readiness`. Use the compose stack
+> (API runs in-container) or a Linux host with the daemon on
+> `/var/run/docker.sock` — both reach bridge IPs natively.
+
+## Git providers
+
+Push-to-deploy hooks for self-hosted forges. Each provider's inbound
+webhook is armed by its own secret env var:
+
+- `GITEA_WEBHOOK_SECRET` (shared by Forgejo), `GITLAB_WEBHOOK_SECRET`,
+  `BITBUCKET_WEBHOOK_SECRET` — point the repo's hook at
+  `{scheme}://{APP_HOSTNAME}/api/{provider}/webhook` with the same
+  secret. Gitea signs with `X-Gitea-Signature` (HMAC-SHA256 hex); the
+  handler verifies before touching the payload.
+- Self-hosted Gitea blocks private-IP webhook targets by default —
+  set `webhook.ALLOWED_HOST_LIST` in `app.ini` (e.g. `*` or your host's
+  subnet) or deliveries are denied before they leave the forge.
+- The hook URL must be reachable *from the forge*, so `localhost`
+  only works when both share a network namespace; use the LAN IP or
+  `host.docker.internal` for containerized forges.
+
 ## Remote Docker nodes
 
-Settings → Remote Docker nodes: register `tcp://host:2375` (or `:2376`
-for mTLS). **mTLS** — the `mTLS` button generates a per-node CA and
-returns a one-time server bundle plus the dockerd flags:
+The easy path needs one command on the machine. Settings → Remote Docker
+nodes → **Get install command** mints a 24-hour `rnod_…` token and prints:
+
+```bash
+curl -fsSL https://<your-runway>/install-node.sh | \
+  sudo RUNWAY_URL=https://<your-runway> RUNWAY_TOKEN=rnod_… sh
+```
+
+The installer checks preflights (root, systemd, openssl, curl), installs
+Docker if absent (`RUNWAY_SKIP_DOCKER_INSTALL=1` refuses instead),
+generates a dedicated CA + server + client certs under
+`/etc/docker/runway-tls/`, drops a systemd unit that puts dockerd on
+`tcp://0.0.0.0:2376 --tlsverify` alongside the unix socket, then POSTs
+the client material and machine inventory to `/api/v1/nodes/checkin`.
+The node lands as **waiting** — approve it in Settings → Nodes (or
+`runway nodes approve <name>`) before deployments can route to it.
+
+Prereqs on the node: Linux + systemd, amd64/arm64, outbound IPv4 to reach
+the control plane, and an address Runway can dial back on (`RUNWAY_HOST`
+overrides auto-detection; private IPs only work on a shared LAN/tunnel).
+Firewalls: inbound `2376/tcp` from the control plane, plus the published
+app ports Traefik proxies to (`49152+`).
+
+CLI equivalent: `runway nodes add --command [--expires <hours>]`,
+`nodes ls`, `nodes approve|rm <id|name>`, `nodes token ls|rm <id>`.
+
+Manual setup stays available under **Manual setup**: register
+`tcp://host:2375` (plaintext — trusted networks only) or `:2376` and use
+the `mTLS` action to generate a per-node CA and one-time server bundle:
 
 ```
 dockerd --tlsverify \
@@ -92,15 +148,43 @@ publish an allocated host port (`49152+`) that Traefik routes
 `http://{node.host}:{port}` to — no extra software on the node.
 Upload/static deploys stay local (artifacts are host files).
 
+## Runner images
+
+Builds run in per-runtime `ghcr.io/devpushhq/runner-*` images, pulled
+on demand. Private registries, mirrors, or an air-gapped host override
+them per slug via `$DATA_DIR/runner-overrides.json`:
+
+```json
+{ "runners": { "node-20": { "image": "registry.internal/runner-node-20:1.0.1" },
+              "bun-1.3": { "enabled": false } } }
+```
+
+`enabled: false` blocks a preset entirely. The file is read per call —
+edits take effect without a restart.
+
 ## Upgrades
 
-Re-run `install.sh` (or `git pull` + `docker compose up -d --build`).
+`scripts/update.sh` moves the install to a new ref and rebuilds the
+stack — `--ref <tag>` to pin, `--backup` to snapshot first. It works
+on both install shapes: git checkouts fetch + checkout; tarball
+installs get an archive overlay that preserves `.env` and `data/`.
 Migrations are embedded and run at startup; they are numbered and
 idempotent — never edit an applied migration.
 
 ## Operations
 
+- `scripts/status.sh` — compose state, `/health` reachability, version.
+- `scripts/restart.sh` — in-place restart with a health wait.
+- `scripts/backup.sh` / `scripts/restore.sh` — Postgres + data dir
+  archives under `backups/`; restore replaces the current data dir and
+  database after a confirmation prompt (`--yes` to skip).
+- `scripts/uninstall.sh` — removes the stack, Runway-managed
+  containers, data dir, and `.env` after a typed confirmation
+  (`--yes`, `--keep-data`, `--skip-backup`).
 - Deploy logs: `data/logs/<deployment>.log`, 30-day retention.
+- Retention sweep (daily, at boot): analytics >90d, expired/used
+  magic-link tokens, expired/revoked node tokens >7d, read
+  notifications >30d. Unread notifications are kept.
 - Metrics: sampled every 30s per running deployment; purge via
   `config.deployment_retention`.
 - Health: `config.health_check` probes running containers; `unhealthy`

@@ -62,6 +62,21 @@ impl Crypto {
             .map_err(|e| Error::Crypto(e.to_string()))?;
         String::from_utf8(pt).map_err(|e| Error::Crypto(e.to_string()))
     }
+
+    /// Encrypt a nullable stored field — prefixed `enc:v1:` so readers can
+    /// tell ciphertext from legacy plaintext rows.
+    pub fn encrypt_field(&self, plaintext: &str) -> Result<String> {
+        Ok(format!("enc:v1:{}", self.encrypt(plaintext)?))
+    }
+
+    /// Inverse of `encrypt_field`; legacy unprefixed values pass through
+    /// verbatim so pre-encryption rows keep working until rewritten.
+    pub fn decrypt_field(&self, stored: &str) -> Result<String> {
+        match stored.strip_prefix("enc:v1:") {
+            Some(ct) => self.decrypt(ct),
+            None => Ok(stored.to_string()),
+        }
+    }
 }
 
 /// sha256 hex digest — used for API key / deploy token lookup hashes.
@@ -108,6 +123,20 @@ mod tests {
     #[test]
     fn empty_key_rejected() {
         assert!(Crypto::new("").is_err());
+    }
+
+    #[test]
+    fn encrypt_field_roundtrip_and_prefix() {
+        let c = Crypto::new("key").unwrap();
+        let stored = c.encrypt_field("-----BEGIN KEY-----").unwrap();
+        assert!(stored.starts_with("enc:v1:"));
+        assert_eq!(c.decrypt_field(&stored).unwrap(), "-----BEGIN KEY-----");
+    }
+
+    #[test]
+    fn decrypt_field_passes_legacy_plaintext_through() {
+        let c = Crypto::new("key").unwrap();
+        assert_eq!(c.decrypt_field("legacy-pem").unwrap(), "legacy-pem");
     }
 
     #[test]

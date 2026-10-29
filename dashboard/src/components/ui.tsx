@@ -1,0 +1,653 @@
+// Minimal shadcn-style primitives — extended on demand.
+import { cva, type VariantProps } from "class-variance-authority";
+import { cn, timeAgo } from "@/lib/utils";
+import { api } from "@/lib/api";
+import { AlertTriangle, ArrowUpRight, Check, ChevronsUpDown, MoreHorizontal, Search } from "lucide-react";
+import { Component, forwardRef, useEffect, useRef, useState } from "react";
+
+const buttonVariants = cva(
+  "inline-flex items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+  {
+    variants: {
+      variant: {
+        default: "bg-primary text-primary-foreground hover:bg-primary/90",
+        outline: "border border-border hover:bg-accent",
+        ghost: "hover:bg-accent",
+        destructive: "bg-destructive text-white hover:bg-destructive/90",
+      },
+      size: { default: "h-9 px-4", sm: "h-8 px-3", lg: "h-10 px-6" },
+    },
+    defaultVariants: { variant: "default", size: "default" },
+  },
+);
+
+export const Button = forwardRef<
+  HTMLButtonElement,
+  React.ButtonHTMLAttributes<HTMLButtonElement> & VariantProps<typeof buttonVariants>
+>(({ className, variant, size, ...props }, ref) => (
+  <button ref={ref} className={cn(buttonVariants({ variant, size }), className)} {...props} />
+));
+Button.displayName = "Button";
+
+export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
+  return (
+    <div
+      className={cn("rounded-lg border border-border bg-card text-card-foreground", className)}
+      {...props}
+    />
+  );
+}
+
+export function Skeleton({ className }: { className?: string }) {
+  return (
+    <div className={cn("animate-pulse rounded-lg border border-border bg-card/60", className)} />
+  );
+}
+
+// Route-level crash containment — a render throw shows an honest
+// fallback inside the shell instead of a white page.
+export class ErrorBoundary extends Component<
+  { children: React.ReactNode },
+  { error: Error | null }
+> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div className="mx-auto max-w-5xl p-4 sm:p-8">
+        <Card className="border-dashed p-8 text-center">
+          <AlertTriangle className="mx-auto mb-3 h-6 w-6 text-warning" />
+          <p className="text-sm font-medium">Something went wrong rendering this page.</p>
+          <p className="mx-auto mt-1 max-w-md text-xs text-muted-foreground">
+            {this.state.error?.message}
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            className="mt-4"
+            onClick={() => window.location.assign("/")}
+          >
+            Back to overview
+          </Button>
+        </Card>
+      </div>
+    );
+  }
+}
+
+export const Input = forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(
+  ({ className, ...props }, ref) => (
+    // Most forms name fields by placeholder; mirror it as the accessible
+    // name unless the caller provides an explicit label.
+    <input
+      ref={ref}
+      aria-label={props["aria-label"] ?? props.placeholder}
+      className={cn(
+        "flex h-9 w-full rounded-md border border-border bg-transparent px-3 text-sm",
+        "placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring",
+        className,
+      )}
+      {...props}
+    />
+  ),
+);
+Input.displayName = "Input";
+
+const badgeVariants = cva(
+  "inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium",
+  {
+    variants: {
+      variant: {
+        default: "border-transparent bg-primary text-primary-foreground",
+        secondary: "border-transparent bg-muted text-muted-foreground",
+        brand: "border-transparent bg-brand/15 text-brand",
+        success: "border-transparent bg-emerald-500/15 text-emerald-400",
+        warning: "border-transparent bg-amber-500/15 text-amber-400",
+        destructive: "border-transparent bg-destructive/15 text-red-400",
+        outline: "border-border text-foreground",
+      },
+    },
+    defaultVariants: { variant: "default" },
+  },
+);
+
+export function Badge({
+  className,
+  variant,
+  ...props
+}: React.HTMLAttributes<HTMLSpanElement> & VariantProps<typeof badgeVariants>) {
+  return <span className={cn(badgeVariants({ variant }), className)} {...props} />;
+}
+
+export function statusVariant(status: string, conclusion?: string | null) {
+  if (conclusion === "succeeded") return "success" as const;
+  if (conclusion === "failed" || conclusion === "canceled" || status === "fail")
+    return "destructive" as const;
+  if (status === "deploy" || status === "prepare" || status === "finalize")
+    return "warning" as const;
+  return "secondary" as const;
+}
+
+/** Rows can carry `status='fail'` with a NULL conclusion — the transient
+ *  write before the final `completed/failed` one that a crash never
+ *  reached. Everywhere a "failed" test appears, these rows count too. */
+export function isFailed(d: { status: string; conclusion?: string | null }) {
+  return d.conclusion === "failed" || (!d.conclusion && d.status === "fail");
+}
+
+// Observed container states that mean "not serving". `removed` is left
+// out — deliberate teardown keeps the succeeded badge.
+const NOT_SERVING = ["crashed", "dead", "paused", "missing", "orphaned", "stopped", "unhealthy"];
+
+/** What the badge should say once the deploy pipeline finished — the
+ *  observed container state wins when it's anything but running. */
+export function displayStatus(d: {
+  status: string;
+  conclusion?: string | null;
+  computed_status?: string | null;
+}): { label: string; variant: "success" | "destructive" | "warning" | "secondary" } {
+  const c = d.computed_status;
+  if (d.conclusion === "succeeded" && c && NOT_SERVING.includes(c)) {
+    return {
+      label: c,
+      variant: c === "crashed" || c === "dead" ? "destructive" : "warning",
+    };
+  }
+  return {
+    label: d.conclusion ?? (d.status === "fail" ? "failed" : d.status),
+    variant: statusVariant(d.status, d.conclusion),
+  };
+}
+
+const RUNNING = ["pending", "prepare", "deploy", "finalize", "queued"];
+
+export function isRunning(status: string, conclusion?: string | null) {
+  return !conclusion && RUNNING.includes(status);
+}
+
+export function StatusDot({
+  status,
+  conclusion,
+  computed,
+  className,
+}: {
+  status: string;
+  conclusion?: string | null;
+  computed?: string | null;
+  className?: string;
+}) {
+  const unhealthy =
+    conclusion === "succeeded" && computed && NOT_SERVING.includes(computed);
+  const bad =
+    conclusion === "failed" ||
+    conclusion === "canceled" ||
+    status === "fail" ||
+    (unhealthy === true && (computed === "crashed" || computed === "dead"));
+  const ok =
+    (conclusion === "succeeded" || status === "active" || status === "running") &&
+    !unhealthy;
+  const color = bad
+    ? "bg-red-500"
+    : isRunning(status, conclusion) || unhealthy
+      ? "bg-amber-400"
+      : ok
+        ? "bg-emerald-500"
+        : "bg-zinc-500";
+  return (
+    <span className={cn("relative flex h-2 w-2 shrink-0", className)}>
+      {isRunning(status, conclusion) && (
+        <span
+          className={cn("absolute inline-flex h-full w-full animate-ping rounded-full opacity-60", color)}
+        />
+      )}
+      <span className={cn("relative inline-flex h-2 w-2 rounded-full", color)} />
+    </span>
+  );
+}
+
+/** Entity avatar — `/api/avatars/{kind}/{id}` when set, initial else. */
+export function Avatar({
+  kind,
+  id,
+  name,
+  hasAvatar,
+  className,
+}: {
+  kind: "user" | "team" | "project";
+  id: string | number;
+  name: string;
+  hasAvatar?: boolean;
+  className?: string;
+}) {
+  const cls = cn(
+    "flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-full bg-muted text-xs font-medium uppercase",
+    className,
+  );
+  if (hasAvatar) {
+    return (
+      <img src={`/api/avatars/${kind}/${id}`} alt={name} className={cn(cls, "object-cover")} />
+    );
+  }
+  return <div className={cls}>{name.charAt(0)}</div>;
+}
+
+/** Avatar preview + upload/remove controls. `onChanged` fires after a
+ *  successful mutation so the caller can refetch. */
+export function AvatarRow({
+  kind,
+  id,
+  name,
+  hasAvatar,
+  onChanged,
+}: {
+  kind: "user" | "team" | "project";
+  id: string | number;
+  name: string;
+  hasAvatar?: boolean;
+  onChanged?: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const input = useRef<HTMLInputElement>(null);
+
+  async function upload(f: File) {
+    setBusy(true);
+    setErr("");
+    try {
+      if (kind === "user") await api.setAvatar(f);
+      else await api.setEntityAvatar(kind, id.toString(), f);
+      onChanged?.();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "upload failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove() {
+    setBusy(true);
+    setErr("");
+    try {
+      if (kind === "user") await api.deleteAvatar();
+      else await api.deleteEntityAvatar(kind, id.toString());
+      onChanged?.();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mb-4 flex items-center gap-3">
+      <Avatar kind={kind} id={id} name={name} hasAvatar={hasAvatar} className="h-10 w-10 text-sm" />
+      <input
+        ref={input}
+        type="file"
+        accept="image/png,image/jpeg,image/webp,image/gif"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) upload(f);
+          e.target.value = "";
+        }}
+      />
+      <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => input.current?.click()}>
+        {hasAvatar ? "Change" : "Upload"} avatar
+      </Button>
+      {hasAvatar && (
+        <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={remove}>
+          Remove
+        </Button>
+      )}
+      {err && <span className="text-xs text-destructive">{err}</span>}
+    </div>
+  );
+}
+
+export interface ComboOption {
+  value: string;
+  label: string;
+  hint?: string;
+}
+
+// Relative time with the absolute timestamp on hover.
+export function TimeAgo({ at, className }: { at: string; className?: string }) {
+  const d = new Date(at);
+  return (
+    <span className={className} title={isNaN(d.getTime()) ? undefined : d.toLocaleString()}>
+      {timeAgo(at)}
+    </span>
+  );
+}
+
+// Actions dropdown — a trigger button plus an anchored panel of items.
+// Items render as menu rows; `danger` marks destructive entries.
+export interface MenuItem {
+  label: React.ReactNode;
+  icon?: React.ReactNode;
+  onSelect: () => void;
+  danger?: boolean;
+  disabled?: boolean;
+  hint?: string;
+}
+
+export function Menu({
+  items,
+  trigger,
+  align = "end",
+  title = "Actions",
+}: {
+  items: MenuItem[];
+  trigger?: React.ReactNode;
+  align?: "start" | "end";
+  title?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        aria-label={title}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className="inline-flex h-8 items-center justify-center gap-1 rounded-md border border-border px-2.5 text-sm transition-colors hover:bg-accent"
+      >
+        {trigger ?? <MoreHorizontal className="h-4 w-4" />}
+      </button>
+      {open && (
+        <div
+          role="menu"
+          className={cn(
+            "absolute z-50 mt-1 min-w-44 overflow-hidden rounded-md border border-border bg-card p-1 shadow-xl",
+            align === "end" ? "right-0" : "left-0",
+          )}
+        >
+          {items.map((item, i) => (
+            <button
+              key={i}
+              type="button"
+              role="menuitem"
+              disabled={item.disabled}
+              onClick={() => {
+                setOpen(false);
+                item.onSelect();
+              }}
+              className={cn(
+                "flex w-full items-center justify-between gap-3 rounded px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent disabled:opacity-50",
+                item.danger ? "text-red-400" : "text-foreground",
+              )}
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                {item.icon}
+                <span className="truncate">{item.label}</span>
+              </span>
+              {item.hint && (
+                <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
+                  {item.hint}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Searchable dropdown — replaces native <select> (whose popup ignores the
+// dark theme and can't filter). Controlled via value/onChange with string
+// values; map numbers/ids at the call site.
+export function ComboBox({
+  value,
+  onChange,
+  options,
+  placeholder = "Select…",
+  searchPlaceholder = "Search…",
+  emptyText = "No matches",
+  disabled,
+  className,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  options: ComboOption[];
+  placeholder?: string;
+  searchPlaceholder?: string;
+  emptyText?: string;
+  disabled?: boolean;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [active, setActive] = useState(0);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const selected = options.find((o) => o.value === value);
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? options.filter((o) => `${o.label} ${o.hint ?? ""}`.toLowerCase().includes(q))
+    : options;
+
+  function close() {
+    setOpen(false);
+    setQuery("");
+    setActive(0);
+  }
+  function pick(v: string) {
+    onChange(v);
+    close();
+  }
+
+  // Close on outside click / Escape.
+  useEffect(() => {
+    if (!open) return;
+    searchRef.current?.focus();
+    const onDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) close();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open ]);
+
+  function onTriggerKey(e: React.KeyboardEvent) {
+    if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      if (!open) setOpen(true);
+      else if (filtered[active]) pick(filtered[active].value);
+    } else if (e.key === "ArrowUp" && open && filtered.length) {
+      e.preventDefault();
+      setActive((a) => (a - 1 + filtered.length) % filtered.length);
+    }
+  }
+
+  return (
+    <div ref={rootRef} className={cn("relative", className)}>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => (open ? close() : setOpen(true))}
+        onKeyDown={onTriggerKey}
+        className="flex h-9 w-full items-center justify-between gap-2 rounded-md border border-border bg-transparent px-3 text-sm transition-colors hover:border-muted-foreground/40 focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
+      >
+        <span className={cn("truncate", selected ? "text-foreground" : "text-muted-foreground")}>
+          {selected ? selected.label : placeholder}
+        </span>
+        <ChevronsUpDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+      </button>
+      {open && (
+        <div className="absolute z-50 mt-1 max-h-64 w-full overflow-hidden rounded-md border border-border bg-card shadow-xl">
+          <div className="flex items-center gap-2 border-b border-border px-3">
+            <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            <input
+              ref={searchRef}
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setActive(0);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "ArrowDown" && filtered.length) {
+                  e.preventDefault();
+                  setActive((a) => (a + 1) % filtered.length);
+                } else if (e.key === "ArrowUp" && filtered.length) {
+                  e.preventDefault();
+                  setActive((a) => (a - 1 + filtered.length) % filtered.length);
+                } else if (e.key === "Enter" && filtered[active]) {
+                  e.preventDefault();
+                  pick(filtered[active].value);
+                }
+              }}
+              placeholder={searchPlaceholder}
+              aria-label={searchPlaceholder}
+              className="h-9 w-full bg-transparent text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+            />
+          </div>
+          <div className="max-h-52 overflow-y-auto p-1">
+            {filtered.length === 0 && (
+              <p className="px-2 py-3 text-center text-xs text-muted-foreground">{emptyText}</p>
+            )}
+            {filtered.map((o, i) => {
+              const isSel = o.value === value;
+              return (
+                <button
+                  key={o.value}
+                  type="button"
+                  onMouseEnter={() => setActive(i)}
+                  onClick={() => pick(o.value)}
+                  className={cn(
+                    "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm transition-colors",
+                    i === active ? "bg-accent" : "",
+                    isSel ? "text-foreground" : "text-muted-foreground",
+                  )}
+                >
+                  <Check
+                    className={cn(
+                      "h-4 w-4 shrink-0",
+                      isSel ? "text-foreground" : "text-transparent",
+                    )}
+                  />
+                  <span className="min-w-0 flex-1 truncate">{o.label}</span>
+                  {o.hint && (
+                    <span className="shrink-0 truncate text-xs text-muted-foreground/70">
+                      {o.hint}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Empty state — muted icon in a bordered box, title, subtext, actions.
+ *  The one pattern for "nothing here yet" across the dashboard. */
+export function EmptyState({
+  icon: Icon,
+  title,
+  children,
+  hint,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  children?: React.ReactNode;
+  hint?: string;
+}) {
+  return (
+    <div className="flex flex-col items-center rounded-lg border border-dashed border-border px-8 py-12 text-center">
+      <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-lg border border-border bg-card">
+        <Icon className="h-5 w-5 text-muted-foreground" />
+      </div>
+      <p className="text-sm font-medium">{title}</p>
+      {hint && <p className="mt-1 max-w-sm text-sm text-muted-foreground">{hint}</p>}
+      {children && <div className="mt-5">{children}</div>}
+    </div>
+  );
+}
+
+// Settings card footer (Vercel's pattern): a divided row — "Learn more"
+// doc link left, status text + actions right. `doc` is the only honest
+// part: omit it rather than link to docs that don't exist.
+export function CardFooter({
+  doc,
+  docLabel,
+  children,
+}: {
+  doc?: string;
+  docLabel?: string;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div className="-mx-4 mt-4 flex items-center justify-between gap-3 border-t border-border px-4 pt-3">
+      {doc ? (
+        <a
+          href={doc}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+        >
+          {docLabel ?? "Learn more"}
+          <ArrowUpRight className="h-3 w-3" />
+        </a>
+      ) : (
+        <span />
+      )}
+      <div className="flex items-center gap-3">{children}</div>
+    </div>
+  );
+}
+
+// Section header with a neutral medallion icon — one visual language for
+// card sections across Settings, Teams, and project flows.
+export function SectionHead({
+  icon: Icon,
+  title,
+  children,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div className="mb-4 flex items-start gap-2.5">
+      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border bg-accent/50">
+        <Icon className="h-4 w-4 text-muted-foreground" />
+      </div>
+      <div className="min-w-0 pt-0.5">
+        <h2 className="text-sm font-medium">{title}</h2>
+        {children && <div className="mt-1 text-xs text-muted-foreground">{children}</div>}
+      </div>
+    </div>
+  );
+}

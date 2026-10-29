@@ -2,7 +2,9 @@
 //!
 //! Each deployment appends to `<data_dir>/logs/<deployment_id>.log`.
 //! Lines are also broadcast on `deployment:{id}:logs` for SSE streaming.
-//! Line format on disk: `<rfc3339>\t<stream>\t<text>`.
+//! Line format on disk: `<rfc3339>\t<stream>\t<text>` — streams are
+//! `system` (worker messages), `runtime` (container output), and `step`
+//! (lifecycle phase markers the UI groups on).
 
 use std::path::{Path, PathBuf};
 
@@ -43,6 +45,16 @@ impl LogStore {
         file.write_all(b"\n").await?;
         self.bus.publish_line(&scope(deployment_id), &line);
         Ok(())
+    }
+
+    /// Step boundary marker (`prepare`/`deploy`/`finalize` — the
+    /// CONTEXT.md lifecycle phases). Written as a `step`-stream line so
+    /// the UI can group and collapse the stream per phase; plain-text
+    /// consumers see it as an ordinary line.
+    pub async fn step(&self, deployment_id: &str, step: &str) {
+        if let Err(e) = self.append(deployment_id, "step", step).await {
+            tracing::warn!(deployment_id, error = %e, "failed to write step marker");
+        }
     }
 
     /// Convenience wrapper for status/progress lines.

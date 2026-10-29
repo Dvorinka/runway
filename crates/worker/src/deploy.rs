@@ -45,6 +45,7 @@ pub async fn start(ctx: &Ctx, deployment_id: &str) -> anyhow::Result<()> {
         None,
     )
     .await?;
+    ctx.logs.step(deployment_id, "prepare").await;
 
     let result = run_pipeline(ctx, &deployment, &project).await;
     match result {
@@ -505,19 +506,21 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
     }
 
     // -- Resource limits -----------------------------------------------
+    // devpush parity: uncapped unless the operator sets defaults; custom
+    // per-project values are honored only when a default+max pair exists.
     let mut cpus = ctx.settings.default_cpus;
     let mut memory_mb = ctx.settings.default_memory_mb;
-    if ctx.settings.allow_custom_cpu {
-        if let Some(override_cpus) = config.get("cpus").and_then(|v| v.as_f64()) {
-            if override_cpus > 0.0 {
-                cpus = f64::min(override_cpus, ctx.settings.max_cpus);
+    if let (Some(_), Some(max)) = (ctx.settings.default_cpus, ctx.settings.max_cpus) {
+        if let Some(o) = config.get("cpus").and_then(|v| v.as_f64()) {
+            if o > 0.0 {
+                cpus = Some(f64::min(o, max));
             }
         }
     }
-    if ctx.settings.allow_custom_memory {
-        if let Some(override_mem) = config.get("memory").and_then(|v| v.as_i64()) {
-            if override_mem > 0 {
-                memory_mb = i64::min(override_mem, ctx.settings.max_memory_mb);
+    if let (Some(_), Some(max)) = (ctx.settings.default_memory_mb, ctx.settings.max_memory_mb) {
+        if let Some(o) = config.get("memory").and_then(|v| v.as_i64()) {
+            if o > 0 {
+                memory_mb = Some(i64::min(o, max));
             }
         }
     }
@@ -643,11 +646,11 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
         }),
         ..Default::default()
     };
-    if cpus > 0.0 {
-        host_config.nano_cpus = Some((cpus * 1e9) as i64);
+    if let Some(c) = cpus {
+        host_config.nano_cpus = Some((c * 1e9) as i64);
     }
-    if memory_mb > 0 {
-        host_config.memory = Some(memory_mb * 1024 * 1024);
+    if let Some(m) = memory_mb {
+        host_config.memory = Some(m * 1024 * 1024);
     }
     // Linked storage: data mounts + network attach (deploy-time wiring).
     // Remote nodes can't reach local storage containers or their host
@@ -937,6 +940,7 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
         Some("running"),
     )
     .await?;
+    ctx.logs.step(deployment_id, "deploy").await;
 
     deploy::enqueue(
         &ctx.db,
@@ -1133,6 +1137,7 @@ pub async fn finalize(ctx: &Ctx, deployment_id: &str) -> anyhow::Result<()> {
     let Some(project) = deploy::get_project(&ctx.db, &deployment.project_id).await? else {
         anyhow::bail!("project not found");
     };
+    ctx.logs.step(deployment_id, "finalize").await;
 
     if let Err(e) = async {
         deploy::setup_aliases(&ctx.db, &deployment, &project, &ctx.settings).await?;
@@ -1183,6 +1188,10 @@ pub async fn finalize(ctx: &Ctx, deployment_id: &str) -> anyhow::Result<()> {
         }
     }
     ctx.logs.info(deployment_id, "Deployment succeeded").await;
+    // Boundary marker: everything after `live` is post-deploy output
+    // (container stdout + lifecycle events) — the dashboard splits the
+    // log pane into build vs runtime on this marker.
+    ctx.logs.step(deployment_id, "live").await;
     post_commit_status(ctx, &deployment, &project, "success", "Deployment ready").await;
     let dep_now = deploy::get(&ctx.db, deployment_id)
         .await?
@@ -1202,10 +1211,7 @@ pub async fn finalize(ctx: &Ctx, deployment_id: &str) -> anyhow::Result<()> {
         "deployment.succeeded",
         &format!("Deployment ready: {}", project.name),
         runway_core::audit::Notify {
-            link: Some(&format!(
-                "/projects/{}/deployments/{deployment_id}",
-                project.id
-            )),
+            link: Some(&format!("/deployments/{deployment_id}")),
             project_id: Some(&project.id),
             ..Default::default()
         },
@@ -1368,10 +1374,7 @@ pub async fn fail(
             &format!("Deployment failed: {}", project.name),
             runway_core::audit::Notify {
                 body: Some(reason.unwrap_or("Deployment failed")),
-                link: Some(&format!(
-                    "/projects/{}/deployments/{deployment_id}",
-                    project.id
-                )),
+                link: Some(&format!("/deployments/{deployment_id}")),
                 project_id: Some(&project.id),
                 ..Default::default()
             },
@@ -1458,7 +1461,7 @@ async fn post_commit_status(
 /// Resolve the daemon a deployment's container lives on.
 async fn dep_docker(ctx: &Ctx, remote_node_id: Option<&str>) -> Option<bollard::Docker> {
     match remote_node_id {
-        Some(nid) => dkr::node_client(&ctx.db, nid).await,
+        Some(nid) => dkr::node_client(&ctx.db, nid, &ctx.crypto).await,
         None => Some(ctx.docker.clone()),
     }
 }

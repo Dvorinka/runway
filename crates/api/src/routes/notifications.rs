@@ -9,6 +9,11 @@ use axum::{
 use serde::Deserialize;
 use serde_json::json;
 
+#[derive(Deserialize)]
+pub struct MarkReadBody {
+    pub id: Option<i64>,
+}
+
 use crate::auth::AuthUser;
 use crate::error::ApiResult;
 use crate::state::AppState;
@@ -34,12 +39,28 @@ pub async fn list(user: AuthUser, State(state): State<AppState>) -> ApiResult<Re
     Ok(Json(json!({ "notifications": rows, "unread": unread })).into_response())
 }
 
-/// `POST /api/v1/notifications/mark-read` — all read (devpush parity).
-pub async fn mark_read(user: AuthUser, State(state): State<AppState>) -> ApiResult<Response> {
-    sqlx::query("UPDATE notification SET read = TRUE WHERE user_id = $1 AND NOT read")
-        .bind(user.user.id)
-        .execute(&state.db)
-        .await?;
+/// `POST /api/v1/notifications/mark-read` — one (`{id}`) or all read
+/// (empty body, devpush parity).
+pub async fn mark_read(
+    user: AuthUser,
+    State(state): State<AppState>,
+    body: Option<Json<MarkReadBody>>,
+) -> ApiResult<Response> {
+    match body.and_then(|b| b.0.id) {
+        Some(id) => {
+            sqlx::query("UPDATE notification SET read = TRUE WHERE id = $1 AND user_id = $2")
+                .bind(id)
+                .bind(user.user.id)
+                .execute(&state.db)
+                .await?;
+        }
+        None => {
+            sqlx::query("UPDATE notification SET read = TRUE WHERE user_id = $1 AND NOT read")
+                .bind(user.user.id)
+                .execute(&state.db)
+                .await?;
+        }
+    }
     Ok(Json(json!({ "ok": true })).into_response())
 }
 
