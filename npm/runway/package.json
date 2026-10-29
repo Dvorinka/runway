@@ -1,6 +1,6 @@
 {
   "name": "@tdvorakdev/runway",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Runway CLI — self-hosted deployment platform (binary wrapper)",
   "license": "MIT",
   "bin": {

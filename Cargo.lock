@@ -2441,7 +2441,7 @@ dependencies = [
 
 [[package]]
 name = "runway"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2463,7 +2463,7 @@ dependencies = [
 
 [[package]]
 name = "runway-api"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2494,7 +2494,7 @@ dependencies = [
 
 [[package]]
 name = "runway-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -2528,7 +2528,7 @@ dependencies = [
 
 [[package]]
 name = "runway-worker"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "bollard",
