@@ -1160,20 +1160,42 @@ export default function SettingsPage({ me }: { me: Me }) {
   return (
     <div className="page-enter mx-auto max-w-5xl p-4 sm:p-8">
       <h1 className="text-xl font-semibold">Settings</h1>
-      <p className="mb-6 mt-1 text-sm text-muted-foreground">
+      <p className="mb-4 mt-1 text-sm text-muted-foreground">
         Your account, providers, access control, and instance infrastructure.
       </p>
+      <nav className="mb-6 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+        {(
+          [
+            ["account", "Account"],
+            ["keys", "API keys"],
+            ["git", "Git"],
+            ...(me.id === 1
+              ? ([
+                  ["github", "GitHub"],
+                  ["allowlist", "Allowlist"],
+                  ["jobs", "Jobs"],
+                  ["nodes", "Nodes"],
+                  ["system", "System"],
+                ] as [string, string][])
+              : []),
+          ] as [string, string][]
+        ).map(([id, label]) => (
+          <a key={id} href={`#${id}`} className="hover:text-foreground">
+            {label}
+          </a>
+        ))}
+      </nav>
       <div className="grid grid-cols-1 gap-4">
-        <Account me={me} />
-        <ApiKeys />
-        <GitProviders />
+        <div id="account" className="scroll-mt-16"><Account me={me} /></div>
+        <div id="keys" className="scroll-mt-16"><ApiKeys /></div>
+        <div id="git" className="scroll-mt-16"><GitProviders /></div>
         {me.id === 1 && (
           <>
-            <GithubApp />
-            <Allowlist />
-            <JobQueue />
-            <Nodes />
-            <System />
+            <div id="github" className="scroll-mt-16"><GithubApp /></div>
+            <div id="allowlist" className="scroll-mt-16"><Allowlist /></div>
+            <div id="jobs" className="scroll-mt-16"><JobQueue /></div>
+            <div id="nodes" className="scroll-mt-16"><Nodes /></div>
+            <div id="system" className="scroll-mt-16"><System /></div>
           </>
         )}
       </div>

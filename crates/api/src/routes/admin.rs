@@ -17,8 +17,12 @@ use crate::state::AppState;
 
 /// devpush `is_superadmin`: the first registered account administers
 /// the instance.
+pub(crate) fn is_superadmin_id(user_id: i64) -> bool {
+    user_id == 1
+}
+
 pub(crate) fn require_superadmin(user: &AuthUser) -> ApiResult<()> {
-    if user.user.id == 1 {
+    if is_superadmin_id(user.user.id) {
         Ok(())
     } else {
         Err(ApiError::forbidden("instance admin required"))

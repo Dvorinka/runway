@@ -1,6 +1,7 @@
 import { api, type Me, type Project } from "@/lib/api";
 import { Avatar } from "@/components/ui";
 import { CommandPalette } from "@/components/CommandPalette";
+import { GO_TO, Shortcuts } from "@/components/Shortcuts";
 import { cn } from "@/lib/utils";
 import {
   ArrowLeft,
@@ -77,9 +78,11 @@ const PROJECT_TABS: [string, string, React.ComponentType<{ className?: string }>
 
 function ProjectRailNav({
   id,
+  onDeployment,
   onNavigate,
 }: {
   id: string;
+  onDeployment?: boolean;
   onNavigate?: () => void;
 }) {
   const [project, setProject] = useState<Project | null>(null);
@@ -106,7 +109,7 @@ function ProjectRailNav({
         </span>
       </div>
       {PROJECT_TABS.map(([label, t, Icon]) => {
-        const active = tab === t;
+        const active = onDeployment ? t === "deployments" : tab === t;
         return (
           <Link
             key={t}
@@ -130,12 +133,42 @@ function ProjectRailNav({
 function RailNav({ unread, onNavigate }: { unread: number; onNavigate?: () => void }) {
   const { pathname } = useLocation();
   const projectId = pathname.match(/^\/projects\/([^/]+)/)?.[1];
-  if (projectId) return <ProjectRailNav id={projectId} onNavigate={onNavigate} />;
+  const deploymentId = pathname.match(/^\/deployments\/([^/]+)/)?.[1];
+  const [depProject, setDepProject] = useState<string | null>(null);
+  useEffect(() => {
+    if (!deploymentId) {
+      setDepProject(null);
+      return;
+    }
+    let live = true;
+    api
+      .deployment(deploymentId)
+      .then((d) => {
+        if (live) setDepProject(d.project_id);
+      })
+      .catch(() => {
+        if (live) setDepProject(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, [deploymentId]);
+  const scoped = projectId ?? depProject;
+  if (scoped) {
+    return (
+      <ProjectRailNav
+        id={scoped}
+        onDeployment={Boolean(deploymentId) && !projectId}
+        onNavigate={onNavigate}
+      />
+    );
+  }
   return (
     <nav className="flex-1 space-y-0.5 overflow-y-auto px-3 py-2" onClick={onNavigate}>
       <NavItem to="/" icon={LayoutGrid}>Overview</NavItem>
       <NavItem to="/projects" icon={FolderKanban}>Projects</NavItem>
       <NavItem to="/deployments" icon={Rocket}>Deployments</NavItem>
+      <NavItem to="/activity" icon={ScrollText}>Activity</NavItem>
       <NavItem to="/notifications" icon={Bell} badge={unread}>Notifications</NavItem>
       <NavItem to="/teams" icon={Users}>Teams</NavItem>
       <NavItem to="/settings" icon={Settings}>Settings</NavItem>
@@ -165,6 +198,61 @@ function FindButton() {
   );
 }
 
+function pageTitle(
+  pathname: string,
+  projectId: string | undefined,
+  projectName: string,
+  deploymentId: string | undefined,
+  depLabel: string,
+): string {
+  if (projectId) return projectName || "Project";
+  if (deploymentId) return depLabel || deploymentId.slice(0, 7);
+  if (pathname === "/") return "Overview";
+  if (pathname.startsWith("/projects")) return "Projects";
+  if (pathname.startsWith("/deployments")) return "Deployments";
+  if (pathname.startsWith("/activity")) return "Activity";
+  if (pathname.startsWith("/notifications")) return "Notifications";
+  if (pathname.startsWith("/teams")) return "Teams";
+  if (pathname.startsWith("/settings")) return "Settings";
+  if (pathname.startsWith("/invites")) return "Invite";
+  return "Runway";
+}
+
+const GO_KEYS: Record<string, string> = Object.fromEntries(GO_TO.map((g) => [g.key, g.to]));
+
+function useGoKeys() {
+  const nav = useNavigate();
+  useEffect(() => {
+    let armed = false;
+    let timer = 0;
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      const typing =
+        !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+      if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (document.querySelector("[role=dialog]")) return;
+      if (!armed) {
+        if (e.key === "g") {
+          armed = true;
+          window.clearTimeout(timer);
+          timer = window.setTimeout(() => {
+            armed = false;
+          }, 800);
+        }
+        return;
+      }
+      armed = false;
+      window.clearTimeout(timer);
+      const dest = GO_KEYS[e.key];
+      if (!dest) return;
+      e.preventDefault();
+      nav(dest);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [nav]);
+}
+
 function TopBar() {
   const { pathname } = useLocation();
   const nav = useNavigate();
@@ -172,39 +260,38 @@ function TopBar() {
   const deploymentId = pathname.match(/^\/deployments\/([^/]+)/)?.[1];
   const [projectName, setProjectName] = useState("");
   const [depLabel, setDepLabel] = useState("");
+  const [crumb, setCrumb] = useState<{ id: string; name: string } | null>(null);
   useEffect(() => {
     setProjectName("");
     if (projectId) api.project(projectId).then((p) => setProjectName(p.name)).catch(() => {});
   }, [projectId]);
   useEffect(() => {
     setDepLabel("");
-    if (deploymentId)
-      api.deployment(deploymentId).then((d) => setDepLabel(d.commit_sha.slice(0, 7))).catch(() => {});
+    setCrumb(null);
+    if (!deploymentId) return;
+    let live = true;
+    api
+      .deployment(deploymentId)
+      .then((d) => {
+        if (!live) return;
+        setDepLabel(d.commit_sha.slice(0, 7));
+        if (d.project_name) setCrumb({ id: d.project_id, name: d.project_name });
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
   }, [deploymentId]);
 
   const parent = projectId
     ? { label: "Projects", to: "/projects" }
-    : deploymentId
-      ? { label: "Deployments", to: "/deployments" }
-      : null;
+    : crumb
+      ? { label: crumb.name, to: `/projects/${crumb.id}` }
+      : deploymentId
+        ? { label: "Deployments", to: "/deployments" }
+        : null;
 
-  const title = projectId
-    ? projectName || "Project"
-    : deploymentId
-      ? depLabel || deploymentId.slice(0, 7)
-      : pathname === "/"
-        ? "Overview"
-        : pathname.startsWith("/projects")
-          ? "Projects"
-          : pathname.startsWith("/deployments")
-            ? "Deployments"
-            : pathname.startsWith("/notifications")
-              ? "Notifications"
-              : pathname.startsWith("/teams")
-                ? "Teams"
-                : pathname.startsWith("/settings")
-                  ? "Settings"
-                  : "Runway";
+  const title = pageTitle(pathname, projectId, projectName, deploymentId, depLabel);
 
   return (
     <div className="sticky top-0 z-30 hidden h-11 items-center justify-between border-b border-border bg-background/90 px-6 backdrop-blur lg:flex">
@@ -225,6 +312,21 @@ function TopBar() {
           New project
         </button>
       </div>
+    </div>
+  );
+}
+
+function ShortcutHint() {
+  return (
+    <div className="px-3 pb-2">
+      <button
+        type="button"
+        onClick={() => window.dispatchEvent(new Event("runway:shortcuts"))}
+        className="flex h-8 w-full items-center justify-between rounded-md px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
+      >
+        Shortcuts
+        <kbd className="rounded border border-border bg-muted/50 px-1 font-mono text-[10px]">?</kbd>
+      </button>
     </div>
   );
 }
@@ -268,6 +370,7 @@ export default function Layout({ me, children }: { me: Me; children: React.React
   const [unread, setUnread] = useState(0);
   const [menu, setMenu] = useState(false);
   const { pathname } = useLocation();
+  useGoKeys();
   useEffect(() => {
     const poll = () =>
       api
@@ -289,6 +392,7 @@ export default function Layout({ me, children }: { me: Me; children: React.React
       </Link>
       <FindButton />
       <RailNav unread={unread} />
+      <ShortcutHint />
       <AccountRow me={me} />
     </>
   );
@@ -342,6 +446,7 @@ export default function Layout({ me, children }: { me: Me; children: React.React
         <main className="min-w-0">{children}</main>
       </div>
       <CommandPalette />
+      <Shortcuts />
     </div>
   );
 }

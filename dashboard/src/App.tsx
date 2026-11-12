@@ -14,6 +14,7 @@ import NotificationsPage from "@/pages/Notifications";
 import InvitePage from "@/pages/Invite";
 import NotFound from "@/pages/NotFound";
 import StatusPage from "@/pages/Status";
+import ActivityPage from "@/pages/Activity";
 import { useEffect, useState } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
@@ -61,6 +62,7 @@ function Authed({ me, loading }: { me: Me | null; loading: boolean }) {
       <Route path="/teams/:id" element={page(<TeamPage me={me} />)} />
       <Route path="/invites/:id" element={page(<InvitePage />)} />
       <Route path="/notifications" element={page(<NotificationsPage />)} />
+      <Route path="/activity" element={page(<ActivityPage />)} />
       <Route path="/settings" element={page(<SettingsPage me={me} />)} />
       {/* Already signed in — /login bounces home instead of 404ing. */}
       <Route path="/login" element={<Navigate to="/" replace />} />
