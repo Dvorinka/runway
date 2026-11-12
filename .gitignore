@@ -15,3 +15,6 @@ __pycache__/
 
 # vite pre-bundle cache
 dashboard/.vite/
+
+# desloppify scan state — local, not the product
+.desloppify/

@@ -15,7 +15,7 @@ pub struct MarkReadBody {
 }
 
 use crate::auth::AuthUser;
-use crate::error::ApiResult;
+use crate::error::{ApiError, ApiResult};
 use crate::state::AppState;
 
 /// `GET /api/v1/notifications` — newest 50 + unread count.
@@ -88,6 +88,123 @@ pub async fn team_audit(
     Ok(Json(json!({ "entries": rows })).into_response())
 }
 
+/// Accept an action filter. Empty means every action. Anything else must
+/// be a short identifier such as `deployment.create`.
+pub(crate) fn normalize_action(raw: Option<&str>) -> ApiResult<Option<String>> {
+    let Some(s) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    let ok = s.len() <= 50
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_');
+    if !ok {
+        return Err(ApiError::bad_request(
+            "action filter must be a short identifier",
+        ));
+    }
+    Ok(Some(s.to_string()))
+}
+
+pub(crate) fn clamp_audit_limit(n: Option<i64>) -> i64 {
+    n.unwrap_or(100).clamp(1, 200)
+}
+
+fn clean_id(raw: Option<&str>) -> Option<String> {
+    raw.map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+/// Rows the caller may see.
+///
+/// The instance admin (first account) sees every row, matching devpush's
+/// settings audit list. A team owner or admin sees that team's rows. A
+/// member sees only the rows they performed on a team they belong to.
+pub async fn visible_audit(
+    state: &AppState,
+    user_id: i64,
+    team_id: Option<&str>,
+    action: Option<&str>,
+    limit: Option<i64>,
+) -> ApiResult<Vec<serde_json::Value>> {
+    let team = clean_id(team_id);
+    let action = normalize_action(action)?;
+    let limit = clamp_audit_limit(limit);
+    let superadmin = crate::routes::admin::is_superadmin_id(user_id);
+    if let Some(ref tid) = team {
+        if !superadmin {
+            let role: Option<String> = sqlx::query_scalar(
+                "SELECT role FROM team_member WHERE team_id = $1 AND user_id = $2",
+            )
+            .bind(tid)
+            .bind(user_id)
+            .fetch_optional(&state.db)
+            .await?;
+            if role.is_none() {
+                return Err(ApiError::forbidden("not a member of that team"));
+            }
+        }
+    }
+    let rows: Vec<serde_json::Value> = sqlx::query_scalar(
+        "SELECT json_build_object(
+           'id', a.id, 'action', a.action, 'user_id', a.user_id,
+           'username', u.username, 'team_id', a.team_id, 'team_name', t.name,
+           'project_id', a.project_id, 'resource_type', a.resource_type,
+           'resource_id', a.resource_id, 'detail', a.detail,
+           'created_at', a.created_at)
+         FROM audit_log a
+         LEFT JOIN \"user\" u ON u.id = a.user_id
+         LEFT JOIN team t ON t.id = a.team_id
+         WHERE (
+           $1::bool
+           OR a.team_id IN (
+             SELECT team_id FROM team_member
+             WHERE user_id = $2 AND role IN ('owner', 'admin')
+           )
+           OR (
+             a.user_id = $2
+             AND a.team_id IN (SELECT team_id FROM team_member WHERE user_id = $2)
+           )
+         )
+         AND ($3::varchar IS NULL OR a.team_id = $3)
+         AND ($4::varchar IS NULL OR a.action = $4)
+         ORDER BY a.created_at DESC
+         LIMIT $5",
+    )
+    .bind(superadmin)
+    .bind(user_id)
+    .bind(&team)
+    .bind(&action)
+    .bind(limit)
+    .fetch_all(&state.db)
+    .await?;
+    Ok(rows)
+}
+
+#[derive(Deserialize)]
+pub struct AuditListQuery {
+    pub team_id: Option<String>,
+    pub action: Option<String>,
+    pub limit: Option<i64>,
+}
+
+/// `GET /api/v1/audit` — cross-team audit the caller is allowed to see.
+pub async fn list_audit(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Query(q): Query<AuditListQuery>,
+) -> ApiResult<Response> {
+    let entries = visible_audit(
+        &state,
+        user.user.id,
+        q.team_id.as_deref(),
+        q.action.as_deref(),
+        q.limit,
+    )
+    .await?;
+    Ok(Json(json!({ "entries": entries })).into_response())
+}
+
 /// `GET /api/deploy?repo_url=...&branch=...&provider=github` —
 /// "Deploy on Runway" button target (devpush `/deploy`). Returns the
 /// prefill the SPA consumes; redirect happens client-side.
@@ -132,4 +249,32 @@ pub async fn deploy_button(Query(q): Query<DeployQuery>) -> Response {
         "provider": provider,
     }))
     .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn action_filter_accepts_identifiers_only() {
+        assert_eq!(
+            normalize_action(Some("deployment.create"))
+                .ok()
+                .flatten()
+                .as_deref(),
+            Some("deployment.create")
+        );
+        assert!(normalize_action(None).ok().flatten().is_none());
+        assert!(normalize_action(Some("  ")).ok().flatten().is_none());
+        assert!(normalize_action(Some("drop table;")).is_err());
+        assert!(normalize_action(Some(&"a".repeat(51))).is_err());
+    }
+
+    #[test]
+    fn audit_limit_clamps() {
+        assert_eq!(clamp_audit_limit(None), 100);
+        assert_eq!(clamp_audit_limit(Some(0)), 1);
+        assert_eq!(clamp_audit_limit(Some(9_000)), 200);
+        assert_eq!(clamp_audit_limit(Some(25)), 25);
+    }
 }

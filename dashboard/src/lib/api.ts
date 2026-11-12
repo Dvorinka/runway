@@ -212,6 +212,8 @@ export interface AuditEntry {
   action: string;
   username: string | null;
   user_id: number | null;
+  team_id?: string | null;
+  team_name?: string | null;
   project_id: string | null;
   resource_type: string | null;
   resource_id: string | null;
@@ -696,6 +698,13 @@ export const api = {
     }),
   teamAudit: (teamId: string) =>
     req<{ entries: AuditEntry[] }>(`/api/v1/teams/${teamId}/audit`),
+  audit: (q?: { team_id?: string; action?: string }) => {
+    const p = new URLSearchParams();
+    if (q?.team_id) p.set("team_id", q.team_id);
+    if (q?.action) p.set("action", q.action);
+    const s = p.toString();
+    return req<{ entries: AuditEntry[] }>(`/api/v1/audit${s ? `?${s}` : ""}`);
+  },
   teamWebhooks: (teamId: string) =>
     req<{ webhooks: TeamWebhook[] }>(`/api/v1/teams/${teamId}/webhooks`),
   createTeamWebhook: (

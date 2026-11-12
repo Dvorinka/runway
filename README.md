@@ -61,7 +61,7 @@ standard path.
 **Accounts & teams**
 
 - **Auth** — email + password (Argon2id), magic links, email verification, TOTP 2FA with recovery codes, OIDC/SSO, dedicated GitHub and Google OAuth, sign-up allowlist
-- **Teams & RBAC** — owner/admin/member roles, email invites, per-project environment variables, audit log, notifications
+- **Teams & RBAC** — owner/admin/member roles, email invites, per-project environment variables, audit log (`runway audit`, Activity page), notifications
 - **Managed storage** — Postgres, MongoDB, Redis, SQLite, and volumes per team, linked into deployments on private networks
 
 **Ops & platform**
@@ -147,6 +147,7 @@ runway promote <id>          # point the production alias at a deployment
 runway promote <id> --diff   # preview env and config key changes; does not promote
 runway rollback              # re-point the alias to the previous deployment
 runway open                  # current deployment URL
+runway audit                 # actions this account is allowed to see
 ```
 
 Agents get the same surface: `ak_` API keys against `/api/v1`, or the MCP

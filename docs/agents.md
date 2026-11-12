@@ -23,10 +23,12 @@ runway open                       # current deployment URL
 runway nodes ls                   # remote Docker nodes + status
 runway nodes add --command        # print the one-line enroll command
 runway nodes approve <id|name>    # admit a waiting node
+runway audit                      # actions this account is allowed to see
+runway audit --action deployment.create
 ```
 
 `--json` on the read commands (`projects`, `deployments`, `env`,
-`domains`, `nodes`, `whoami`, `status`, `stats`) prints the raw API
+`domains`, `nodes`, `whoami`, `status`, `stats`, `audit`) prints the raw API
 payload for scripts. Destructive commands (`nodes rm`,
 `domains remove`) ask for typed confirmation on a TTY and require
 `--yes` when piped.
@@ -50,7 +52,7 @@ Settings → API keys mint `ak_` tokens. Use as
 `get_deployment_logs`, `deployment_stats`, `deploy_project`,
 `cancel_deployment`, `skip_deployment`, `redeploy_deployment`,
 `promote_deployment`, `promotion_diff`, `rollback_environment`, `list_env`, `set_env`,
-`list_domains`. The protocol-level `ping` method answers `{}` — it is
+`list_domains`, `list_audit`. The protocol-level `ping` method answers `{}` — it is
 not a callable tool.
 
 Write tools (`deploy_project`, `set_env`, `rollback_environment`, …)

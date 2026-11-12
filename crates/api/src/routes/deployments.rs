@@ -48,6 +48,7 @@ fn deployment_json(state: &AppState, d: &Deployment, project: &Project) -> Value
     json!({
         "id": d.id,
         "project_id": d.project_id,
+        "project_name": project.name,
         "status": d.status,
         "computed_status": d.computed_status(),
         "conclusion": d.conclusion,

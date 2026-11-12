@@ -1,6 +1,6 @@
 import { api, type Deployment, type Project } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { Bell, Copy, ExternalLink, FolderGit2, LayoutDashboard, Plus, Rocket, Settings, Users } from "lucide-react";
+import { Bell, Copy, ExternalLink, FolderGit2, LayoutDashboard, Plus, Rocket, ScrollText, Settings, Users } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
@@ -29,6 +29,13 @@ const PAGES: Item[] = [
     label: "Deployments",
     icon: <Rocket className="h-4 w-4" />,
     to: "/deployments",
+  },
+  {
+    id: "nav:activity",
+    label: "Activity",
+    hint: "audit log",
+    icon: <ScrollText className="h-4 w-4" />,
+    to: "/activity",
   },
   { id: "nav:teams", label: "Teams", icon: <Users className="h-4 w-4" />, to: "/teams" },
   {

@@ -212,6 +212,7 @@ pub async fn openapi() -> Response {
         ("/api/v1/deployments/{id}/logs", &[("get", "Plain-text log tail (?tail=N)")]),
         ("/api/v1/deployments/{id}/logs/stream", &[("get", "SSE live log stream")]),
         ("/api/v1/teams", &[("get", "List teams for the current user")]),
+        ("/api/v1/audit", &[("get", "Audit log the caller may see (?team_id&action&limit). Instance admin sees every team; team admins see their teams; members see their own actions.")]),
         ("/api/v1/teams/{id}", &[("get", "Team details + members")]),
         ("/api/v1/teams/{id}/webhooks", &[
             ("get", "List team webhooks"),

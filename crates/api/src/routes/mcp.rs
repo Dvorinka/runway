@@ -121,6 +121,14 @@ fn tools() -> Value {
                    "properties": {"project_id": {"type": "string"},
                                   "vars": {"type": "array"}}})
         ),
+        tool(
+            "list_audit",
+            "Audit log the caller may see. Instance admin sees every team. Team admins see their teams. Members see their own actions. Values of secrets are never included.",
+            json!({"type": "object",
+                   "properties": {"team_id": {"type": "string"},
+                                  "action": {"type": "string"},
+                                  "limit": {"type": "integer"}}})
+        ),
     ])
 }
 
@@ -488,6 +496,15 @@ async fn call(state: &AppState, user_id: i64, name: &str, args: &Value) -> ApiRe
                 .execute(&state.db)
                 .await?;
             Ok(json!({ "ok": true, "count": vars.len() }))
+        }
+        "list_audit" => {
+            let team = args["team_id"].as_str().filter(|s| !s.is_empty());
+            let action = args["action"].as_str();
+            let limit = args["limit"].as_i64();
+            let entries =
+                crate::routes::notifications::visible_audit(state, user_id, team, action, limit)
+                    .await?;
+            Ok(json!({ "entries": entries }))
         }
         _ => Err(ApiError::bad_request(format!("unknown tool '{name}'"))),
     }

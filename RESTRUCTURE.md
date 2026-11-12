@@ -83,11 +83,9 @@ global at all times.
 - **In-page tab bar**: hide on `lg+` where the rail is the tab bar
   (Vercel: no duplicate); keep below `lg` — the drawer is one tap away
   but the strip is the faster path on touch.
-- **Deployment pages** (`/deployments/:id`): Vercel keeps the rail
-  project-scoped there too. Runway's route is global; adopting the
-  deployment's project needs a `deployment → project` fetch in the rail
-  (TopBar already does this lookup for its title). Phase 2 of this
-  change — the basic swap lands first, deployment scoping follows.
+- **Deployment pages** (`/deployments/:id`): the rail fetches the
+  deployment's project and stays project-scoped. The top bar's parent
+  crumb is that project. Deployments is the active rail item.
 - **What this buys**: the project becomes the working context (its ten
   tabs visible at all times, one click apart) instead of a page-level
   strip below the fold; matches the palette's existing scope-aware
