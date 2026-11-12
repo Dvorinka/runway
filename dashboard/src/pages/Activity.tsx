@@ -2,7 +2,9 @@ import { api, type AuditEntry, type Team } from "@/lib/api";
 import { AuditFeed, AUDIT_ACTIONS, actionLabel } from "@/components/AuditFeed";
 import { Card, ComboBox, EmptyState, Skeleton } from "@/components/ui";
 import { ScrollText } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+
+const PAGE = 50;
 
 function csvCell(value: string | null | undefined): string {
   const s = value ?? "";
@@ -40,10 +42,15 @@ function downloadCsv(entries: AuditEntry[]) {
 
 export default function ActivityPage() {
   const [entries, setEntries] = useState<AuditEntry[] | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [teams, setTeams] = useState<Team[]>([]);
   const [teamId, setTeamId] = useState("");
   const [action, setAction] = useState("");
   const [error, setError] = useState("");
+  const filterKey = `${teamId}\0${action}`;
+  const filterRef = useRef(filterKey);
+  filterRef.current = filterKey;
 
   useEffect(() => {
     api.teams().then((r) => setTeams(r.teams)).catch(() => {});
@@ -52,14 +59,18 @@ export default function ActivityPage() {
   useEffect(() => {
     let live = true;
     setEntries(null);
+    setHasMore(false);
     setError("");
     api
       .audit({
         team_id: teamId || undefined,
         action: action || undefined,
+        limit: PAGE,
       })
       .then((r) => {
-        if (live) setEntries(r.entries);
+        if (!live) return;
+        setEntries(r.entries);
+        setHasMore(r.has_more);
       })
       .catch((e) => {
         if (live) setError(e instanceof Error ? e.message : "failed");
@@ -68,6 +79,34 @@ export default function ActivityPage() {
       live = false;
     };
   }, [teamId, action]);
+
+  function earlier() {
+    const last = entries?.[entries.length - 1];
+    if (!last || loadingMore) return;
+    const key = filterKey;
+    setLoadingMore(true);
+    api
+      .audit({
+        team_id: teamId || undefined,
+        action: action || undefined,
+        limit: PAGE,
+        before_id: last.id,
+      })
+      .then((r) => {
+        if (filterRef.current !== key) return;
+        setEntries((cur) => {
+          const seen = new Set((cur ?? []).map((e) => e.id));
+          return [...(cur ?? []), ...r.entries.filter((e) => !seen.has(e.id))];
+        });
+        setHasMore(r.has_more);
+      })
+      .catch((e) => {
+        if (filterRef.current === key) setError(e instanceof Error ? e.message : "failed");
+      })
+      .finally(() => {
+        if (filterRef.current === key) setLoadingMore(false);
+      });
+  }
 
   return (
     <div className="page-enter mx-auto max-w-5xl p-4 sm:p-8">
@@ -128,6 +167,18 @@ export default function ActivityPage() {
         entries && (
           <Card className="px-4">
             <AuditFeed entries={entries} />
+            {hasMore && (
+              <div className="border-t border-border py-3">
+                <button
+                  type="button"
+                  onClick={earlier}
+                  disabled={loadingMore}
+                  className="rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+                >
+                  {loadingMore ? "Loading…" : "Earlier"}
+                </button>
+              </div>
+            )}
           </Card>
         )
       )}

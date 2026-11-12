@@ -148,6 +148,9 @@ enum Command {
         /// Max rows (1–200).
         #[arg(long, default_value_t = 50)]
         limit: i64,
+        /// Return rows older than this audit id.
+        #[arg(long)]
+        before: Option<i64>,
         /// Print the raw API response as JSON.
         #[arg(long)]
         json: bool,
@@ -346,8 +349,9 @@ async fn main() -> anyhow::Result<()> {
             team,
             action,
             limit,
+            before,
             json,
-        } => commands::audit(team, action, limit, json).await?,
+        } => commands::audit(team, action, limit, before, json).await?,
         Command::Deployments { limit, json } => commands::deployments(limit, json).await?,
         Command::Rollback { environment } => commands::rollback(environment).await?,
         Command::Promote {

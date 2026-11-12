@@ -127,7 +127,8 @@ fn tools() -> Value {
             json!({"type": "object",
                    "properties": {"team_id": {"type": "string"},
                                   "action": {"type": "string"},
-                                  "limit": {"type": "integer"}}})
+                                  "limit": {"type": "integer"},
+                                  "before_id": {"type": "integer"}}})
         ),
     ])
 }
@@ -501,10 +502,12 @@ async fn call(state: &AppState, user_id: i64, name: &str, args: &Value) -> ApiRe
             let team = args["team_id"].as_str().filter(|s| !s.is_empty());
             let action = args["action"].as_str();
             let limit = args["limit"].as_i64();
-            let entries =
-                crate::routes::notifications::visible_audit(state, user_id, team, action, limit)
-                    .await?;
-            Ok(json!({ "entries": entries }))
+            let before = args["before_id"].as_i64();
+            let (entries, has_more) = crate::routes::notifications::visible_audit(
+                state, user_id, team, action, limit, before,
+            )
+            .await?;
+            Ok(json!({ "entries": entries, "has_more": has_more }))
         }
         _ => Err(ApiError::bad_request(format!("unknown tool '{name}'"))),
     }

@@ -109,6 +109,16 @@ pub(crate) fn clamp_audit_limit(n: Option<i64>) -> i64 {
     n.unwrap_or(100).clamp(1, 200)
 }
 
+/// Exclusive cursor. Empty means the newest page. Zero and negative are
+/// rejected so a bad query cannot scan from the other end of the table.
+pub(crate) fn normalize_before(raw: Option<i64>) -> ApiResult<Option<i64>> {
+    match raw {
+        None => Ok(None),
+        Some(n) if n > 0 => Ok(Some(n)),
+        Some(_) => Err(ApiError::bad_request("before_id must be a positive id")),
+    }
+}
+
 fn clean_id(raw: Option<&str>) -> Option<String> {
     raw.map(str::trim)
         .filter(|s| !s.is_empty())
@@ -126,10 +136,14 @@ pub async fn visible_audit(
     team_id: Option<&str>,
     action: Option<&str>,
     limit: Option<i64>,
-) -> ApiResult<Vec<serde_json::Value>> {
+    before_id: Option<i64>,
+) -> ApiResult<(Vec<serde_json::Value>, bool)> {
     let team = clean_id(team_id);
     let action = normalize_action(action)?;
+    let before = normalize_before(before_id)?;
     let limit = clamp_audit_limit(limit);
+    // One extra row tells the caller whether another page exists.
+    let fetch = limit + 1;
     let superadmin = crate::routes::admin::is_superadmin_id(user_id);
     if let Some(ref tid) = team {
         if !superadmin {
@@ -145,7 +159,7 @@ pub async fn visible_audit(
             }
         }
     }
-    let rows: Vec<serde_json::Value> = sqlx::query_scalar(
+    let mut rows: Vec<serde_json::Value> = sqlx::query_scalar(
         "SELECT json_build_object(
            'id', a.id, 'action', a.action, 'user_id', a.user_id,
            'username', u.username, 'team_id', a.team_id, 'team_name', t.name,
@@ -170,17 +184,24 @@ pub async fn visible_audit(
          )
          AND ($3::varchar IS NULL OR a.team_id = $3)
          AND ($4::varchar IS NULL OR a.action = $4)
-         ORDER BY a.created_at DESC
+         AND ($6::bigint IS NULL OR a.id < $6)
+         -- shortcut: id cursor assumes created_at follows id, upgrade to a (created_at, id) keyset if rows are backdated.
+         ORDER BY a.created_at DESC, a.id DESC
          LIMIT $5",
     )
     .bind(superadmin)
     .bind(user_id)
     .bind(&team)
     .bind(&action)
-    .bind(limit)
+    .bind(fetch)
+    .bind(before)
     .fetch_all(&state.db)
     .await?;
-    Ok(rows)
+    let has_more = rows.len() as i64 > limit;
+    if has_more {
+        rows.truncate(limit as usize);
+    }
+    Ok((rows, has_more))
 }
 
 #[derive(Deserialize)]
@@ -188,6 +209,7 @@ pub struct AuditListQuery {
     pub team_id: Option<String>,
     pub action: Option<String>,
     pub limit: Option<i64>,
+    pub before_id: Option<i64>,
 }
 
 /// `GET /api/v1/audit` — cross-team audit the caller is allowed to see.
@@ -196,15 +218,16 @@ pub async fn list_audit(
     State(state): State<AppState>,
     Query(q): Query<AuditListQuery>,
 ) -> ApiResult<Response> {
-    let entries = visible_audit(
+    let (entries, has_more) = visible_audit(
         &state,
         user.user.id,
         q.team_id.as_deref(),
         q.action.as_deref(),
         q.limit,
+        q.before_id,
     )
     .await?;
-    Ok(Json(json!({ "entries": entries })).into_response())
+    Ok(Json(json!({ "entries": entries, "has_more": has_more })).into_response())
 }
 
 /// `GET /api/deploy?repo_url=...&branch=...&provider=github` —
@@ -278,5 +301,13 @@ mod tests {
         assert_eq!(clamp_audit_limit(Some(0)), 1);
         assert_eq!(clamp_audit_limit(Some(9_000)), 200);
         assert_eq!(clamp_audit_limit(Some(25)), 25);
+    }
+
+    #[test]
+    fn before_id_rejects_non_positive() {
+        assert_eq!(normalize_before(None).ok().flatten(), None);
+        assert_eq!(normalize_before(Some(12)).ok().flatten(), Some(12));
+        assert!(normalize_before(Some(0)).is_err());
+        assert!(normalize_before(Some(-1)).is_err());
     }
 }

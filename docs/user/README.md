@@ -23,7 +23,9 @@ is planned; update in the same PR as the behavior change.
 - **Activity** — audit log at `/activity` and `runway audit`. The instance
   admin sees every team. A team admin sees that team. A member sees only
   their own actions. Secret values are not in the log. Download CSV
-  exports the rows on screen. `?` lists keyboard shortcuts; `g` then `a`
+  exports the rows on screen. Earlier loads the next older page.
+  A deployment action opens that deployment. `runway audit --before ID`
+  does the same from the CLI. `?` lists keyboard shortcuts; `g` then `a`
   opens Activity.
 - **Health checks** — HTTP probes write `unhealthy` observed status,
   notify, and auto-requeue — evidence, not guesses.

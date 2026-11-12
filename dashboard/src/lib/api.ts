@@ -699,12 +699,14 @@ export const api = {
     }),
   teamAudit: (teamId: string) =>
     req<{ entries: AuditEntry[] }>(`/api/v1/teams/${teamId}/audit`),
-  audit: (q?: { team_id?: string; action?: string }) => {
+  audit: (q?: { team_id?: string; action?: string; limit?: number; before_id?: number }) => {
     const p = new URLSearchParams();
     if (q?.team_id) p.set("team_id", q.team_id);
     if (q?.action) p.set("action", q.action);
+    if (q?.limit) p.set("limit", String(q.limit));
+    if (q?.before_id) p.set("before_id", String(q.before_id));
     const s = p.toString();
-    return req<{ entries: AuditEntry[] }>(`/api/v1/audit${s ? `?${s}` : ""}`);
+    return req<{ entries: AuditEntry[]; has_more: boolean }>(`/api/v1/audit${s ? `?${s}` : ""}`);
   },
   teamWebhooks: (teamId: string) =>
     req<{ webhooks: TeamWebhook[] }>(`/api/v1/teams/${teamId}/webhooks`),

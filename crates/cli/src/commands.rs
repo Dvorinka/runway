@@ -486,11 +486,12 @@ pub async fn logs(deployment: Option<String>, follow: bool, project: bool) -> an
     Ok(())
 }
 
-/// `runway audit [--team ID] [--action NAME] [--limit N]`.
+/// `runway audit [--team ID] [--action NAME] [--limit N] [--before ID]`.
 pub async fn audit(
     team: Option<String>,
     action: Option<String>,
     limit: i64,
+    before: Option<i64>,
     json_out: bool,
 ) -> anyhow::Result<()> {
     let client = Client::from_config()?;
@@ -503,6 +504,12 @@ pub async fn audit(
         path.push_str("&action=");
         path.push_str(a.trim());
     }
+    if let Some(id) = before {
+        if id <= 0 {
+            anyhow::bail!("before must be a positive audit id");
+        }
+        path.push_str(&format!("&before_id={id}"));
+    }
     let res = client.get(&path).await?;
     if json_out {
         return print_json(&res);
@@ -512,7 +519,8 @@ pub async fn audit(
         println!("No audit entries you can see.");
         return Ok(());
     }
-    for e in entries {
+    let last_id = entries.last().and_then(|e| e["id"].as_i64());
+    for e in &entries {
         let when = e["created_at"].as_str().unwrap_or("");
         let action = e["action"].as_str().unwrap_or("-");
         let who = e["username"].as_str().unwrap_or("system");
@@ -520,6 +528,11 @@ pub async fn audit(
         let project = e["project_name"].as_str().unwrap_or("");
         let detail = e["detail"].as_str().unwrap_or("");
         println!("{when}  {action:<20}  {who:<16}  {team}  {project}  {detail}");
+    }
+    if res["has_more"].as_bool() == Some(true) {
+        if let Some(id) = last_id {
+            println!("-- more; runway audit --before {id}");
+        }
     }
     Ok(())
 }
