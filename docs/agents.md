@@ -25,7 +25,7 @@ runway nodes add --command        # print the one-line enroll command
 runway nodes approve <id|name>    # admit a waiting node
 runway audit                      # actions this account is allowed to see
 runway audit --action deployment.create
-runway audit --before 120         # older rows, from an audit id
+runway audit --before 120 --at 2026-11-12T14:16:25Z   # older rows, from that row
 ```
 
 `--json` on the read commands (`projects`, `deployments`, `env`,

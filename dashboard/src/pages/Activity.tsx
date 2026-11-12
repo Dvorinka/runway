@@ -91,6 +91,7 @@ export default function ActivityPage() {
         action: action || undefined,
         limit: PAGE,
         before_id: last.id,
+        before_at: last.created_at,
       })
       .then((r) => {
         if (filterRef.current !== key) return;

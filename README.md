@@ -148,7 +148,7 @@ runway promote <id> --diff   # preview env and config key changes; does not prom
 runway rollback              # re-point the alias to the previous deployment
 runway open                  # current deployment URL
 runway audit                 # actions this account is allowed to see
-runway audit --before ID     # older rows, from an audit id
+runway audit --before ID --at TIME   # older rows, from that row
 ```
 
 Agents get the same surface: `ak_` API keys against `/api/v1`, or the MCP

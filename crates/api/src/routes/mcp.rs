@@ -128,7 +128,8 @@ fn tools() -> Value {
                    "properties": {"team_id": {"type": "string"},
                                   "action": {"type": "string"},
                                   "limit": {"type": "integer"},
-                                  "before_id": {"type": "integer"}}})
+                                  "before_id": {"type": "integer"},
+                                  "before_at": {"type": "string"}}})
         ),
     ])
 }
@@ -503,8 +504,9 @@ async fn call(state: &AppState, user_id: i64, name: &str, args: &Value) -> ApiRe
             let action = args["action"].as_str();
             let limit = args["limit"].as_i64();
             let before = args["before_id"].as_i64();
+            let at = args["before_at"].as_str();
             let (entries, has_more) = crate::routes::notifications::visible_audit(
-                state, user_id, team, action, limit, before,
+                state, user_id, team, action, limit, before, at,
             )
             .await?;
             Ok(json!({ "entries": entries, "has_more": has_more }))

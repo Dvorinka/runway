@@ -6,6 +6,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use serde_json::json;
 
@@ -109,13 +110,30 @@ pub(crate) fn clamp_audit_limit(n: Option<i64>) -> i64 {
     n.unwrap_or(100).clamp(1, 200)
 }
 
-/// Exclusive cursor. Empty means the newest page. Zero and negative are
-/// rejected so a bad query cannot scan from the other end of the table.
-pub(crate) fn normalize_before(raw: Option<i64>) -> ApiResult<Option<i64>> {
-    match raw {
-        None => Ok(None),
-        Some(n) if n > 0 => Ok(Some(n)),
-        Some(_) => Err(ApiError::bad_request("before_id must be a positive id")),
+pub(crate) struct AuditCursor {
+    pub id: i64,
+    pub at: DateTime<Utc>,
+}
+
+/// Page boundary. Both halves are required so a backdated row is not skipped
+/// or repeated. Empty means the newest page.
+pub(crate) fn normalize_cursor(
+    id: Option<i64>,
+    at: Option<&str>,
+) -> ApiResult<Option<AuditCursor>> {
+    let at = at.map(str::trim).filter(|s| !s.is_empty());
+    match (id, at) {
+        (None, None) => Ok(None),
+        (Some(id), Some(raw)) if id > 0 => {
+            let at = DateTime::parse_from_rfc3339(raw)
+                .map(|d| d.with_timezone(&Utc))
+                .map_err(|_| ApiError::bad_request("before_at must be an RFC3339 timestamp"))?;
+            Ok(Some(AuditCursor { id, at }))
+        }
+        (Some(id), _) if id <= 0 => Err(ApiError::bad_request("before_id must be a positive id")),
+        _ => Err(ApiError::bad_request(
+            "before_id and before_at are set together",
+        )),
     }
 }
 
@@ -137,10 +155,13 @@ pub async fn visible_audit(
     action: Option<&str>,
     limit: Option<i64>,
     before_id: Option<i64>,
+    before_at: Option<&str>,
 ) -> ApiResult<(Vec<serde_json::Value>, bool)> {
     let team = clean_id(team_id);
     let action = normalize_action(action)?;
-    let before = normalize_before(before_id)?;
+    let cursor = normalize_cursor(before_id, before_at)?;
+    let before_id = cursor.as_ref().map(|c| c.id);
+    let before_at = cursor.as_ref().map(|c| c.at);
     let limit = clamp_audit_limit(limit);
     // One extra row tells the caller whether another page exists.
     let fetch = limit + 1;
@@ -184,8 +205,11 @@ pub async fn visible_audit(
          )
          AND ($3::varchar IS NULL OR a.team_id = $3)
          AND ($4::varchar IS NULL OR a.action = $4)
-         AND ($6::bigint IS NULL OR a.id < $6)
-         -- shortcut: id cursor assumes created_at follows id, upgrade to a (created_at, id) keyset if rows are backdated.
+         AND (
+           $6::timestamptz IS NULL
+           OR a.created_at < $6
+           OR (a.created_at = $6 AND a.id < $7)
+         )
          ORDER BY a.created_at DESC, a.id DESC
          LIMIT $5",
     )
@@ -194,7 +218,8 @@ pub async fn visible_audit(
     .bind(&team)
     .bind(&action)
     .bind(fetch)
-    .bind(before)
+    .bind(before_at)
+    .bind(before_id)
     .fetch_all(&state.db)
     .await?;
     let has_more = rows.len() as i64 > limit;
@@ -210,6 +235,7 @@ pub struct AuditListQuery {
     pub action: Option<String>,
     pub limit: Option<i64>,
     pub before_id: Option<i64>,
+    pub before_at: Option<String>,
 }
 
 /// `GET /api/v1/audit` — cross-team audit the caller is allowed to see.
@@ -225,6 +251,7 @@ pub async fn list_audit(
         q.action.as_deref(),
         q.limit,
         q.before_id,
+        q.before_at.as_deref(),
     )
     .await?;
     Ok(Json(json!({ "entries": entries, "has_more": has_more })).into_response())
@@ -304,10 +331,14 @@ mod tests {
     }
 
     #[test]
-    fn before_id_rejects_non_positive() {
-        assert_eq!(normalize_before(None).ok().flatten(), None);
-        assert_eq!(normalize_before(Some(12)).ok().flatten(), Some(12));
-        assert!(normalize_before(Some(0)).is_err());
-        assert!(normalize_before(Some(-1)).is_err());
+    fn cursor_needs_a_positive_id_and_a_timestamp() {
+        let ok = normalize_cursor(Some(12), Some("2026-11-12T14:16:25.664059+00:00"));
+        assert_eq!(ok.ok().flatten().as_ref().map(|c| c.id), Some(12));
+        assert!(normalize_cursor(None, None).ok().flatten().is_none());
+        assert!(normalize_cursor(Some(0), Some("2026-11-12T14:16:25Z")).is_err());
+        assert!(normalize_cursor(Some(-1), Some("2026-11-12T14:16:25Z")).is_err());
+        assert!(normalize_cursor(Some(12), None).is_err());
+        assert!(normalize_cursor(None, Some("2026-11-12T14:16:25Z")).is_err());
+        assert!(normalize_cursor(Some(12), Some("yesterday")).is_err());
     }
 }
