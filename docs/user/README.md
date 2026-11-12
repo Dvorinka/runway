@@ -22,7 +22,9 @@ is planned; update in the same PR as the behavior change.
 - **Teams** — membership boundary for projects, tunnels, API keys.
 - **Activity** — audit log at `/activity` and `runway audit`. The instance
   admin sees every team. A team admin sees that team. A member sees only
-  their own actions. Secret values are not in the log.
+  their own actions. Secret values are not in the log. Download CSV
+  exports the rows on screen. `?` lists keyboard shortcuts; `g` then `a`
+  opens Activity.
 - **Health checks** — HTTP probes write `unhealthy` observed status,
   notify, and auto-requeue — evidence, not guesses.
 - **Notifications** — deploy lifecycle and crash alerts; unread badge in

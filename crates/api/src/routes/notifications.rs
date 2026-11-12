@@ -149,12 +149,14 @@ pub async fn visible_audit(
         "SELECT json_build_object(
            'id', a.id, 'action', a.action, 'user_id', a.user_id,
            'username', u.username, 'team_id', a.team_id, 'team_name', t.name,
-           'project_id', a.project_id, 'resource_type', a.resource_type,
+           'project_id', a.project_id, 'project_name', p.name,
+           'resource_type', a.resource_type,
            'resource_id', a.resource_id, 'detail', a.detail,
            'created_at', a.created_at)
          FROM audit_log a
          LEFT JOIN \"user\" u ON u.id = a.user_id
          LEFT JOIN team t ON t.id = a.team_id
+         LEFT JOIN project p ON p.id = a.project_id
          WHERE (
            $1::bool
            OR a.team_id IN (

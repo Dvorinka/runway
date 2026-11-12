@@ -517,8 +517,9 @@ pub async fn audit(
         let action = e["action"].as_str().unwrap_or("-");
         let who = e["username"].as_str().unwrap_or("system");
         let team = e["team_name"].as_str().unwrap_or("");
+        let project = e["project_name"].as_str().unwrap_or("");
         let detail = e["detail"].as_str().unwrap_or("");
-        println!("{when}  {action:<20}  {who:<16}  {team}  {detail}");
+        println!("{when}  {action:<20}  {who:<16}  {team}  {project}  {detail}");
     }
     Ok(())
 }

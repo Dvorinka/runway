@@ -215,6 +215,7 @@ export interface AuditEntry {
   team_id?: string | null;
   team_name?: string | null;
   project_id: string | null;
+  project_name?: string | null;
   resource_type: string | null;
   resource_id: string | null;
   detail: string | null;

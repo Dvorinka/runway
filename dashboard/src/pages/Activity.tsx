@@ -4,6 +4,40 @@ import { Card, ComboBox, EmptyState, Skeleton } from "@/components/ui";
 import { ScrollText } from "lucide-react";
 import { useEffect, useState } from "react";
 
+function csvCell(value: string | null | undefined): string {
+  const s = value ?? "";
+  if (/[",\n]/.test(s)) return `"${s.replaceAll('"', '""')}"`;
+  return s;
+}
+
+function downloadCsv(entries: AuditEntry[]) {
+  const header = ["created_at", "action", "username", "team_name", "project_name", "detail"];
+  const lines = [
+    header.join(","),
+    ...entries.map((e) =>
+      [
+        e.created_at,
+        e.action,
+        e.username,
+        e.team_name,
+        e.project_name,
+        e.detail,
+      ]
+        .map(csvCell)
+        .join(","),
+    ),
+  ];
+  const blob = new Blob([lines.join("\n")], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "runway-activity.csv";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export default function ActivityPage() {
   const [entries, setEntries] = useState<AuditEntry[] | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
@@ -37,11 +71,24 @@ export default function ActivityPage() {
 
   return (
     <div className="page-enter mx-auto max-w-5xl p-4 sm:p-8">
-      <h1 className="text-xl font-semibold">Activity</h1>
-      <p className="mb-6 mt-1 max-w-xl text-sm text-muted-foreground">
-        Who changed what. Team admins see their teams. Members see their own
-        actions. The instance admin sees every team.
-      </p>
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="text-xl font-semibold">Activity</h1>
+          <p className="mt-1 max-w-xl text-sm text-muted-foreground">
+            Who changed what. Team admins see their teams. Members see their own
+            actions. The instance admin sees every team.
+          </p>
+        </div>
+        {entries && entries.length > 0 && (
+          <button
+            type="button"
+            onClick={() => downloadCsv(entries)}
+            className="self-start rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+          >
+            Download CSV
+          </button>
+        )}
+      </div>
       <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
         <ComboBox
           value={teamId}

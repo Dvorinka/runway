@@ -1,6 +1,7 @@
 import { api, type Me, type Project } from "@/lib/api";
 import { Avatar } from "@/components/ui";
 import { CommandPalette } from "@/components/CommandPalette";
+import { GO_TO, Shortcuts } from "@/components/Shortcuts";
 import { cn } from "@/lib/utils";
 import {
   ArrowLeft,
@@ -217,15 +218,7 @@ function pageTitle(
   return "Runway";
 }
 
-const GO_KEYS: Record<string, string> = {
-  o: "/",
-  p: "/projects",
-  d: "/deployments",
-  a: "/activity",
-  n: "/notifications",
-  t: "/teams",
-  s: "/settings",
-};
+const GO_KEYS: Record<string, string> = Object.fromEntries(GO_TO.map((g) => [g.key, g.to]));
 
 function useGoKeys() {
   const nav = useNavigate();
@@ -323,6 +316,21 @@ function TopBar() {
   );
 }
 
+function ShortcutHint() {
+  return (
+    <div className="px-3 pb-2">
+      <button
+        type="button"
+        onClick={() => window.dispatchEvent(new Event("runway:shortcuts"))}
+        className="flex h-8 w-full items-center justify-between rounded-md px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
+      >
+        Shortcuts
+        <kbd className="rounded border border-border bg-muted/50 px-1 font-mono text-[10px]">?</kbd>
+      </button>
+    </div>
+  );
+}
+
 function AccountRow({ me }: { me: Me }) {
   const nav = useNavigate();
   return (
@@ -384,6 +392,7 @@ export default function Layout({ me, children }: { me: Me; children: React.React
       </Link>
       <FindButton />
       <RailNav unread={unread} />
+      <ShortcutHint />
       <AccountRow me={me} />
     </>
   );
@@ -437,6 +446,7 @@ export default function Layout({ me, children }: { me: Me; children: React.React
         <main className="min-w-0">{children}</main>
       </div>
       <CommandPalette />
+      <Shortcuts />
     </div>
   );
 }

@@ -43,11 +43,8 @@ export function AuditFeed({ entries }: { entries: AuditEntry[] }) {
                 </Link>
               )}
               {e.project_id && (
-                <Link
-                  to={`/projects/${e.project_id}`}
-                  className="font-mono hover:text-foreground"
-                >
-                  {e.project_id}
+                <Link to={`/projects/${e.project_id}`} className="hover:text-foreground">
+                  {e.project_name || e.project_id.slice(0, 7)}
                 </Link>
               )}
               {e.detail && <span className="min-w-0 truncate">{e.detail}</span>}
