@@ -1127,6 +1127,108 @@ pub async fn domains(mut args: Vec<String>) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `runway cron` — scheduled deployments on the linked project.
+///   cron [list|ls]                                list jobs
+///   cron add <name> --schedule <s> [--branch B] [--env ID]
+///   cron enable|disable <id|name>
+///   cron rm <id|name> [--yes]
+pub async fn cron(mut args: Vec<String>) -> anyhow::Result<()> {
+    let client = Client::from_config()?;
+    let link = client::load_link()?;
+    let base = format!("/api/v1/projects/{}/cron", link.project_id);
+    let json_out = strip_json_flag(&mut args);
+
+    let find_job = |want: &str, jobs: &[Value]| -> anyhow::Result<String> {
+        jobs.iter()
+            .find(|j| j["id"].as_str() == Some(want) || j["name"].as_str() == Some(want))
+            .and_then(|j| j["id"].as_str().map(str::to_string))
+            .context("cron job not found on project")
+    };
+    match args.first().map(String::as_str) {
+        None | Some("list") | Some("ls") => {
+            let res = cron_jobs(&client, &base).await?;
+            if json_out {
+                return print_json(&json!({ "cron_jobs": res }));
+            }
+            if res.is_empty() {
+                println!("No cron jobs — `runway cron add <name> --schedule 'every 30 minutes'`.");
+                return Ok(());
+            }
+            for j in &res {
+                println!(
+                    "  {:<24} {:<22} {} [{}] next {}",
+                    j["name"].as_str().unwrap_or(""),
+                    j["schedule"].as_str().unwrap_or(""),
+                    j["branch"].as_str().unwrap_or("main"),
+                    if j["enabled"].as_bool() == Some(true) {
+                        "on"
+                    } else {
+                        "off"
+                    },
+                    j["next_run_at"].as_str().unwrap_or("-"),
+                );
+            }
+        }
+        Some("add") => {
+            let schedule = take_value(&mut args, "--schedule");
+            let branch = take_value(&mut args, "--branch");
+            let environment_id =
+                take_value(&mut args, "--env").or_else(|| take_value(&mut args, "--environment"));
+            let name = args.iter().skip(1).find(|a| !a.starts_with('-')).cloned();
+            let (Some(name), Some(schedule)) = (name, schedule) else {
+                bail!("usage: runway cron add <name> --schedule <s> [--branch B] [--env ID]");
+            };
+            client
+                .post(
+                    &base,
+                    &json!({
+                        "name": name,
+                        "schedule": schedule,
+                        "branch": branch,
+                        "environment_id": environment_id,
+                    }),
+                )
+                .await?;
+            println!("Scheduled '{name}' ({schedule})");
+        }
+        Some("enable") | Some("disable") => {
+            let want = args
+                .get(1)
+                .context("usage: runway cron enable|disable <id|name>")?;
+            let enabled = args[0] == "enable";
+            let list = cron_jobs(&client, &base).await?;
+            let jid = find_job(want, &list)?;
+            client
+                .patch(&format!("{base}/{jid}"), &json!({ "enabled": enabled }))
+                .await?;
+            println!(
+                "{} cron job '{want}'",
+                if enabled { "Enabled" } else { "Disabled" }
+            );
+        }
+        Some("rm") | Some("remove") | Some("delete") => {
+            let yes = strip_flag(&mut args, "--yes");
+            let want = args
+                .get(1)
+                .context("usage: runway cron rm <id|name> [--yes]")?;
+            let list = cron_jobs(&client, &base).await?;
+            let jid = find_job(want, &list)?;
+            confirm_danger(want, "delete cron job", yes)?;
+            client.delete(&format!("{base}/{jid}")).await?;
+            println!("Deleted cron job '{want}'");
+        }
+        Some(other) => bail!("unknown cron action '{other}' — list|add|enable|disable|rm"),
+    }
+    Ok(())
+}
+
+async fn cron_jobs(client: &Client, base: &str) -> anyhow::Result<Vec<Value>> {
+    client
+        .get(base)
+        .await
+        .map(|r| r["cron_jobs"].as_array().cloned().unwrap_or_default())
+}
+
 /// `runway open` — print (and best-effort open) the project's production URL.
 pub async fn open(print_only: bool) -> anyhow::Result<()> {
     let client = Client::from_config()?;
@@ -1305,6 +1407,23 @@ fn strip_flag(args: &mut Vec<String>, flag: &str) -> bool {
 
 fn strip_json_flag(args: &mut Vec<String>) -> bool {
     strip_flag(args, "--json")
+}
+
+/// Pull `--flag value` or `--flag=value` out of trailing-var-arg command
+/// args; returns the value.
+fn take_value(args: &mut Vec<String>, flag: &str) -> Option<String> {
+    let pos = args
+        .iter()
+        .position(|a| a == flag || a.starts_with(&format!("{flag}=")))?;
+    if let Some((_, v)) = args[pos].split_once('=') {
+        let v = v.to_string();
+        args.remove(pos);
+        Some(v)
+    } else {
+        let val = args.get(pos + 1)?.clone();
+        args.drain(pos..=pos + 1);
+        Some(val)
+    }
 }
 
 /// RFC3339 → "5m ago" / "2h ago" / "3d ago"; falls back to the date prefix.

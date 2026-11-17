@@ -27,12 +27,16 @@ runway audit                      # actions this account is allowed to see
 runway audit --action deployment.create
 runway audit --before 120 --at 2026-11-12T14:16:25Z   # older rows, from that row
 runway audit --export > audit.csv # every visible row, CSV (or --json)
+runway cron add nightly --schedule "every 6 hours" --branch main
+runway cron                           # list scheduled deployments
+runway cron disable nightly           # pause a job (enable to resume)
+runway cron rm nightly --yes          # delete a job
 ```
 
 `--json` on the read commands (`projects`, `deployments`, `env`,
-`domains`, `nodes`, `whoami`, `status`, `stats`, `audit`) prints the raw API
+`domains`, `cron`, `nodes`, `whoami`, `status`, `stats`, `audit`) prints the raw API
 payload for scripts. Destructive commands (`nodes rm`,
-`domains remove`) ask for typed confirmation on a TTY and require
+`domains remove`, `cron rm`) ask for typed confirmation on a TTY and require
 `--yes` when piped.
 
 Auth config: `~/.config/runway`. Install via release tarball, the npm
@@ -54,7 +58,9 @@ Settings → API keys mint `ak_` tokens. Use as
 `get_deployment_logs`, `deployment_stats`, `deploy_project`,
 `cancel_deployment`, `skip_deployment`, `redeploy_deployment`,
 `promote_deployment`, `promotion_diff`, `rollback_environment`, `list_env`, `set_env`,
-`list_domains`, `list_audit`, `export_audit`. The protocol-level `ping` method answers `{}` — it is
+`list_domains`, `list_audit`, `export_audit`,
+`list_cron_jobs`, `create_cron_job`, `set_cron_job`, `delete_cron_job`.
+The protocol-level `ping` method answers `{}` — it is
 not a callable tool.
 
 Write tools (`deploy_project`, `set_env`, `rollback_environment`, …)

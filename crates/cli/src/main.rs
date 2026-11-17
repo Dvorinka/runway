@@ -129,6 +129,11 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Manage scheduled deployments: cron [list|add <name> --schedule <s>|enable|disable|rm <id|name>].
+    Cron {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Live container resource stats for a deployment.
     Stats {
         /// Deployment ID (defaults to latest of the linked project).
@@ -350,6 +355,7 @@ async fn main() -> anyhow::Result<()> {
         } => commands::logs(deployment, follow, project).await?,
         Command::Env { args, environment } => commands::env(args, environment).await?,
         Command::Domains { args } => commands::domains(args).await?,
+        Command::Cron { args } => commands::cron(args).await?,
         Command::Stats { deployment, json } => commands::stats(deployment, json).await?,
         Command::Audit {
             team,

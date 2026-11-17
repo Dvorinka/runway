@@ -139,6 +139,37 @@ fn tools() -> Value {
                                   "action": {"type": "string"},
                                   "limit": {"type": "integer"}}})
         ),
+        tool(
+            "list_cron_jobs",
+            "List a project's scheduled deployment jobs",
+            json!({"type": "object", "required": ["project_id"],
+                   "properties": {"project_id": {"type": "string"}}})
+        ),
+        tool(
+            "create_cron_job",
+            "Schedule recurring deployments. schedule: 'every N minutes', 'every N hours', '*/N * * * *', or minutes",
+            json!({"type": "object", "required": ["project_id", "name", "schedule"],
+                   "properties": {"project_id": {"type": "string"},
+                                  "name": {"type": "string"},
+                                  "schedule": {"type": "string"},
+                                  "branch": {"type": "string"},
+                                  "environment_id": {"type": "string"}}})
+        ),
+        tool(
+            "set_cron_job",
+            "Enable or disable a scheduled deployment job",
+            json!({"type": "object", "required": ["project_id", "job_id", "enabled"],
+                   "properties": {"project_id": {"type": "string"},
+                                  "job_id": {"type": "string"},
+                                  "enabled": {"type": "boolean"}}})
+        ),
+        tool(
+            "delete_cron_job",
+            "Remove a scheduled deployment job",
+            json!({"type": "object", "required": ["project_id", "job_id"],
+                   "properties": {"project_id": {"type": "string"},
+                                  "job_id": {"type": "string"}}})
+        ),
     ])
 }
 
@@ -528,6 +559,98 @@ async fn call(state: &AppState, user_id: i64, name: &str, args: &Value) -> ApiRe
             )
             .await?;
             Ok(json!({ "entries": entries, "has_more": has_more }))
+        }
+        "list_cron_jobs" => {
+            let p = project_for(state, user_id, arg(args, "project_id")?).await?;
+            let rows: Vec<crate::routes::projects::CronRow> = sqlx::query_as(
+                "SELECT id, name, schedule, branch, environment_id, enabled,
+                        last_run_at, next_run_at
+                 FROM cron_job WHERE project_id = $1 ORDER BY created_at DESC",
+            )
+            .bind(&p.id)
+            .fetch_all(&state.db)
+            .await?;
+            let jobs: Vec<Value> = rows
+                .iter()
+                .map(crate::routes::projects::cron_json)
+                .collect();
+            Ok(json!({ "cron_jobs": jobs }))
+        }
+        "create_cron_job" => {
+            use crate::routes::projects::accessible_project_writer;
+            let project_id = arg(args, "project_id")?.to_string();
+            let project = accessible_project_writer(state, user_id, &project_id).await?;
+            let name = args["name"].as_str().unwrap_or("").trim();
+            let schedule = args["schedule"].as_str().unwrap_or("").trim();
+            if name.is_empty() || schedule.is_empty() {
+                return Err(ApiError::bad_request("name and schedule are required"));
+            }
+            let interval = runway_core::cron::parse_schedule(schedule);
+            if interval == 0 {
+                return Err(ApiError::bad_request(
+                    "invalid schedule — use 'every N minutes', 'every N hours', '*/N * * * *', or minutes",
+                ));
+            }
+            let branch = args["branch"].as_str().unwrap_or("main").to_string();
+            let environment_id = args["environment_id"].as_str().map(str::to_string);
+            let next_run = chrono::Utc::now() + chrono::Duration::minutes(interval as i64);
+            let jid = runway_core::slugify::token_hex(16);
+            let row: crate::routes::projects::CronRow = sqlx::query_as(
+                "INSERT INTO cron_job (id, project_id, name, schedule, branch,
+                                       environment_id, next_run_at)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7)
+                 RETURNING id, name, schedule, branch, environment_id, enabled,
+                           last_run_at, next_run_at",
+            )
+            .bind(&jid)
+            .bind(&project.id)
+            .bind(name)
+            .bind(schedule)
+            .bind(&branch)
+            .bind(&environment_id)
+            .bind(next_run)
+            .fetch_one(&state.db)
+            .await?;
+            Ok(crate::routes::projects::cron_json(&row))
+        }
+        "set_cron_job" => {
+            use crate::routes::projects::accessible_project_writer;
+            let project_id = arg(args, "project_id")?.to_string();
+            let project = accessible_project_writer(state, user_id, &project_id).await?;
+            let Some(enabled) = args["enabled"].as_bool() else {
+                return Err(ApiError::bad_request("enabled (boolean) is required"));
+            };
+            let job_id = arg(args, "job_id")?;
+            let row: Option<crate::routes::projects::CronRow> = sqlx::query_as(
+                "UPDATE cron_job SET enabled = $3,
+                    next_run_at = CASE WHEN $3 AND (next_run_at IS NULL OR next_run_at < now())
+                        THEN now() ELSE next_run_at END,
+                    updated_at = now()
+                 WHERE id = $1 AND project_id = $2
+                 RETURNING id, name, schedule, branch, environment_id, enabled,
+                           last_run_at, next_run_at",
+            )
+            .bind(job_id)
+            .bind(&project.id)
+            .bind(enabled)
+            .fetch_optional(&state.db)
+            .await?;
+            row.map(|r| crate::routes::projects::cron_json(&r))
+                .ok_or_else(|| ApiError::not_found("cron job"))
+        }
+        "delete_cron_job" => {
+            use crate::routes::projects::accessible_project_writer;
+            let project_id = arg(args, "project_id")?.to_string();
+            let project = accessible_project_writer(state, user_id, &project_id).await?;
+            let res = sqlx::query("DELETE FROM cron_job WHERE id = $1 AND project_id = $2")
+                .bind(arg(args, "job_id")?)
+                .bind(&project.id)
+                .execute(&state.db)
+                .await?;
+            if res.rows_affected() == 0 {
+                return Err(ApiError::not_found("cron job"));
+            }
+            Ok(json!({ "ok": true }))
         }
         _ => Err(ApiError::bad_request(format!("unknown tool '{name}'"))),
     }
