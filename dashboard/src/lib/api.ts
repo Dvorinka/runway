@@ -715,6 +715,21 @@ export const api = {
     const s = p.toString();
     return req<{ entries: AuditEntry[]; has_more: boolean }>(`/api/v1/audit${s ? `?${s}` : ""}`);
   },
+  auditExport: async (q?: { team_id?: string; action?: string; limit?: number }) => {
+    const p = new URLSearchParams();
+    if (q?.team_id) p.set("team_id", q.team_id);
+    if (q?.action) p.set("action", q.action);
+    if (q?.limit) p.set("limit", String(q.limit));
+    const s = p.toString();
+    const res = await fetch(`/api/v1/audit/export${s ? `?${s}` : ""}`, {
+      credentials: "include",
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error((body as { error?: string }).error || `${res.status}`);
+    }
+    return res.text();
+  },
   teamWebhooks: (teamId: string) =>
     req<{ webhooks: TeamWebhook[] }>(`/api/v1/teams/${teamId}/webhooks`),
   createTeamWebhook: (

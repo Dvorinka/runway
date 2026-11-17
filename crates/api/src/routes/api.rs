@@ -213,6 +213,7 @@ pub async fn openapi() -> Response {
         ("/api/v1/deployments/{id}/logs/stream", &[("get", "SSE live log stream")]),
         ("/api/v1/teams", &[("get", "List teams for the current user")]),
         ("/api/v1/audit", &[("get", "Audit log the caller may see (?team_id&action&limit&before_id&before_at). before_id and before_at page together. Returns entries and has_more. Instance admin sees every team; team admins see their teams; members see their own actions.")]),
+        ("/api/v1/audit/export", &[("get", "Audit export the caller may see (?team_id&action&limit&format). CSV by default, ?format=json for the entries payload. Same visibility rules as /api/v1/audit; limit caps at 10000.")]),
         ("/api/v1/teams/{id}", &[("get", "Team details + members")]),
         ("/api/v1/teams/{id}/webhooks", &[
             ("get", "List team webhooks"),
