@@ -571,7 +571,11 @@ pub async fn rotate_bypass_secret(
     else {
         return Err(ApiError::not_found("deployment protection is not enabled"));
     };
-    if prot.get("users").and_then(|u| u.as_array()).is_none_or(|u| u.is_empty()) {
+    if prot
+        .get("users")
+        .and_then(|u| u.as_array())
+        .is_none_or(|u| u.is_empty())
+    {
         return Err(ApiError::not_found("deployment protection is not enabled"));
     }
     let secret = new_bypass_secret();
