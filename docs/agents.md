@@ -26,6 +26,7 @@ runway nodes approve <id|name>    # admit a waiting node
 runway audit                      # actions this account is allowed to see
 runway audit --action deployment.create
 runway audit --before 120 --at 2026-11-12T14:16:25Z   # older rows, from that row
+runway audit --export > audit.csv # every visible row, CSV (or --json)
 ```
 
 `--json` on the read commands (`projects`, `deployments`, `env`,
@@ -53,7 +54,7 @@ Settings → API keys mint `ak_` tokens. Use as
 `get_deployment_logs`, `deployment_stats`, `deploy_project`,
 `cancel_deployment`, `skip_deployment`, `redeploy_deployment`,
 `promote_deployment`, `promotion_diff`, `rollback_environment`, `list_env`, `set_env`,
-`list_domains`, `list_audit`. The protocol-level `ping` method answers `{}` — it is
+`list_domains`, `list_audit`, `export_audit`. The protocol-level `ping` method answers `{}` — it is
 not a callable tool.
 
 Write tools (`deploy_project`, `set_env`, `rollback_environment`, …)

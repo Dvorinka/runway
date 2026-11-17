@@ -131,6 +131,14 @@ fn tools() -> Value {
                                   "before_id": {"type": "integer"},
                                   "before_at": {"type": "string"}}})
         ),
+        tool(
+            "export_audit",
+            "Export every audit row the caller may see, unpaged up to the 10000-row bound. Same visibility rules as list_audit; has_more reports truncation.",
+            json!({"type": "object",
+                   "properties": {"team_id": {"type": "string"},
+                                  "action": {"type": "string"},
+                                  "limit": {"type": "integer"}}})
+        ),
     ])
 }
 
@@ -507,6 +515,16 @@ async fn call(state: &AppState, user_id: i64, name: &str, args: &Value) -> ApiRe
             let at = args["before_at"].as_str();
             let (entries, has_more) = crate::routes::notifications::visible_audit(
                 state, user_id, team, action, limit, before, at,
+            )
+            .await?;
+            Ok(json!({ "entries": entries, "has_more": has_more }))
+        }
+        "export_audit" => {
+            let team = args["team_id"].as_str().filter(|s| !s.is_empty());
+            let action = args["action"].as_str();
+            let limit = args["limit"].as_i64();
+            let (entries, has_more) = crate::routes::notifications::visible_audit_export(
+                state, user_id, team, action, limit,
             )
             .await?;
             Ok(json!({ "entries": entries, "has_more": has_more }))

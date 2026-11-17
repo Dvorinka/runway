@@ -486,15 +486,43 @@ pub async fn logs(deployment: Option<String>, follow: bool, project: bool) -> an
     Ok(())
 }
 
-/// `runway audit [--team ID] [--action NAME] [--limit N] [--before ID --at TIME]`.
+/// `runway audit [--team ID] [--action NAME] [--limit N] [--before ID --at TIME] [--export]`.
 pub async fn audit(
     team: Option<String>,
     action: Option<String>,
-    limit: i64,
+    limit: Option<i64>,
     before: Option<i64>,
     at: Option<String>,
+    export: bool,
     json_out: bool,
 ) -> anyhow::Result<()> {
+    let client = Client::from_config()?;
+    if export {
+        let mut params: Vec<String> = Vec::new();
+        if let Some(t) = team.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            params.push(format!("team_id={}", query_escape(t)));
+        }
+        if let Some(a) = action.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            params.push(format!("action={}", query_escape(a)));
+        }
+        if let Some(l) = limit {
+            params.push(format!("limit={l}"));
+        }
+        if json_out {
+            params.push("format=json".into());
+        }
+        let path = if params.is_empty() {
+            "/api/v1/audit/export".to_string()
+        } else {
+            format!("/api/v1/audit/export?{}", params.join("&"))
+        };
+        if json_out {
+            return print_json(&client.get(&path).await?);
+        }
+        print!("{}", client.get_text(&path).await?);
+        return Ok(());
+    }
+    let limit = limit.unwrap_or(50);
     let at = at.as_deref().map(str::trim).filter(|s| !s.is_empty());
     let cursor = match (before, at) {
         (None, None) => None,
@@ -502,7 +530,6 @@ pub async fn audit(
         (Some(id), _) if id <= 0 => anyhow::bail!("before must be a positive audit id"),
         _ => anyhow::bail!("pass --before and --at together"),
     };
-    let client = Client::from_config()?;
     let mut path = format!("/api/v1/audit?limit={limit}");
     if let Some(t) = team.filter(|s| !s.trim().is_empty()) {
         path.push_str("&team_id=");
