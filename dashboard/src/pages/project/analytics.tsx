@@ -21,6 +21,24 @@ import { DOCS, Err, inputCls } from "./shared";
 
 export type AnalyticsProvider = "none" | "umami" | "rybbit" | "plausible" | "custom";
 
+// Mirrors validate_analytics_config in crates/api — the API is the real
+// gate; this is for immediate feedback. Custom snippets may contain
+// <script> tags only (project writers already control deployed code;
+// non-script markup like forms/meta-refresh is refused server-side).
+const SCRIPT_BLOCK = /<script\b(?:[^>"']|"[^"]*"|'[^']*')*>[\s\S]*?<\/script\s*>/gi;
+
+export function customSnippetError(custom: string): string {
+  const s = custom.trim();
+  if (!s) return "";
+  if (s.length > 16 * 1024) return "Snippet exceeds 16 KiB.";
+  // Non-empty input that strips to nothing-but-whitespace is all scripts;
+  // anything left over (or zero matches) means non-script markup.
+  if (s.replace(SCRIPT_BLOCK, "").trim()) {
+    return "Only <script> tags are allowed — no other HTML.";
+  }
+  return "";
+}
+
 export function buildSnippet(p: AnalyticsProvider, fields: { siteId: string; src: string; domain: string; custom: string }): string {
   switch (p) {
     case "umami":
@@ -64,6 +82,7 @@ export function Analytics({ id }: { id: string }) {
   }, [id]);
 
   const snippet = buildSnippet(provider, { siteId, src, domain, custom });
+  const snippetError = provider === "custom" ? customSnippetError(custom) : "";
   const meta = gsc.trim()
     ? `<meta name="google-site-verification" content="${gsc.trim()}">`
     : "";
@@ -140,13 +159,21 @@ export function Analytics({ id }: { id: string }) {
           />
         )}
         {provider === "custom" && (
-          <textarea
-            value={custom}
-            onChange={(e) => setCustom(e.target.value)}
-            placeholder="<script defer src=…></script>"
-            rows={3}
-            className="w-full rounded-md border border-border bg-transparent px-3 py-2 font-mono text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-          />
+          <>
+            <textarea
+              value={custom}
+              onChange={(e) => setCustom(e.target.value)}
+              placeholder="<script defer src=…></script>"
+              rows={3}
+              className="w-full rounded-md border border-border bg-transparent px-3 py-2 font-mono text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+            {snippetError && <p className="text-xs text-destructive">{snippetError}</p>}
+            <p className="text-xs text-muted-foreground">
+              Runs with full page privileges on every deploy — the same trust
+              level as your site's own code. <code>&lt;script&gt;</code> tags
+              only; other markup is rejected.
+            </p>
+          </>
         )}
         <Input
           placeholder="Google Search Console verification token (optional)"
@@ -160,7 +187,7 @@ export function Analytics({ id }: { id: string }) {
         )}
         <Err msg={error} />
         <div className="flex items-center gap-3">
-          <Button size="sm" onClick={save} disabled={provider !== "none" && needsFields}>
+          <Button size="sm" onClick={save} disabled={(provider !== "none" && needsFields) || !!snippetError}>
             Save
           </Button>
           {saved && <span className="text-xs text-muted-foreground">Saved — applies to the next deploy.</span>}

@@ -5,8 +5,10 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
+use regex::Regex;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::sync::LazyLock;
 
 use runway_core::deploy;
 use runway_core::models::{DeployToken, Deployment, Domain, Environment, Project};
@@ -19,6 +21,53 @@ use crate::state::AppState;
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// `analytics_snippet`/`analytics_meta` are injected verbatim into every
+/// deployed HTML page. Project writers already control the deployed code
+/// itself, so the ceiling here is `<script>` and verification `<meta>`
+/// tags — anything else (forms, meta refresh, iframes, stray markup)
+/// is refused at every config write path.
+fn validate_analytics_config(config: &Value) -> ApiResult<()> {
+    static SCRIPT_BLOCK: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"(?is)<script\b(?:[^>"']|"[^"]*"|'[^']*')*>[\s\S]*?</script\s*>"#).unwrap()
+    });
+    static META_TAG: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(
+            r#"(?is)<meta\s+(?:name\s*=\s*"[^"<>]*"\s+content\s*=\s*"[^"<>]*"|content\s*=\s*"[^"<>]*"\s+name\s*=\s*"[^"<>]*")\s*/?>"#,
+        )
+        .unwrap()
+    });
+
+    if let Some(s) = config
+        .get("analytics_snippet")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+    {
+        if s.len() > 16 * 1024 {
+            return Err(ApiError::bad_request("analytics_snippet exceeds 16 KiB"));
+        }
+        if !SCRIPT_BLOCK.is_match(s) || !SCRIPT_BLOCK.replace_all(s, "").trim().is_empty() {
+            return Err(ApiError::bad_request(
+                "analytics_snippet must contain only <script> tags",
+            ));
+        }
+    }
+    if let Some(s) = config
+        .get("analytics_meta")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+    {
+        if s.len() > 4096 {
+            return Err(ApiError::bad_request("analytics_meta exceeds 4 KiB"));
+        }
+        if !META_TAG.replace_all(s, "").trim().is_empty() {
+            return Err(ApiError::bad_request(
+                "analytics_meta must contain only <meta name= content=> tags",
+            ));
+        }
+    }
+    Ok(())
+}
 
 pub(crate) async fn user_projects(state: &AppState, user_id: i64) -> ApiResult<Vec<Project>> {
     Ok(sqlx::query_as::<_, Project>(
@@ -318,6 +367,7 @@ pub async fn create(
         }
     }
 
+    validate_analytics_config(&config)?;
     let id = token_hex(16);
     let environments = json!([Environment::production(&branch)]);
     let project: Project = sqlx::query_as(
@@ -452,6 +502,7 @@ pub async fn patch(
         }
         project.environments = serde_json::to_value(&envs).map_err(ApiError::internal)?;
     }
+    validate_analytics_config(&project.config)?;
     let updated: Project = sqlx::query_as(
         "UPDATE project SET name = $2, description = $3, config = $4,
                 remote_node_id = $5, environments = $6, updated_at = now()
@@ -1496,6 +1547,7 @@ pub async fn import_project(
         for (k, v) in imported {
             cfg.insert(k.clone(), v.clone());
         }
+        validate_analytics_config(&project.config)?;
     }
 
     // env var merge — skip duplicates on (key, environment)
@@ -1561,4 +1613,78 @@ pub async fn import_project(
         .await?;
 
     Ok(Json(json!({ "ok": true, "redirect_rules_added": added })).into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cfg(snippet: &str, meta: &str) -> Value {
+        json!({
+            "analytics_snippet": snippet,
+            "analytics_meta": meta,
+        })
+    }
+
+    #[test]
+    fn analytics_snippet_allows_script_blocks() {
+        assert!(validate_analytics_config(&cfg(
+            "<script defer src=\"https://x.test/a.js\"></script>\n<script>window.a=1</script>",
+            ""
+        ))
+        .is_ok());
+        assert!(validate_analytics_config(&cfg(
+            "<SCRIPT SRC=\"https://x.test/a.js\"></SCRIPT>",
+            ""
+        ))
+        .is_ok());
+    }
+
+    #[test]
+    fn analytics_snippet_rejects_non_script_markup() {
+        for bad in [
+            "<script src=\"https://x.test/a.js\"></script><img src=x onerror=alert(1)>",
+            "<iframe src=\"https://evil.test\"></iframe>",
+            "<form action=\"https://evil.test\"></form>",
+            "<meta http-equiv=\"refresh\" content=\"0;url=https://evil.test\">",
+            "<script src=\"https://x.test/a.js\">", // unclosed
+            "<svg onload=alert(1)></svg>",
+        ] {
+            assert!(
+                validate_analytics_config(&cfg(bad, "")).is_err(),
+                "accepted: {bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn analytics_meta_allows_verification_tags_only() {
+        assert!(validate_analytics_config(&cfg(
+            "",
+            "<meta name=\"google-site-verification\" content=\"tok\">"
+        ))
+        .is_ok());
+        assert!(validate_analytics_config(&cfg(
+            "",
+            "<meta name=\"a\" content=\"b\">\n<meta content=\"c\" name=\"d\">"
+        ))
+        .is_ok());
+        for bad in [
+            "<meta http-equiv=\"refresh\" content=\"0;url=https://evil.test\">",
+            "<meta name=\"x\" content=\"a\"><script>alert(1)</script>",
+            "<meta charset=\"utf-8\">",
+            "plain text",
+        ] {
+            assert!(
+                validate_analytics_config(&cfg("", bad)).is_err(),
+                "accepted: {bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn analytics_snippet_size_cap() {
+        let big = format!("<script>{}</script>", "x".repeat(17 * 1024));
+        assert!(validate_analytics_config(&cfg(&big, "")).is_err());
+    }
 }

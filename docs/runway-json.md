@@ -47,7 +47,7 @@ translate into the static server's config on static deploys.
 | `firewall` | object | `{ip_allowlist: [...], rate_limit: {average, burst}}` |
 | `web_analytics.enabled` | bool | first-party pageviews/custom events |
 | `speed_insights.enabled` | bool | Core Web Vitals beacon |
-| `analytics` | object | third-party provider (`{provider, siteId, …}`) + `gsc_verification` |
+| `analytics` | object | third-party provider (`{provider, siteId, …}`) + `gsc_verification`. `analytics_snippet`/`analytics_meta` accept `<script>`/`<meta name content>` tags only (≤16 KiB / ≤4 KiB) |
 | `status_page` | bool \| string | public status page (`true` or custom slug) |
 | `webhook_url` | string | deploy event webhook target |
 
