@@ -498,6 +498,10 @@ pub async fn audit(
 ) -> anyhow::Result<()> {
     let client = Client::from_config()?;
     if export {
+        anyhow::ensure!(
+            before.is_none() && at.is_none(),
+            "--export cannot be combined with --before/--at"
+        );
         let mut params: Vec<String> = Vec::new();
         if let Some(t) = team.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
             params.push(format!("team_id={}", query_escape(t)));
@@ -1420,7 +1424,13 @@ fn take_value(args: &mut Vec<String>, flag: &str) -> Option<String> {
         args.remove(pos);
         Some(v)
     } else {
-        let val = args.get(pos + 1)?.clone();
+        // A following flag is a missing value, not a value — leave both
+        // in place so the caller reports usage instead of a bogus payload.
+        let val = args.get(pos + 1)?;
+        if val.starts_with('-') {
+            return None;
+        }
+        let val = val.clone();
         args.drain(pos..=pos + 1);
         Some(val)
     }
