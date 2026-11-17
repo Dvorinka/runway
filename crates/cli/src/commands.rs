@@ -486,6 +486,64 @@ pub async fn logs(deployment: Option<String>, follow: bool, project: bool) -> an
     Ok(())
 }
 
+/// `runway audit [--team ID] [--action NAME] [--limit N] [--before ID --at TIME]`.
+pub async fn audit(
+    team: Option<String>,
+    action: Option<String>,
+    limit: i64,
+    before: Option<i64>,
+    at: Option<String>,
+    json_out: bool,
+) -> anyhow::Result<()> {
+    let at = at.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let cursor = match (before, at) {
+        (None, None) => None,
+        (Some(id), Some(at)) if id > 0 => Some((id, at)),
+        (Some(id), _) if id <= 0 => anyhow::bail!("before must be a positive audit id"),
+        _ => anyhow::bail!("pass --before and --at together"),
+    };
+    let client = Client::from_config()?;
+    let mut path = format!("/api/v1/audit?limit={limit}");
+    if let Some(t) = team.filter(|s| !s.trim().is_empty()) {
+        path.push_str("&team_id=");
+        path.push_str(t.trim());
+    }
+    if let Some(a) = action.filter(|s| !s.trim().is_empty()) {
+        path.push_str("&action=");
+        path.push_str(a.trim());
+    }
+    if let Some((id, at)) = cursor {
+        path.push_str(&format!("&before_id={id}&before_at={}", query_escape(at)));
+    }
+    let res = client.get(&path).await?;
+    if json_out {
+        return print_json(&res);
+    }
+    let entries = res["entries"].as_array().cloned().unwrap_or_default();
+    if entries.is_empty() {
+        println!("No audit entries you can see.");
+        return Ok(());
+    }
+    let last = entries.last();
+    let last_id = last.and_then(|e| e["id"].as_i64());
+    let last_at = last.and_then(|e| e["created_at"].as_str());
+    for e in &entries {
+        let when = e["created_at"].as_str().unwrap_or("");
+        let action = e["action"].as_str().unwrap_or("-");
+        let who = e["username"].as_str().unwrap_or("system");
+        let team = e["team_name"].as_str().unwrap_or("");
+        let project = e["project_name"].as_str().unwrap_or("");
+        let detail = e["detail"].as_str().unwrap_or("");
+        println!("{when}  {action:<20}  {who:<16}  {team}  {project}  {detail}");
+    }
+    if res["has_more"].as_bool() == Some(true) {
+        if let (Some(id), Some(at)) = (last_id, last_at) {
+            println!("-- more; runway audit --before {id} --at {at}");
+        }
+    }
+    Ok(())
+}
+
 /// `runway deployments [--limit N]`.
 pub async fn deployments(limit: usize, json_out: bool) -> anyhow::Result<()> {
     let client = Client::from_config()?;

@@ -9,6 +9,7 @@ import {
   type TeamWebhook,
 } from "@/lib/api";
 import { Avatar, AvatarRow, Badge, Button, Card, ComboBox, EmptyState, Input, SectionHead, Skeleton } from "@/components/ui";
+import { AuditFeed } from "@/components/AuditFeed";
 import { Cloud, Database, MailPlus, ScrollText, Users, Webhook } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
@@ -516,23 +517,11 @@ function Audit({ teamId }: { teamId: string }) {
     <Card className="p-5">
       <SectionHead icon={ScrollText} title="Audit log" />
       <Err msg={error} />
-      <div className="grid grid-cols-1 gap-1 font-mono text-xs">
-        {entries.map((e) => (
-          <div key={e.id} className="flex items-baseline justify-between gap-4">
-            <span className="text-muted-foreground">
-              {new Date(e.created_at).toLocaleString()}
-            </span>
-            <span className="flex-1 truncate">
-              {e.action}
-              {e.username ? ` by ${e.username}` : ""}
-              {e.detail ? ` — ${e.detail}` : ""}
-            </span>
-          </div>
-        ))}
-        {entries.length === 0 && !error && (
-          <p className="text-muted-foreground">No entries.</p>
-        )}
-      </div>
+      {entries.length === 0 && !error ? (
+        <p className="text-xs text-muted-foreground">No entries.</p>
+      ) : (
+        <AuditFeed entries={entries} />
+      )}
     </Card>
   );
 }

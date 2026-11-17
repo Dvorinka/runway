@@ -3,6 +3,7 @@ import { DeploymentRow } from "@/components/DeploymentRow";
 import { EmptyState, Input, Skeleton, isFailed, isRunning } from "@/components/ui";
 import { Rocket, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 
 const FILTERS = ["all", "running", "succeeded", "failed"] as const;
 
@@ -10,7 +11,18 @@ export default function Deployments() {
   const [deployments, setDeployments] = useState<Deployment[] | null>(null);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<(typeof FILTERS)[number]>("all");
+  const [params, setParams] = useSearchParams();
+  const rawStatus = params.get("status");
+  const filter: (typeof FILTERS)[number] =
+    rawStatus === "running" || rawStatus === "succeeded" || rawStatus === "failed"
+      ? rawStatus
+      : "all";
+  const setFilter = (f: (typeof FILTERS)[number]) => {
+    const next = new URLSearchParams(params);
+    if (f === "all") next.delete("status");
+    else next.set("status", f);
+    setParams(next, { replace: true });
+  };
   const [envs, setEnvs] = useState<Set<string>>(new Set());
   const [projs, setProjs] = useState<Set<string>>(new Set());
 

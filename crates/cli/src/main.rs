@@ -137,6 +137,27 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Audit log this account is allowed to see.
+    Audit {
+        /// Team id to narrow to.
+        #[arg(long)]
+        team: Option<String>,
+        /// Action identifier, for example deployment.create.
+        #[arg(long)]
+        action: Option<String>,
+        /// Max rows (1–200).
+        #[arg(long, default_value_t = 50)]
+        limit: i64,
+        /// Return rows older than this audit id. Pass with --at.
+        #[arg(long)]
+        before: Option<i64>,
+        /// created_at of that audit row. Pass with --before.
+        #[arg(long)]
+        at: Option<String>,
+        /// Print the raw API response as JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// List recent deployments for the linked project.
     Deployments {
         /// Max rows to print.
@@ -327,6 +348,14 @@ async fn main() -> anyhow::Result<()> {
         Command::Env { args, environment } => commands::env(args, environment).await?,
         Command::Domains { args } => commands::domains(args).await?,
         Command::Stats { deployment, json } => commands::stats(deployment, json).await?,
+        Command::Audit {
+            team,
+            action,
+            limit,
+            before,
+            at,
+            json,
+        } => commands::audit(team, action, limit, before, at, json).await?,
         Command::Deployments { limit, json } => commands::deployments(limit, json).await?,
         Command::Rollback { environment } => commands::rollback(environment).await?,
         Command::Promote {
