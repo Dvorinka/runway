@@ -157,12 +157,59 @@ pub async fn visible_audit(
     before_id: Option<i64>,
     before_at: Option<&str>,
 ) -> ApiResult<(Vec<serde_json::Value>, bool)> {
+    visible_audit_clamped(
+        state,
+        user_id,
+        team_id,
+        action,
+        clamp_audit_limit(limit),
+        before_id,
+        before_at,
+    )
+    .await
+}
+
+/// Export reads further back than the page cap — still bounded so one
+/// request cannot stream the whole table.
+pub(crate) fn clamp_audit_export_limit(n: Option<i64>) -> i64 {
+    n.unwrap_or(10_000).clamp(1, 10_000)
+}
+
+/// Every row the caller may see, up to the export bound, plus whether the
+/// bound cut the result short. Powers `GET /api/v1/audit/export`.
+pub async fn visible_audit_export(
+    state: &AppState,
+    user_id: i64,
+    team_id: Option<&str>,
+    action: Option<&str>,
+    limit: Option<i64>,
+) -> ApiResult<(Vec<serde_json::Value>, bool)> {
+    visible_audit_clamped(
+        state,
+        user_id,
+        team_id,
+        action,
+        clamp_audit_export_limit(limit),
+        None,
+        None,
+    )
+    .await
+}
+
+async fn visible_audit_clamped(
+    state: &AppState,
+    user_id: i64,
+    team_id: Option<&str>,
+    action: Option<&str>,
+    limit: i64,
+    before_id: Option<i64>,
+    before_at: Option<&str>,
+) -> ApiResult<(Vec<serde_json::Value>, bool)> {
     let team = clean_id(team_id);
     let action = normalize_action(action)?;
     let cursor = normalize_cursor(before_id, before_at)?;
     let before_id = cursor.as_ref().map(|c| c.id);
     let before_at = cursor.as_ref().map(|c| c.at);
-    let limit = clamp_audit_limit(limit);
     // One extra row tells the caller whether another page exists.
     let fetch = limit + 1;
     let superadmin = crate::routes::admin::is_superadmin_id(user_id);
@@ -257,6 +304,95 @@ pub async fn list_audit(
     Ok(Json(json!({ "entries": entries, "has_more": has_more })).into_response())
 }
 
+#[derive(Deserialize)]
+pub struct AuditExportQuery {
+    pub team_id: Option<String>,
+    pub action: Option<String>,
+    pub format: Option<String>,
+    pub limit: Option<i64>,
+}
+
+fn csv_field(v: Option<&serde_json::Value>) -> String {
+    let s = match v {
+        Some(serde_json::Value::String(s)) => s.clone(),
+        Some(other) => other.to_string(),
+        None => String::new(),
+    };
+    // Spreadsheet formula injection: a leading =, +, -, @ (after optional
+    // whitespace) or a leading tab/CR executes as a formula in Excel/Sheets.
+    // A leading ' marks the cell as text and is not displayed.
+    let s = if s.trim_start().starts_with(['=', '+', '-', '@']) || s.starts_with(['\t', '\r']) {
+        format!("'{s}")
+    } else {
+        s
+    };
+    if s.contains([',', '"', '\n', '\r']) {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s
+    }
+}
+
+/// `GET /api/v1/audit/export` — the rows `GET /api/v1/audit` pages through,
+/// unpaged up to the export bound, as CSV (default) or JSON
+/// (`?format=json`). Same visibility rules; `detail` stays a JSON string.
+pub async fn export_audit(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Query(q): Query<AuditExportQuery>,
+) -> ApiResult<Response> {
+    let (rows, has_more) = visible_audit_export(
+        &state,
+        user.user.id,
+        q.team_id.as_deref(),
+        q.action.as_deref(),
+        q.limit,
+    )
+    .await?;
+    if q.format.as_deref() == Some("json") {
+        return Ok(Json(json!({ "entries": rows, "has_more": has_more })).into_response());
+    }
+    let mut out = String::from(
+        "id,created_at,action,username,user_id,team_id,team_name,project_id,project_name,resource_type,resource_id,detail\n",
+    );
+    for r in &rows {
+        let f = |k: &str| csv_field(r.get(k));
+        out.push_str(&format!(
+            "{},{},{},{},{},{},{},{},{},{},{},{}\n",
+            f("id"),
+            f("created_at"),
+            f("action"),
+            f("username"),
+            f("user_id"),
+            f("team_id"),
+            f("team_name"),
+            f("project_id"),
+            f("project_name"),
+            f("resource_type"),
+            f("resource_id"),
+            f("detail"),
+        ));
+    }
+    Ok((
+        [
+            (
+                axum::http::header::CONTENT_TYPE,
+                "text/csv; charset=utf-8".to_string(),
+            ),
+            (
+                axum::http::header::CONTENT_DISPOSITION,
+                "attachment; filename=\"audit-export.csv\"".to_string(),
+            ),
+            (
+                axum::http::header::HeaderName::from_static("x-export-has-more"),
+                has_more.to_string(),
+            ),
+        ],
+        out.into_bytes(),
+    )
+        .into_response())
+}
+
 /// `GET /api/deploy?repo_url=...&branch=...&provider=github` —
 /// "Deploy on Runway" button target (devpush `/deploy`). Returns the
 /// prefill the SPA consumes; redirect happens client-side.
@@ -340,5 +476,40 @@ mod tests {
         assert!(normalize_cursor(Some(12), None).is_err());
         assert!(normalize_cursor(None, Some("2026-11-12T14:16:25Z")).is_err());
         assert!(normalize_cursor(Some(12), Some("yesterday")).is_err());
+    }
+
+    #[test]
+    fn export_limit_allows_deeper_reads() {
+        assert_eq!(clamp_audit_export_limit(None), 10_000);
+        assert_eq!(clamp_audit_export_limit(Some(0)), 1);
+        assert_eq!(clamp_audit_export_limit(Some(50_000)), 10_000);
+        assert_eq!(clamp_audit_export_limit(Some(500)), 500);
+    }
+
+    #[test]
+    fn csv_field_quotes_only_when_needed() {
+        assert_eq!(csv_field(Some(&json!("plain"))), "plain");
+        assert_eq!(csv_field(Some(&json!(42))), "42");
+        assert_eq!(csv_field(None), "");
+        assert_eq!(csv_field(Some(&json!("a,b"))), "\"a,b\"");
+        assert_eq!(csv_field(Some(&json!("say \"hi\""))), "\"say \"\"hi\"\"\"");
+        assert_eq!(csv_field(Some(&json!("line\nbreak"))), "\"line\nbreak\"");
+    }
+
+    #[test]
+    fn csv_field_neutralizes_formula_prefixes() {
+        for dangerous in [
+            "=cmd|' /c calc'!A0",
+            "+1+2",
+            "-2+3",
+            "@SUM(1)",
+            "  =1+1",
+            "\t=x",
+        ] {
+            let out = csv_field(Some(&json!(dangerous)));
+            assert!(out.starts_with('\''), "{dangerous:?} -> {out:?}");
+        }
+        assert_eq!(csv_field(Some(&json!("-5"))), "'-5");
+        assert_eq!(csv_field(Some(&json!("a=b"))), "a=b");
     }
 }

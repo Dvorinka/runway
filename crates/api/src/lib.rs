@@ -319,6 +319,10 @@ pub fn router(state: AppState) -> Router {
             get(routes::notifications::team_audit),
         )
         .route("/api/v1/audit", get(routes::notifications::list_audit))
+        .route(
+            "/api/v1/audit/export",
+            get(routes::notifications::export_audit),
+        )
         .route("/api/v1/notifications", get(routes::notifications::list))
         .route(
             "/api/v1/notifications/mark-read",

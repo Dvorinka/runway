@@ -12,6 +12,18 @@ function csvCell(value: string | null | undefined): string {
   return s;
 }
 
+function downloadBlob(text: string, name: string) {
+  const blob = new Blob([text], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 function downloadCsv(entries: AuditEntry[]) {
   const header = ["created_at", "action", "username", "team_name", "project_name", "detail"];
   const lines = [
@@ -29,15 +41,7 @@ function downloadCsv(entries: AuditEntry[]) {
         .join(","),
     ),
   ];
-  const blob = new Blob([lines.join("\n")], { type: "text/csv" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "runway-activity.csv";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  downloadBlob(lines.join("\n"), "runway-activity.csv");
 }
 
 export default function ActivityPage() {
@@ -48,6 +52,7 @@ export default function ActivityPage() {
   const [teamId, setTeamId] = useState("");
   const [action, setAction] = useState("");
   const [error, setError] = useState("");
+  const [exporting, setExporting] = useState(false);
   const filterKey = `${teamId}\0${action}`;
   const filterRef = useRef(filterKey);
   filterRef.current = filterKey;
@@ -109,6 +114,19 @@ export default function ActivityPage() {
       });
   }
 
+  function exportAll() {
+    if (exporting) return;
+    setExporting(true);
+    api
+      .auditExport({
+        team_id: teamId || undefined,
+        action: action || undefined,
+      })
+      .then((csv) => downloadBlob(csv, "runway-activity-full.csv"))
+      .catch((e) => setError(e instanceof Error ? e.message : "export failed"))
+      .finally(() => setExporting(false));
+  }
+
   return (
     <div className="page-enter mx-auto max-w-5xl p-4 sm:p-8">
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -120,13 +138,23 @@ export default function ActivityPage() {
           </p>
         </div>
         {entries && entries.length > 0 && (
-          <button
-            type="button"
-            onClick={() => downloadCsv(entries)}
-            className="self-start rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
-          >
-            Download CSV
-          </button>
+          <div className="flex self-start gap-2">
+            <button
+              type="button"
+              onClick={() => downloadCsv(entries)}
+              className="rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
+            >
+              Download CSV
+            </button>
+            <button
+              type="button"
+              onClick={exportAll}
+              disabled={exporting}
+              className="rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+            >
+              {exporting ? "Exporting…" : "Export all CSV"}
+            </button>
+          </div>
         )}
       </div>
       <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
