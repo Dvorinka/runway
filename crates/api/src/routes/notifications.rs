@@ -175,16 +175,16 @@ pub(crate) fn clamp_audit_export_limit(n: Option<i64>) -> i64 {
     n.unwrap_or(10_000).clamp(1, 10_000)
 }
 
-/// Every row the caller may see, up to the export bound. Powers
-/// `GET /api/v1/audit/export`.
+/// Every row the caller may see, up to the export bound, plus whether the
+/// bound cut the result short. Powers `GET /api/v1/audit/export`.
 pub async fn visible_audit_export(
     state: &AppState,
     user_id: i64,
     team_id: Option<&str>,
     action: Option<&str>,
     limit: Option<i64>,
-) -> ApiResult<Vec<serde_json::Value>> {
-    let (rows, _) = visible_audit_clamped(
+) -> ApiResult<(Vec<serde_json::Value>, bool)> {
+    visible_audit_clamped(
         state,
         user_id,
         team_id,
@@ -193,8 +193,7 @@ pub async fn visible_audit_export(
         None,
         None,
     )
-    .await?;
-    Ok(rows)
+    .await
 }
 
 async fn visible_audit_clamped(
@@ -319,6 +318,14 @@ fn csv_field(v: Option<&serde_json::Value>) -> String {
         Some(other) => other.to_string(),
         None => String::new(),
     };
+    // Spreadsheet formula injection: a leading =, +, -, @ (after optional
+    // whitespace) or a leading tab/CR executes as a formula in Excel/Sheets.
+    // A leading ' marks the cell as text and is not displayed.
+    let s = if s.trim_start().starts_with(['=', '+', '-', '@']) || s.starts_with(['\t', '\r']) {
+        format!("'{s}")
+    } else {
+        s
+    };
     if s.contains([',', '"', '\n', '\r']) {
         format!("\"{}\"", s.replace('"', "\"\""))
     } else {
@@ -334,7 +341,7 @@ pub async fn export_audit(
     State(state): State<AppState>,
     Query(q): Query<AuditExportQuery>,
 ) -> ApiResult<Response> {
-    let rows = visible_audit_export(
+    let (rows, has_more) = visible_audit_export(
         &state,
         user.user.id,
         q.team_id.as_deref(),
@@ -343,7 +350,7 @@ pub async fn export_audit(
     )
     .await?;
     if q.format.as_deref() == Some("json") {
-        return Ok(Json(json!({ "entries": rows })).into_response());
+        return Ok(Json(json!({ "entries": rows, "has_more": has_more })).into_response());
     }
     let mut out = String::from(
         "id,created_at,action,username,user_id,team_id,team_name,project_id,project_name,resource_type,resource_id,detail\n",
@@ -375,6 +382,10 @@ pub async fn export_audit(
             (
                 axum::http::header::CONTENT_DISPOSITION,
                 "attachment; filename=\"audit-export.csv\"".to_string(),
+            ),
+            (
+                axum::http::header::HeaderName::from_static("x-export-has-more"),
+                has_more.to_string(),
             ),
         ],
         out.into_bytes(),
@@ -483,5 +494,22 @@ mod tests {
         assert_eq!(csv_field(Some(&json!("a,b"))), "\"a,b\"");
         assert_eq!(csv_field(Some(&json!("say \"hi\""))), "\"say \"\"hi\"\"\"");
         assert_eq!(csv_field(Some(&json!("line\nbreak"))), "\"line\nbreak\"");
+    }
+
+    #[test]
+    fn csv_field_neutralizes_formula_prefixes() {
+        for dangerous in [
+            "=cmd|' /c calc'!A0",
+            "+1+2",
+            "-2+3",
+            "@SUM(1)",
+            "  =1+1",
+            "\t=x",
+        ] {
+            let out = csv_field(Some(&json!(dangerous)));
+            assert!(out.starts_with('\''), "{dangerous:?} -> {out:?}");
+        }
+        assert_eq!(csv_field(Some(&json!("-5"))), "'-5");
+        assert_eq!(csv_field(Some(&json!("a=b"))), "a=b");
     }
 }
