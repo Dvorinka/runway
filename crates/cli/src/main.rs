@@ -129,6 +129,11 @@ enum Command {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Manage scheduled deployments: cron [list|add <name> --schedule <s>|enable|disable|rm <id|name>].
+    Cron {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Live container resource stats for a deployment.
     Stats {
         /// Deployment ID (defaults to latest of the linked project).
@@ -145,15 +150,18 @@ enum Command {
         /// Action identifier, for example deployment.create.
         #[arg(long)]
         action: Option<String>,
-        /// Max rows (1–200).
-        #[arg(long, default_value_t = 50)]
-        limit: i64,
+        /// Max rows (paged reads cap at 200; --export caps at 10000).
+        #[arg(long)]
+        limit: Option<i64>,
         /// Return rows older than this audit id. Pass with --at.
         #[arg(long)]
         before: Option<i64>,
         /// created_at of that audit row. Pass with --before.
         #[arg(long)]
         at: Option<String>,
+        /// Export every visible row up to the export bound instead of paging.
+        #[arg(long, conflicts_with_all = ["before", "at"])]
+        export: bool,
         /// Print the raw API response as JSON.
         #[arg(long)]
         json: bool,
@@ -347,6 +355,7 @@ async fn main() -> anyhow::Result<()> {
         } => commands::logs(deployment, follow, project).await?,
         Command::Env { args, environment } => commands::env(args, environment).await?,
         Command::Domains { args } => commands::domains(args).await?,
+        Command::Cron { args } => commands::cron(args).await?,
         Command::Stats { deployment, json } => commands::stats(deployment, json).await?,
         Command::Audit {
             team,
@@ -354,8 +363,9 @@ async fn main() -> anyhow::Result<()> {
             limit,
             before,
             at,
+            export,
             json,
-        } => commands::audit(team, action, limit, before, at, json).await?,
+        } => commands::audit(team, action, limit, before, at, export, json).await?,
         Command::Deployments { limit, json } => commands::deployments(limit, json).await?,
         Command::Rollback { environment } => commands::rollback(environment).await?,
         Command::Promote {

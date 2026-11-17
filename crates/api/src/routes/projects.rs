@@ -1257,7 +1257,7 @@ pub async fn delete_webhook(
 // Cron jobs — scheduled deployments (devpush project cron handlers)
 // ---------------------------------------------------------------------------
 
-type CronRow = (
+pub(crate) type CronRow = (
     String,
     String,
     String,
@@ -1268,7 +1268,7 @@ type CronRow = (
     Option<chrono::DateTime<chrono::Utc>>,
 );
 
-fn cron_json(r: &CronRow) -> Value {
+pub(crate) fn cron_json(r: &CronRow) -> Value {
     json!({
         "id": r.0,
         "name": r.1,
