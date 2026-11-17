@@ -94,6 +94,10 @@ services:
       GITHUB_APP_NAME: ${GITHUB_APP_NAME:-}
       GITHUB_APP_PRIVATE_KEY: ${GITHUB_APP_PRIVATE_KEY:-}
       GITHUB_APP_WEBHOOK_SECRET: ${GITHUB_APP_WEBHOOK_SECRET:-}
+      # Provider webhook secrets (dev defaults so local provider legs verify).
+      GITEA_WEBHOOK_SECRET: ${GITEA_WEBHOOK_SECRET:-dev-gitea-webhook-secret}
+      GITLAB_WEBHOOK_SECRET: ${GITLAB_WEBHOOK_SECRET:-dev-gitlab-webhook-secret}
+      BITBUCKET_WEBHOOK_SECRET: ${BITBUCKET_WEBHOOK_SECRET:-dev-bitbucket-webhook-secret}
       # CGNAT path — set both to auto-manage the instance tunnel.
       CF_API_TOKEN: ${CF_API_TOKEN:-}
       CF_ACCOUNT_ID: ${CF_ACCOUNT_ID:-}
