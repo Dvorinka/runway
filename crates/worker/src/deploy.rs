@@ -179,7 +179,8 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
         vec![format!(
             "echo 'Extracting uploaded source...' && \
              tar -xzf /src/{archive} -C /app && \
-             echo 'Source extracted'"
+             echo 'Source extracted' && \
+             touch /app/.runway-src-ok"
         )]
     } else {
         vec![format!(
@@ -213,7 +214,8 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
                      git fetch -q --depth 1 {base}/{repo}.git {sha} && \
                      git checkout -q FETCH_HEAD && \
                      unset GIT_ASKPASS GIT_TERMINAL_PROMPT RUNWAY_GITHUB_TOKEN && \
-                     rm -f /tmp/runway-git-askpass",
+                     rm -f /tmp/runway-git-askpass && \
+                     touch /app/.runway-src-ok",
                     base = deployment.repo_base_url.trim_end_matches('/'),
                     repo = deployment.repo_full_name,
                     sha = deployment.commit_sha,
@@ -253,7 +255,8 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
                      git fetch -q --depth 1 {base}/{repo}.git {sha} && \
                      git checkout -q FETCH_HEAD && \
                      unset GIT_ASKPASS GIT_TERMINAL_PROMPT RUNWAY_GIT_TOKEN && \
-                     rm -f /tmp/runway-git-askpass",
+                     rm -f /tmp/runway-git-askpass && \
+                     touch /app/.runway-src-ok",
                     repo = deployment.repo_full_name,
                     sha = deployment.commit_sha,
                 ));
@@ -366,12 +369,14 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
         ));
         if static_mode {
             commands.push(format!(
-            "OUTDIR=$(if [ -f runway.json ] && command -v jq >/dev/null 2>&1; then \
+            "test -f /app/.runway-src-ok || {{ printf '\\033[31mError: source acquisition failed — refusing to publish a stale workspace\\033[0m\\n' 1>&2; exit 1; }}; \
+             OUTDIR=$(if [ -f runway.json ] && command -v jq >/dev/null 2>&1; then \
              jq -r '.output_directory // empty' runway.json; fi); \
              OUTDIR=${{OUTDIR:-{output_dir}}}; \
              echo \"Publishing static output ($OUTDIR -> /out)...\"; \
              test -d \"$OUTDIR\" || {{ printf '\\033[31mError: output directory %s not found\\033[0m\\n' \"$OUTDIR\" 1>&2; exit 1; }}; \
              mkdir -p /out && cp -r \"$OUTDIR\"/. /out/ && \
+             test -n \"$(find /out -type f -print -quit)\" || {{ printf '\\033[31mError: build produced no files\\033[0m\\n' 1>&2; exit 1; }} && \
              (cp runway.json /out/.runway.json 2>/dev/null || true) && \
              echo 'Static output published'"
         ));
