@@ -349,6 +349,12 @@ export const api = {
     }),
   patchProject: (id: string, body: Record<string, unknown>) =>
     req<Project>(`/api/v1/projects/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  bypassSecret: (id: string) =>
+    req<{ secret: string }>(`/api/v1/projects/${id}/protection/bypass-secret`),
+  rotateBypassSecret: (id: string) =>
+    req<{ secret: string }>(`/api/v1/projects/${id}/protection/bypass-secret/rotate`, {
+      method: "POST",
+    }),
   exportProject: (id: string) => req<Record<string, unknown>>(`/api/v1/projects/${id}/export`),
   importProject: (id: string, body: unknown) =>
     req<{ ok: boolean }>(`/api/v1/projects/${id}/import`, {

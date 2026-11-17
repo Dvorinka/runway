@@ -711,6 +711,7 @@ export function Protection({ id, project }: { id: string; project: Project | nul
         environment-id deployments ask for <code className="font-mono">runway</code> + this
         password at the edge.
       </p>
+      {enabled && <BypassSecret id={id} />}
       {enabled ? (
         <div>
           <Button variant="outline" size="sm" onClick={() => apply(false)}>
@@ -733,6 +734,74 @@ export function Protection({ id, project }: { id: string; project: Project | nul
       )}
       <Err msg={error} />
       {msg && <span className="text-xs text-muted-foreground">{msg}</span>}
+    </div>
+  );
+}
+
+/// Automation bypass (Vercel "Protection Bypass" parity): lets CI and
+/// preview tooling through basicAuth without the password. Writer-only
+/// reveal; non-writers simply never see the section (fetch 403s → hide).
+function BypassSecret({ id }: { id: string }) {
+  const [secret, setSecret] = useState<string | null>(null);
+  const [hidden, setHidden] = useState(true);
+  const [unavailable, setUnavailable] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    api
+      .bypassSecret(id)
+      .then((r) => setSecret(r.secret))
+      .catch(() => setUnavailable(true));
+  }, [id]);
+
+  if (unavailable || !secret) return null;
+
+  async function rotate() {
+    if (!window.confirm("Rotate the bypass secret? Anything using the old value stops working immediately.")) return;
+    setError("");
+    try {
+      const r = await api.rotateBypassSecret(id);
+      setSecret(r.secret);
+      setHidden(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "rotate failed");
+    }
+  }
+
+  function copy() {
+    navigator.clipboard.writeText(secret ?? "").then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }
+
+  return (
+    <div className="grid grid-cols-1 gap-2 rounded-md border border-border p-3">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium">Protection bypass for automation</span>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={() => setHidden(!hidden)}>
+            {hidden ? "Reveal" : "Hide"}
+          </Button>
+          <Button variant="outline" size="sm" onClick={copy}>
+            {copied ? "Copied" : "Copy"}
+          </Button>
+          <Button variant="outline" size="sm" onClick={rotate}>
+            Rotate
+          </Button>
+        </div>
+      </div>
+      <code className="block truncate rounded bg-black/40 px-2 py-1 font-mono text-xs text-muted-foreground">
+        {hidden ? "•".repeat(48) : secret}
+      </code>
+      <p className="text-xs text-muted-foreground">
+        Send as <code className="font-mono">x-runway-protection-bypass</code> header or{" "}
+        <code className="font-mono">?x-runway-protection-bypass=</code> query param to skip the
+        password prompt — for CI preview checks and uptime monitors. Production URLs are
+        unaffected.
+      </p>
+      <Err msg={error} />
     </div>
   );
 }

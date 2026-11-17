@@ -175,6 +175,14 @@ pub fn router(state: AppState) -> Router {
                 .delete(routes::projects::delete),
         )
         .route(
+            "/api/v1/projects/{id}/protection/bypass-secret",
+            get(routes::projects::get_bypass_secret),
+        )
+        .route(
+            "/api/v1/projects/{id}/protection/bypass-secret/rotate",
+            post(routes::projects::rotate_bypass_secret),
+        )
+        .route(
             "/api/v1/projects/{id}/avatar",
             put(routes::avatars::put_project).delete(routes::avatars::delete_project),
         )

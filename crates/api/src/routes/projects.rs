@@ -465,9 +465,21 @@ pub async fn patch(
                     Some(raw) => {
                         let hash =
                             bcrypt::hash(raw, bcrypt::DEFAULT_COST).map_err(ApiError::internal)?;
+                        // Automation bypass secret — kept across password
+                        // changes, rotated via its own endpoint. Never leaves
+                        // the API in project reads (see project_json).
+                        let bypass = obj
+                            .get("protection")
+                            .and_then(|p| p.get("bypass_secret"))
+                            .and_then(|v| v.as_str())
+                            .map(str::to_string)
+                            .unwrap_or_else(new_bypass_secret);
                         obj.insert(
                             "protection".into(),
-                            serde_json::json!({ "users": [format!("runway:{hash}")] }),
+                            serde_json::json!({
+                                "users": [format!("runway:{hash}")],
+                                "bypass_secret": bypass,
+                            }),
                         );
                     }
                     None => {
@@ -524,6 +536,66 @@ pub async fn patch(
     Ok(Json(project_json(&state, &updated).await).into_response())
 }
 
+/// `GET /api/v1/projects/{id}/protection/bypass-secret` — writer-only
+/// reveal of the automation bypass secret (stripped from project reads).
+pub async fn get_bypass_secret(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Response> {
+    let project = accessible_project_writer(&state, user.user.id, &id).await?;
+    let secret = project
+        .config
+        .get("protection")
+        .and_then(|p| p.get("bypass_secret"))
+        .and_then(|v| v.as_str());
+    match secret {
+        Some(s) => Ok(Json(json!({ "secret": s })).into_response()),
+        None => Err(ApiError::not_found("deployment protection bypass secret")),
+    }
+}
+
+/// `POST /api/v1/projects/{id}/protection/bypass-secret/rotate` —
+/// mint a fresh secret and rewrite the edge config. Also the migration
+/// path for projects protected before bypass secrets existed.
+pub async fn rotate_bypass_secret(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Response> {
+    let mut project = accessible_project_writer(&state, user.user.id, &id).await?;
+    let Some(prot) = project
+        .config
+        .get_mut("protection")
+        .and_then(|p| p.as_object_mut())
+    else {
+        return Err(ApiError::not_found("deployment protection is not enabled"));
+    };
+    if prot
+        .get("users")
+        .and_then(|u| u.as_array())
+        .is_none_or(|u| u.is_empty())
+    {
+        return Err(ApiError::not_found("deployment protection is not enabled"));
+    }
+    let secret = new_bypass_secret();
+    prot.insert("bypass_secret".into(), json!(secret));
+    let updated: Project = sqlx::query_as(
+        "UPDATE project SET config = $2, updated_at = now() WHERE id = $1 RETURNING *",
+    )
+    .bind(&project.id)
+    .bind(&project.config)
+    .fetch_one(&state.db)
+    .await?;
+    rewrite_traefik(&state, &updated).await?;
+    let mut a = runway_core::audit::Audit::new("project.protection_bypass_rotate");
+    a.user_id = Some(user.user.id);
+    a.team_id = Some(project.team_id.clone());
+    a.project_id = Some(project.id.clone());
+    runway_core::audit::log(&state.db, a).await;
+    Ok(Json(json!({ "secret": secret })).into_response())
+}
+
 #[derive(Deserialize)]
 pub struct DeleteProject {
     /// Must match the project name — devpush types-the-name confirm.
@@ -561,6 +633,22 @@ pub async fn delete(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
+/// Fresh automation bypass secret — 24 random bytes as hex.
+fn new_bypass_secret() -> String {
+    hex::encode(rand::random::<[u8; 24]>())
+}
+
+/// Project config safe to return to any member: secrets that gate
+/// edge access (`protection.bypass_secret`) are stripped — writers
+/// reveal them through the dedicated endpoint instead.
+fn public_config(config: &serde_json::Value) -> serde_json::Value {
+    let mut c = config.clone();
+    if let Some(prot) = c.get_mut("protection").and_then(|p| p.as_object_mut()) {
+        prot.remove("bypass_secret");
+    }
+    c
+}
+
 async fn project_json(state: &AppState, p: &Project) -> Value {
     // Deployment the production alias currently resolves to — the source
     // of truth for "what is live", as opposed to the newest deployment.
@@ -587,7 +675,7 @@ async fn project_json(state: &AppState, p: &Project) -> Value {
         "bitbucket_connection_id": p.bitbucket_connection_id,
         "remote_node_id": p.remote_node_id,
         "has_avatar": p.has_avatar,
-        "config": p.config,
+        "config": public_config(&p.config),
         "environments": p.environments,
         "production_deployment_id": production_deployment_id,
         "status": p.status,
