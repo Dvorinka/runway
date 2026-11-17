@@ -392,6 +392,19 @@ pub async fn update_project_config(
         .filter(|u| !u.is_empty())
     {
         middlewares.insert("protect".into(), json!({ "basicAuth": { "users": users } }));
+        // Automation bypass (Vercel "Protection Bypass" parity): each
+        // protected router gets a higher-priority sibling matching the
+        // secret as `x-runway-protection-bypass` header or
+        // `?x-runway-protection-bypass=` query. Firewall, redirect rules,
+        // and CDN headers still apply — only basicAuth is skipped.
+        let bypass_secret = project
+            .config
+            .get("protection")
+            .and_then(|p| p.get("bypass_secret"))
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        let mut bypass_routers: Vec<(String, Value)> = Vec::new();
         for (key, router) in routers.iter_mut() {
             if unprotected.contains(key) {
                 continue;
@@ -413,12 +426,28 @@ pub async fn update_project_config(
                 })
                 .unwrap_or_default();
             let (fw, rest): (Vec<String>, Vec<String>) =
-                existing.into_iter().partition(|m| m.starts_with("fw-"));
-            router["middlewares"] = json!(fw
-                .into_iter()
-                .chain(std::iter::once("protect".to_string()))
-                .chain(rest)
-                .collect::<Vec<_>>());
+                existing.iter().cloned().partition(|m| m.starts_with("fw-"));
+            let mut ordered = fw;
+            ordered.push("protect".into());
+            ordered.extend(rest);
+            router["middlewares"] = json!(ordered);
+
+            if let Some(secret) = &bypass_secret {
+                if let Some(rule) = router["rule"].as_str() {
+                    let mut bypass = router.clone();
+                    bypass["rule"] = json!(format!(
+                        "{rule} && (Headers(`x-runway-protection-bypass`, `{secret}`) || Query(`x-runway-protection-bypass`, `{secret}`))"
+                    ));
+                    bypass["middlewares"] = json!(ordered
+                        .iter()
+                        .filter(|m| m.as_str() != "protect")
+                        .collect::<Vec<_>>());
+                    bypass_routers.push((format!("{key}-bypass"), bypass));
+                }
+            }
+        }
+        for (key, router) in bypass_routers {
+            routers.insert(key, router);
         }
     }
 
