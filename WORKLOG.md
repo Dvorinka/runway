@@ -433,3 +433,31 @@ throwaway `data-run` DB; production `~/.config/runway` was untouched
 - Custom domains stay on the environment-id alias (set at deploy time).
   Redirect rules are project-scoped. Both are reported as unchanged
   because that is what `promote` actually does.
+
+## Vercel-parity audit + live deploy testing (2026-11-18)
+
+- Inventoried the full Vercel estate via CLI + REST API: 13 projects,
+  14 custom domains, env-var names per environment (no values), git
+  links, root directories, Node versions (24 across the board;
+  sportcreative 22), one lambda-bearing deployment each for
+  nothing-modes/monobet/dash/invico.
+- Upload-deployed five representative archives into the local compose
+  stack: Containr (static ✅ serves 200), Bookra (Vite monorepo SPA ✅
+  after fixes), Invico (Astro ✅ static; `/api/chat` 405 — serverless
+  gap), monobet (Next 16 `next start` ✅ runtime; app needs env +
+  storage to respond), nothing-modes (❌ `api/*.ts` handlers have no
+  execution model — the central parity blocker).
+- Fixed four defects the tests exposed (PR #84):
+  storage host-path mkdir → EACCES in-container; `ensure_network`
+  check-then-create race → 409; `runway.json` overrides dead without
+  in-container `jq` (new `readcfg` fallback chain + `eval` + brace
+  groups so `commands.join(" && ")` stays one item per step); SWS
+  `config.toml` silently dropping `SERVER_PAGE_FALLBACK` → restated
+  under `[general]`; tarball `./package.json` members breaking
+  dependency-based framework detection.
+- Storage provisioning verified end-to-end post-fix (`monobet-db`
+  → `active`).
+- Remaining, now in ROADMAP: serverless API runtime (deliberate scope
+  decision), `vercel.json` import, Node 24 runners, git-provider live
+  verification (#41), deployment-observer SQL latency, enterprise
+  gates (metering, multi-region, preview-env parity, protection rules).

@@ -7,6 +7,11 @@
 <p align="center">
   Open-source, self-hosted deployment platform.<br>
   The Vercel experience — git-push deploys, preview URLs, real HTTPS — on your own hardware.
+
+  Covers static sites, SPA rewrites/redirects/headers, SSR runtimes, and
+  managed databases today. It does not run Vercel-style `api/*` serverless
+  functions, ISR, or edge middleware — see `ROADMAP.md` for the audited
+  parity matrix (13 live Vercel projects tested).
 </p>
 
 <p align="center">
