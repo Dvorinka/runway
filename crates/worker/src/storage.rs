@@ -388,7 +388,10 @@ async fn start_container_with(
             _ => "volume",
         })
         .join(&storage.name);
-    tokio::fs::create_dir_all(&host_dir).await?;
+    // The bind source is a host path, but this process may be containerized
+    // — create the dir through our own data dir (same volume), never via
+    // the host path, which doesn't exist inside the app container.
+    tokio::fs::create_dir_all(storage.data_dir(&ctx.settings.data_dir)).await?;
 
     let mut labels = HashMap::from([
         ("runway.managed".into(), "true".into()),

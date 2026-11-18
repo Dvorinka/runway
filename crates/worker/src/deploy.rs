@@ -339,7 +339,20 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
     }
 
     if !docker_build {
-        // Build / pre-deploy / start — runway.json overrides via jq in-container.
+        // Build / pre-deploy / start — runway.json overrides are resolved
+        // in-container. Runner images are upstream and may lack jq; fall
+        // back to node, then python3, so the overrides work on every
+        // runtime that ships a JSON-capable interpreter.
+        commands.push(
+            "readcfg() { if [ -f runway.json ]; then \
+             if command -v jq >/dev/null 2>&1; then jq -r \".$1 // empty\" runway.json; \
+             elif command -v node >/dev/null 2>&1; then \
+             node -e \"try{var v=require('./runway.json')[process.argv[1]];process.stdout.write(v==null?'':String(v))}catch(e){}\" \"$1\"; \
+             elif command -v python3 >/dev/null 2>&1; then \
+             python3 -c \"import json,sys;print(json.load(open('runway.json')).get(sys.argv[1]) or '',end='')\" \"$1\" 2>/dev/null; \
+             fi; fi; }"
+                .to_string(),
+        );
         let cfg_str = |key: &str| config.get(key).and_then(|v| v.as_str()).unwrap_or("");
         if !cfg_str("build_command").is_empty() {
             commands.push("echo 'Installing dependencies...'".into());
@@ -352,26 +365,23 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
         } else {
             pre_deploy
         };
+        // Braced group: entries join with `&&`, so each must stay a single
+        // compound command or a `;` would break the chain and leak a stale
+        // OVERRIDE into the next step. eval re-parses `&&` inside overrides.
         commands.push(format!(
-            "if [ -f runway.json ] && command -v jq >/dev/null 2>&1; then \
-         OVERRIDE=$(jq -r '.pre_deploy_command // empty' runway.json); \
+            "{{ OVERRIDE=$(readcfg pre_deploy_command); \
          if [ -n \"$OVERRIDE\" ]; then \
          echo 'Running pre-deploy command from runway.json...'; \
-         ( $OVERRIDE ); \
+         ( eval \"$OVERRIDE\" ); \
          elif [ -n '{pre_deploy}' ]; then \
          echo 'Running pre-deploy command...'; \
          ( {pre_deploy_cmd} ); \
-         fi; else \
-         if [ -n '{pre_deploy}' ]; then \
-         echo 'Running pre-deploy command...'; \
-         ( {pre_deploy_cmd} ); \
-         fi; fi"
+         fi; }}"
         ));
         if static_mode {
             commands.push(format!(
             "test -f /app/.runway-src-ok || {{ printf '\\033[31mError: source acquisition failed — refusing to publish a stale workspace\\033[0m\\n' 1>&2; exit 1; }}; \
-             OUTDIR=$(if [ -f runway.json ] && command -v jq >/dev/null 2>&1; then \
-             jq -r '.output_directory // empty' runway.json; fi); \
+             OUTDIR=$(readcfg output_directory); \
              OUTDIR=${{OUTDIR:-{output_dir}}}; \
              echo \"Publishing static output ($OUTDIR -> /out)...\"; \
              test -d \"$OUTDIR\" || {{ printf '\\033[31mError: output directory %s not found\\033[0m\\n' \"$OUTDIR\" 1>&2; exit 1; }}; \
@@ -835,7 +845,7 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
                 if let Some(spa) = val.get("spa_fallback").and_then(|v| v.as_bool()) {
                     spa_fallback = spa;
                 }
-                if let Some(toml) = sws_config(&val) {
+                if let Some(toml) = sws_config(&val, spa_fallback) {
                     let toml_path = std::path::PathBuf::from(&ctx.settings.data_dir)
                         .join("static")
                         .join(format!("{deployment_id}.toml"));
@@ -972,30 +982,27 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
     Ok(())
 }
 
-/// `if [ -f runway.json ] && jq ...` wrapper for a config-command step.
+/// runway.json override wrapper for a config-command step (see `readcfg`).
 fn config_command(key: &str, command: &str) -> String {
     // `( )` is a parse error in dash — substitute a no-op for empty commands.
     let command = if command.is_empty() { ":" } else { command };
     format!(
-        "if [ -f runway.json ] && command -v jq >/dev/null 2>&1; then \
-         OVERRIDE=$(jq -r '.{key} // empty' runway.json); \
+        "{{ OVERRIDE=$(readcfg {key}); \
          if [ -n \"$OVERRIDE\" ]; then \
          echo 'Using {key} from runway.json'; \
-         ( $OVERRIDE ); \
+         ( eval \"$OVERRIDE\" ); \
          else \
          ( {command} ); \
-         fi; else \
-         ( {command} ); \
-         fi"
+         fi; }}"
     )
 }
 
 /// Translate runway.json `redirects`/`rewrites`/`headers` (vercel.json
 /// shape) into a static-web-server `advanced` config. None when the
 /// file carries none of them.
-fn sws_config(val: &serde_json::Value) -> Option<String> {
+fn sws_config(val: &serde_json::Value, spa_fallback: bool) -> Option<String> {
     let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
-    let mut out = String::new();
+    let mut rules = String::new();
 
     if let Some(redirects) = val.get("redirects").and_then(|v| v.as_array()) {
         for r in redirects {
@@ -1010,7 +1017,7 @@ fn sws_config(val: &serde_json::Value) -> Option<String> {
                 } else {
                     307
                 });
-            out += &format!(
+            rules += &format!(
                 "[[advanced.redirects]]\nsource = \"{}\"\ndestination = \"{}\"\nkind = {kind}\n\n",
                 esc(src),
                 esc(dst)
@@ -1022,7 +1029,7 @@ fn sws_config(val: &serde_json::Value) -> Option<String> {
             let (Some(src), Some(dst)) = (r["source"].as_str(), r["destination"].as_str()) else {
                 continue;
             };
-            out += &format!(
+            rules += &format!(
                 "[[advanced.rewrites]]\nsource = \"{}\"\ndestination = \"{}\"\n\n",
                 esc(src),
                 esc(dst)
@@ -1048,16 +1055,24 @@ fn sws_config(val: &serde_json::Value) -> Option<String> {
                     );
                 }
             }
-            out += &block;
-            out += "\n\n";
+            rules += &block;
+            rules += "\n\n";
         }
     }
 
-    if out.is_empty() {
-        None
-    } else {
-        Some(format!("[advanced]\n{out}"))
+    if rules.is_empty() && !spa_fallback {
+        return None;
     }
+    // A config file replaces SERVER_* envs wholesale — root (and the SPA
+    // fallback when requested) must be restated under [general].
+    let mut out = String::from("[general]\nroot = \"/public\"\n");
+    if spa_fallback {
+        out += "page-fallback = \"/public/index.html\"\n";
+    }
+    if !rules.is_empty() {
+        out += &format!("\n[advanced]\n{rules}");
+    }
+    Some(out)
 }
 
 /// Wait for a container to exit; returns its exit code.
