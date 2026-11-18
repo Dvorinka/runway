@@ -407,6 +407,18 @@ framework detection.
       Node 24; the matrix tops out at node-22. Next 16 declares
       `node >= 20.9` so it runs today, but parity needs a node-24
       image or an explicit override path.
+- [ ] **GitHub-connected CI surface** — `docs/integration-roadmap.md`:
+      preview policy (draft/fork/label gates, TTL), superseded-build
+      cancel, Checks API + re-run, `@runway deploy` PR commands,
+      deploy hooks, per-project status contexts.
+- [ ] **Executor nodes** — builds on user-owned hardware (labels,
+      node_selector); remote static builds first, registry for images.
+- [ ] **KERN bridge (optional)** — `build_executor: kern` dispatches a
+      generated build workflow to a self-hosted KERN control plane and
+      imports the artifact; Level 0 is a docs recipe today.
+- [ ] **Agent-first API** — OpenAPI spec, llms.txt + deploy skill,
+      dry-run plans, idempotency keys, error codes, `runway doctor`,
+      MCP write-tool parity with REST.
 - [ ] **Git-provider verification** — #41: connect probes,
       `resolve_commit`, webhook-triggered deploys unverified live.
 - [ ] **Monorepo `root_directory` upload parity** — Vercel installs

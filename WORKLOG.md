@@ -461,3 +461,24 @@ throwaway `data-run` DB; production `~/.config/runway` was untouched
   decision), `vercel.json` import, Node 24 runners, git-provider live
   verification (#41), deployment-observer SQL latency, enterprise
   gates (metering, multi-region, preview-env parity, protection rules).
+
+## GitHub/CI integration audit + roadmap (2026-11-19)
+
+- Audited Runway's GitHub surface: app manifest flow, install tokens,
+  push→rules→deploy, PR previews + teardown, marked PR comment,
+  `runway/deploy` commit statuses — more complete than expected.
+- Confirmed gaps vs Vercel: no Checks API, no draft/fork/label preview
+  policy, no superseded-build cancel, no deploy hooks, no PR commands,
+  fixed status context, previews don't scope to `preview` env.
+- Remote nodes are runtime-only; static/docker builds hard-fail on
+  them. Executor-node design (capabilities + labels + node_selector)
+  is the path to "build on your own architecture".
+- KERN (~/Desktop/PROG+HTML/KERN) assessed as optional bridge:
+  Level 0 = shared machines recipe (free today); Level 1 =
+  `build_executor: kern` generated-workflow dispatch + artifact
+  return; Level 2 = shared runner pool. Its trust-tier network
+  isolation is a spec for fork-preview isolation.
+- Agent-first gaps: MCP lacks project/domain/storage/node/webhook
+  writes; no OpenAPI, llms.txt, dry-run, idempotency keys, error
+  codes, or `runway doctor`.
+- Written up in docs/integration-roadmap.md with P0/P1/P2 phasing.
