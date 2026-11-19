@@ -143,6 +143,7 @@ pub async fn create(
     user: AuthUser,
     State(state): State<AppState>,
     Path(project_id): Path<String>,
+    headers: axum::http::HeaderMap,
     body: Option<Json<CreateDeployment>>,
 ) -> ApiResult<Response> {
     let project = accessible_project(&state, user.user.id, &project_id).await?;
@@ -165,8 +166,9 @@ pub async fn create(
         _ => false,
     };
 
-    let dep = if has_remote {
-        trigger_deployment(&state, &project, &branch, "user", Some(user.user.id)).await?
+    let idem = headers.get("idempotency-key").and_then(|v| v.to_str().ok());
+    let (dep, replayed) = if has_remote {
+        trigger_deployment(&state, &project, &branch, "user", Some(user.user.id), idem).await?
     } else {
         // No git remote — redeploy the latest uploaded archive on this branch.
         let prev: Option<Deployment> = sqlx::query_as(
@@ -183,7 +185,10 @@ pub async fn create(
                 "project has no git remote — deploy via `runway deploy` first",
             ));
         };
-        redeploy_dep(&state, user.user.id, &prev, &project).await?
+        (
+            redeploy_dep(&state, user.user.id, &prev, &project).await?,
+            false,
+        )
     };
     let mut a = runway_core::audit::Audit::new("deployment.create");
     a.user_id = Some(user.user.id);
@@ -193,11 +198,11 @@ pub async fn create(
     a.resource_id = Some(dep.id.clone());
     a.detail = Some(format!("branch={branch}"));
     runway_core::audit::log(&state.db, a).await;
-    Ok((
-        StatusCode::CREATED,
-        Json(deployment_json(&state, &dep, &project)),
-    )
-        .into_response())
+    let mut body = deployment_json(&state, &dep, &project);
+    if replayed {
+        body["idempotent_replay"] = true.into();
+    }
+    Ok((StatusCode::CREATED, Json(body)).into_response())
 }
 
 /// Shared: resolve latest commit via the repo's provider and
@@ -208,7 +213,27 @@ pub async fn trigger_deployment(
     branch: &str,
     trigger: &str,
     user_id: Option<i64>,
-) -> ApiResult<Deployment> {
+    idempotency_key: Option<&str>,
+) -> ApiResult<(Deployment, bool)> {
+    // `Idempotency-Key` — replay the existing deployment instead of
+    // queueing a duplicate. jarvis: check-then-create has a small race
+    // window; upgrade to a partial unique index if retries get noisy.
+    let key = idempotency_key.map(str::trim).filter(|k| !k.is_empty());
+    if let Some(key) = key {
+        let existing: Option<Deployment> = sqlx::query_as(
+            "SELECT * FROM deployment
+             WHERE project_id = $1 AND config->>'idempotency_key' = $2
+             ORDER BY created_at DESC LIMIT 1",
+        )
+        .bind(&project.id)
+        .bind(key)
+        .fetch_optional(&state.db)
+        .await?;
+        if let Some(d) = existing {
+            return Ok((d, true));
+        }
+    }
+
     let info = deploy::resolve_commit(
         &state.db,
         &state.crypto,
@@ -222,18 +247,22 @@ pub async fn trigger_deployment(
         return Err(ApiError::bad_request("could not resolve commit"));
     }
 
-    Ok(deploy::create(
-        &state.db,
-        &state.bus,
-        &state.crypto,
-        project,
-        branch,
-        &info,
-        trigger,
-        user_id,
-        None,
-    )
-    .await?)
+    let extra = key.map(|k| json!({ "idempotency_key": k }));
+    Ok((
+        deploy::create(
+            &state.db,
+            &state.bus,
+            &state.crypto,
+            project,
+            branch,
+            &info,
+            trigger,
+            user_id,
+            extra,
+        )
+        .await?,
+        false,
+    ))
 }
 
 pub async fn get(
@@ -822,6 +851,7 @@ pub async fn upload(
     user: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<String>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
     body: axum::body::Body,
 ) -> ApiResult<Response> {
     const MAX_UPLOAD: u64 = 512 * 1024 * 1024; // jarvis: 512MB ceiling; revisit if monorepos hurt
@@ -865,6 +895,10 @@ pub async fn upload(
         return Err(e);
     }
 
+    // vercel.json → runway.json import mutates the archive in place, so it
+    // runs before detection and both detection + dry-run see the result.
+    let vercel_import = import_vercel_json(&path).await?;
+
     // Git providers detect the framework at project creation; upload
     // projects have no source then — detect from this archive instead and
     // stamp the result onto the deployment's config snapshot. Explicit
@@ -881,6 +915,27 @@ pub async fn upload(
                 }
             }
         }
+    }
+
+    // `?dry_run=1` — report the resolved plan without creating a
+    // deployment. Agents use this to preflight what an upload would do.
+    if q.get("dry_run")
+        .is_some_and(|v| matches!(v.as_str(), "1" | "true"))
+    {
+        let _ = tokio::fs::remove_file(&path).await;
+        let mut plan = project.config.clone();
+        if let (Some(dst), Some(src)) = (plan.as_object_mut(), extra.as_object()) {
+            for (k, v) in src {
+                dst.insert(k.clone(), v.clone());
+            }
+        }
+        return Ok(Json(json!({
+            "dry_run": true,
+            "size_bytes": size,
+            "resolved_config": plan,
+            "vercel_import": vercel_import,
+        }))
+        .into_response());
     }
 
     let sha = hex::encode(hasher.finalize())[..40].to_string();
@@ -971,4 +1026,130 @@ async fn detect_upload_preset(path: &std::path::Path) -> ApiResult<Option<Value>
         return Ok(Some(config));
     }
     Ok(None)
+}
+
+/// `vercel.json` maps onto the runway.json contract — when an upload
+/// carries one at archive root (and no runway.json), synthesize a
+/// runway.json into the tarball so in-container `readcfg` and the SWS
+/// config path consume it unchanged. Returns the translated document.
+async fn import_vercel_json(path: &std::path::Path) -> ApiResult<Option<Value>> {
+    let listing = tokio::process::Command::new("tar")
+        .args(["-tzf"])
+        .arg(path)
+        .output()
+        .await
+        .map_err(ApiError::internal)?;
+    if !listing.status.success() {
+        return Ok(None); // corrupt archives are rejected by detect_upload_preset
+    }
+    let raw_lines: Vec<String> = String::from_utf8_lossy(&listing.stdout)
+        .lines()
+        .map(|l| l.trim().to_string())
+        .collect();
+    let root_member = |name: &str| {
+        raw_lines
+            .iter()
+            .find(|l| l.trim_start_matches("./") == name)
+            .cloned()
+    };
+    if root_member("runway.json").is_some() {
+        return Ok(None); // explicit runway.json wins
+    }
+    let Some(member) = root_member("vercel.json") else {
+        return Ok(None);
+    };
+
+    let out = tokio::process::Command::new("tar")
+        .args(["-xzOf"])
+        .arg(path)
+        .arg(&member)
+        .output()
+        .await
+        .map_err(ApiError::internal)?;
+    let vj: Value = serde_json::from_slice(&out.stdout)
+        .map_err(|_| ApiError::bad_request("invalid vercel.json"))?;
+
+    // Translatable keys only; vercel-only fields (framework, devCommand,
+    // regions, functions) are dropped — preset detection covers the rest.
+    let mut rj = serde_json::Map::new();
+    fn str_key<'a>(v: &'a Value, k: &str) -> Option<&'a str> {
+        v.get(k).and_then(|x| x.as_str()).filter(|s| !s.is_empty())
+    }
+    let cmd = [str_key(&vj, "installCommand"), str_key(&vj, "buildCommand")]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" && ");
+    if !cmd.is_empty() {
+        rj.insert("build_command".into(), cmd.into());
+    }
+    if let Some(o) = str_key(&vj, "outputDirectory") {
+        rj.insert("output_directory".into(), o.into());
+    }
+    for k in ["rewrites", "redirects", "headers"] {
+        if let Some(v) = vj.get(k) {
+            rj.insert(k.into(), v.clone());
+        }
+    }
+    if rj.is_empty() {
+        return Ok(None);
+    }
+
+    // Repack: extract, add runway.json, recompress atomically.
+    let dir = path
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .join(format!(
+            "{}.import",
+            path.file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("upload")
+        ));
+    let _ = tokio::fs::remove_dir_all(&dir).await;
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(ApiError::internal)?;
+    let cleanup = |dir: &std::path::Path| {
+        let dir = dir.to_path_buf();
+        async move {
+            let _ = tokio::fs::remove_dir_all(&dir).await;
+        }
+    };
+    let status = tokio::process::Command::new("tar")
+        .args(["-xzf"])
+        .arg(path)
+        .arg("-C")
+        .arg(&dir)
+        .status()
+        .await
+        .map_err(ApiError::internal)?;
+    if !status.success() {
+        cleanup(&dir).await;
+        return Err(ApiError::bad_request("vercel.json import: extract failed"));
+    }
+    tokio::fs::write(
+        dir.join("runway.json"),
+        serde_json::to_vec_pretty(&Value::Object(rj.clone())).map_err(ApiError::internal)?,
+    )
+    .await
+    .map_err(ApiError::internal)?;
+    let tmp_out = dir.with_extension("tgz");
+    let status = tokio::process::Command::new("tar")
+        .args(["-czf"])
+        .arg(&tmp_out)
+        .arg("-C")
+        .arg(&dir)
+        .arg(".")
+        .status()
+        .await
+        .map_err(ApiError::internal)?;
+    cleanup(&dir).await;
+    if !status.success() {
+        let _ = tokio::fs::remove_file(&tmp_out).await;
+        return Err(ApiError::bad_request("vercel.json import: repack failed"));
+    }
+    tokio::fs::rename(&tmp_out, path)
+        .await
+        .map_err(ApiError::internal)?;
+    Ok(Some(Value::Object(rj)))
 }

@@ -1,0 +1,46 @@
+# Runway — self-hosted Vercel-class deploy platform
+
+> Single Rust binary: git-push deploys, preview URLs, real HTTPS on your
+> own hardware. Postgres is the queue. Static/SSR containers behind
+> Traefik; Cloudflare Tunnel covers CGNAT.
+
+## Agent entry points
+
+- **CLI** — `runway` (see `docs/agents.md` for the full command list;
+  every read command accepts `--json`, destructive commands take `--yes`).
+  `runway deploy --dry-run` prints the resolved deploy plan without
+  deploying. `runway doctor --json` is the preflight.
+- **REST** — `/api/v1/*` with `Authorization: Bearer ak_…` (API keys)
+  or `dp_…` deploy tokens. Sessions also work via `POST /api/auth/login`.
+- **MCP** — `POST /api/mcp`, JSON-RPC 2.0 (`initialize`/`tools/list`/
+  `tools/call`). ~26 tools: deploys, env, cron, audit, promote/rollback,
+  project config, deploy hooks.
+
+## Docs
+
+- `docs/agents.md` — CLI/API-key/MCP surface, the agent's primary doc
+- `docs/runway-json.md` — `runway.json` (vercel.json-shaped) overrides:
+  build/pre-deploy/start commands, output_directory, redirects,
+  rewrites, headers, spa_fallback
+- `docs/presets.md` — framework preset + runner image matrix
+- `docs/self-hosting.md` — install, env vars, runner overrides, nodes
+- `docs/integration-roadmap.md` — GitHub/preview/CI parity plan
+- `ARCHITECTURE.md` `DESIGN.md` `CONTEXT.md` — system map, bets, terms
+
+## Deploy flows
+
+- Git-push (GitHub App / GitLab / Gitea / Bitbucket webhooks → deploy
+  rules → build → alias). PRs get branch preview deploys + an upserted
+  PR comment + `runway/<slug>` commit status.
+- Upload: `POST /api/v1/projects/{id}/deployments/upload` with a gzipped
+  source tarball (`?dry_run=1` returns the plan only). 512 MB cap.
+- Deploy hooks: `POST /api/deploy-hook/{token}` — tokenized trigger,
+  no auth (manage via `/api/v1/projects/{id}/hooks` or MCP).
+
+## Deployment rules (`project.config.deployment_rules`)
+
+`auto_deploy`, `deploy_branches`, `ignored_authors`,
+`skip_merge_commits`, `paths`, `preview_prs`, `preview_drafts`,
+`preview_forks` (forks need explicit opt-in — untrusted code),
+`preview_label`, `cancel_superseded`, `preview_comment`
+(off|minimal|full).

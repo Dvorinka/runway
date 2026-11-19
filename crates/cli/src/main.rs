@@ -39,6 +39,15 @@ enum Command {
         /// Stream build logs until the deployment settles (default: on; pass --follow=false to disable).
         #[arg(long, default_value_t = true, num_args = 0..=1, default_missing_value = "true", action = clap::ArgAction::Set)]
         follow: bool,
+        /// Resolve the plan server-side (preset, env, config) without deploying.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Instance + auth + link preflight — exits non-zero on failures.
+    Doctor {
+        /// Machine-readable check results.
+        #[arg(long)]
+        json: bool,
     },
     /// New deployment from the same source (latest or a given ID).
     Redeploy {
@@ -235,6 +244,8 @@ enum Command {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // tracing-log is enabled by default in tracing-subscriber: sqlx's
+    // `log` records (incl. slow-statement warnings) reach tracing.
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
@@ -347,7 +358,8 @@ async fn main() -> anyhow::Result<()> {
         Command::Create { name, preset } => {
             commands::create(name, preset).await?;
         }
-        Command::Deploy { follow } => commands::deploy(follow).await?,
+        Command::Deploy { follow, dry_run } => commands::deploy(follow, dry_run).await?,
+        Command::Doctor { json } => commands::doctor(json).await?,
         Command::Logs {
             deployment,
             follow,

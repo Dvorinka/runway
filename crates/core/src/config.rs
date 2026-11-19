@@ -44,6 +44,8 @@ pub struct Settings {
     pub max_memory_mb: Option<i64>,
     /// Seconds a deployment may stay non-ready before failing.
     pub deployment_timeout_seconds: u64,
+    /// Max pooled Postgres connections shared by API + workers.
+    pub db_max_connections: u32,
     /// Interval between monitor probe ticks.
     pub monitor_interval_seconds: u64,
     /// Interval between observed-state reconcile sweeps (non-live rows).
@@ -66,6 +68,12 @@ pub struct Settings {
     /// GitHub API base — override for GitHub Enterprise
     /// (`https://ghe.example.com/api/v3`).
     pub github_api_url: String,
+    /// Optional KERN build executor — when all three are set, projects may
+    /// opt in via `config.build_executor = "kern"` (static builds dispatch
+    /// a generated workflow and import the artifact).
+    pub kern_url: Option<String>,
+    pub kern_token: Option<String>,
+    pub kern_project: Option<String>,
     /// Gitea/GitLab webhook secrets — verify X-Gitea-Signature /
     /// X-Gitlab-Token on inbound push events.
     pub gitea_webhook_secret: Option<String>,
@@ -153,6 +161,7 @@ impl Settings {
             default_memory_mb: opt("DEFAULT_MEMORY_MB").and_then(|v| v.parse().ok()),
             max_memory_mb: opt("MAX_MEMORY_MB").and_then(|v| v.parse().ok()),
             deployment_timeout_seconds: env_u64("DEPLOYMENT_TIMEOUT_SECONDS", 300),
+            db_max_connections: env_u64("DB_MAX_CONNECTIONS", 25) as u32,
             monitor_interval_seconds: env_u64("MONITOR_INTERVAL_SECONDS", 2),
             reconcile_interval_seconds: env_u64("RECONCILE_INTERVAL_SECONDS", 60),
             container_delete_grace_seconds: env_u64("CONTAINER_DELETE_GRACE_SECONDS", 15),
@@ -165,6 +174,9 @@ impl Settings {
             github_app_private_key: opt("GITHUB_APP_PRIVATE_KEY"),
             github_app_webhook_secret: opt("GITHUB_APP_WEBHOOK_SECRET"),
             github_api_url: env_or("GITHUB_API_URL", "https://api.github.com"),
+            kern_url: opt("RUNWAY_KERN_URL"),
+            kern_token: opt("RUNWAY_KERN_TOKEN"),
+            kern_project: opt("RUNWAY_KERN_PROJECT"),
             gitea_webhook_secret: opt("GITEA_WEBHOOK_SECRET"),
             gitlab_webhook_secret: opt("GITLAB_WEBHOOK_SECRET"),
             bitbucket_webhook_secret: opt("BITBUCKET_WEBHOOK_SECRET"),
@@ -289,6 +301,7 @@ pub(crate) fn test_settings() -> Settings {
         default_memory_mb: None,
         max_memory_mb: None,
         deployment_timeout_seconds: 300,
+        db_max_connections: 25,
         monitor_interval_seconds: 2,
         reconcile_interval_seconds: 60,
         container_delete_grace_seconds: 15,
@@ -301,6 +314,9 @@ pub(crate) fn test_settings() -> Settings {
         github_app_private_key: None,
         github_app_webhook_secret: None,
         github_api_url: "https://api.github.com".into(),
+        kern_url: None,
+        kern_token: None,
+        kern_project: None,
         gitea_webhook_secret: None,
         gitlab_webhook_secret: None,
         bitbucket_webhook_secret: None,

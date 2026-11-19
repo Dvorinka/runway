@@ -2508,6 +2508,7 @@ dependencies = [
  "hmac",
  "jsonwebtoken",
  "lettre",
+ "log",
  "rand 0.8.8",
  "rcgen",
  "regex",
@@ -2531,6 +2532,7 @@ name = "runway-worker"
 version = "0.3.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "bollard",
  "chrono",
  "futures",

@@ -77,6 +77,7 @@ pub async fn login(
                 return Err(ApiError(
                     axum::http::StatusCode::TOO_MANY_REQUESTS,
                     format!("too many attempts — try again in {}m", wait / 60 + 1),
+                    "rate_limited",
                 ));
             }
         }
@@ -565,6 +566,7 @@ pub async fn totp_challenge(
                 return Err(ApiError(
                     axum::http::StatusCode::TOO_MANY_REQUESTS,
                     format!("too many attempts — try again in {}m", wait / 60 + 1),
+                    "rate_limited",
                 ));
             }
         }

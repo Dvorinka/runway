@@ -73,7 +73,9 @@ fn tools() -> Value {
             "Trigger a new deployment on a project (latest commit, or the last uploaded archive for remote-less projects)",
             json!({"type": "object", "required": ["project_id"],
                    "properties": {"project_id": {"type": "string"},
-                                  "branch": {"type": "string"}}})
+                                  "branch": {"type": "string"},
+                                  "idempotency_key": {"type": "string",
+                                     "description": "dedupe key — same key returns the existing deployment instead of queueing a duplicate"}}})
         ),
         tool(
             "cancel_deployment",
@@ -164,11 +166,80 @@ fn tools() -> Value {
                                   "enabled": {"type": "boolean"}}})
         ),
         tool(
+            "update_project_config",
+            "Shallow-merge keys into a project's config (deployment_rules incl. preview policy, build/start/output settings). Pass a partial config object.",
+            json!({"type": "object", "required": ["project_id", "config"],
+                   "properties": {"project_id": {"type": "string"},
+                                  "config": {"type": "object"}}})
+        ),
+        tool(
+            "create_deploy_hook",
+            "Mint a tokenized deploy-hook URL for the project (POST it to trigger a deploy without auth). Token returned once.",
+            json!({"type": "object", "required": ["project_id"],
+                   "properties": {"project_id": {"type": "string"},
+                                  "name": {"type": "string"},
+                                  "branch": {"type": "string"}}})
+        ),
+        tool(
+            "delete_deploy_hook",
+            "Revoke a deploy hook by id",
+            json!({"type": "object", "required": ["project_id", "hook_id"],
+                   "properties": {"project_id": {"type": "string"},
+                                  "hook_id": {"type": "string"}}})
+        ),
+        tool(
             "delete_cron_job",
             "Remove a scheduled deployment job",
             json!({"type": "object", "required": ["project_id", "job_id"],
                    "properties": {"project_id": {"type": "string"},
                                   "job_id": {"type": "string"}}})
+        ),
+        tool(
+            "add_domain",
+            "Add a domain/hostname to a project. Starts pending; run verify_domain after DNS points at the instance.",
+            json!({"type": "object", "required": ["project_id", "hostname"],
+                   "properties": {"project_id": {"type": "string"},
+                                  "hostname": {"type": "string"},
+                                  "type": {"type": "string", "enum": ["route","301","302","307","308"]},
+                                  "environment_id": {"type": "string"}}})
+        ),
+        tool(
+            "verify_domain",
+            "Mark a project domain active (manual flow until DNS verification lands)",
+            json!({"type": "object", "required": ["project_id", "domain_id"],
+                   "properties": {"project_id": {"type": "string"},
+                                  "domain_id": {"type": "integer"}}})
+        ),
+        tool(
+            "delete_domain",
+            "Remove a domain from a project and rewrite routing. Cloudflare record cleanup is skipped — report shows the hostname for manual cleanup.",
+            json!({"type": "object", "required": ["project_id", "domain_id"],
+                   "properties": {"project_id": {"type": "string"},
+                                  "domain_id": {"type": "integer"}}})
+        ),
+        tool(
+            "list_storage",
+            "List storage resources across the caller's teams (optionally scoped to team_id)",
+            json!({"type": "object",
+                   "properties": {"team_id": {"type": "string"}}})
+        ),
+        tool(
+            "create_storage",
+            "Provision managed storage and enqueue its provisioning job. type: database|volume|kv|queue; engine: sqlite|postgres|mongodb|redis (defaults per type).",
+            json!({"type": "object", "required": ["team_id", "name", "type"],
+                   "properties": {"team_id": {"type": "string"},
+                                  "name": {"type": "string"},
+                                  "type": {"type": "string", "enum": ["database","volume","kv","queue"]},
+                                  "engine": {"type": "string"}}})
+        ),
+        tool(
+            "link_storage",
+            "Link managed storage to a project (same team). Optional environment_ids scopes the link.",
+            json!({"type": "object", "required": ["team_id", "storage_id", "project_id"],
+                   "properties": {"team_id": {"type": "string"},
+                                  "storage_id": {"type": "string"},
+                                  "project_id": {"type": "string"},
+                                  "environment_ids": {"type": "array", "items": {"type": "string"}}}})
         ),
     ])
 }
@@ -399,15 +470,19 @@ async fn call(state: &AppState, user_id: i64, name: &str, args: &Value) -> ApiRe
                 "bitbucket" => p.bitbucket_connection_id.is_some(),
                 _ => false,
             };
+            let mut replayed = false;
             let dep = if has_remote {
-                crate::routes::deployments::trigger_deployment(
+                let (d, r) = crate::routes::deployments::trigger_deployment(
                     state,
                     &p,
                     &branch,
                     "api",
                     Some(user_id),
+                    args["idempotency_key"].as_str(),
                 )
-                .await?
+                .await?;
+                replayed = r;
+                d
             } else {
                 let prev: Option<runway_core::models::Deployment> = sqlx::query_as(
                     "SELECT * FROM deployment WHERE project_id = $1 AND branch = $2 \
@@ -425,7 +500,10 @@ async fn call(state: &AppState, user_id: i64, name: &str, args: &Value) -> ApiRe
                 };
                 crate::routes::deployments::redeploy_dep(state, user_id, &prev, &p).await?
             };
-            Ok(json!({ "deployment_id": dep.id, "status": dep.status, "branch": dep.branch }))
+            Ok(
+                json!({ "deployment_id": dep.id, "status": dep.status, "branch": dep.branch,
+                       "idempotent_replay": replayed }),
+            )
         }
         "cancel_deployment" => {
             let (d, _p) = deployment_for(state, user_id, arg(args, "deployment_id")?).await?;
@@ -537,6 +615,81 @@ async fn call(state: &AppState, user_id: i64, name: &str, args: &Value) -> ApiRe
                 .execute(&state.db)
                 .await?;
             Ok(json!({ "ok": true, "count": vars.len() }))
+        }
+        "update_project_config" => {
+            let p = project_for(state, user_id, arg(args, "project_id")?).await?;
+            let patch = args["config"]
+                .as_object()
+                .ok_or_else(|| ApiError::bad_request("config must be an object"))?;
+            let mut config = p.config.clone();
+            let cfg = config.as_object_mut().expect("config is object");
+            for (k, v) in patch {
+                cfg.insert(k.clone(), v.clone());
+            }
+            sqlx::query("UPDATE project SET config = $1, updated_at = now() WHERE id = $2")
+                .bind(&config)
+                .bind(&p.id)
+                .execute(&state.db)
+                .await?;
+            Ok(json!({ "ok": true, "config": config }))
+        }
+        "create_deploy_hook" => {
+            let p = project_for(state, user_id, arg(args, "project_id")?).await?;
+            let name = args["name"].as_str().unwrap_or("default");
+            let token = format!("dh_{}", runway_core::slugify::token_hex(16));
+            let mut hooks = p
+                .config
+                .get("deploy_hooks")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            if hooks.len() >= 20 {
+                return Err(ApiError::bad_request("deploy hook limit reached (20)"));
+            }
+            hooks.push(json!({
+                "id": runway_core::slugify::token_hex(8),
+                "name": name,
+                "token_hash": runway_core::crypto::sha256_hex(&token),
+                "branch": args["branch"].as_str(),
+                "created_at": chrono::Utc::now().to_rfc3339(),
+            }));
+            sqlx::query(
+                "UPDATE project SET config = jsonb_set(config, '{deploy_hooks}', $1) WHERE id = $2",
+            )
+            .bind(json!(hooks))
+            .bind(&p.id)
+            .execute(&state.db)
+            .await?;
+            Ok(json!({
+                "url": format!("{}://{}/api/deploy-hook/{}",
+                    state.settings.url_scheme, state.settings.app_hostname, token),
+            }))
+        }
+        "delete_deploy_hook" => {
+            let p = project_for(state, user_id, arg(args, "project_id")?).await?;
+            let hook_id = arg(args, "hook_id")?;
+            let hooks = p
+                .config
+                .get("deploy_hooks")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let kept: Vec<Value> = hooks
+                .iter()
+                .filter(|h| h["id"].as_str() != Some(hook_id))
+                .cloned()
+                .collect();
+            if kept.len() == hooks.len() {
+                return Err(ApiError::not_found("deploy hook"));
+            }
+            sqlx::query(
+                "UPDATE project SET config = jsonb_set(config, '{deploy_hooks}', $1) WHERE id = $2",
+            )
+            .bind(json!(kept))
+            .bind(&p.id)
+            .execute(&state.db)
+            .await?;
+            Ok(json!({ "ok": true }))
         }
         "list_audit" => {
             let team = args["team_id"].as_str().filter(|s| !s.is_empty());
@@ -650,6 +803,192 @@ async fn call(state: &AppState, user_id: i64, name: &str, args: &Value) -> ApiRe
             if res.rows_affected() == 0 {
                 return Err(ApiError::not_found("cron job"));
             }
+            Ok(json!({ "ok": true }))
+        }
+        "add_domain" => {
+            let p = project_for(state, user_id, arg(args, "project_id")?).await?;
+            let hostname = arg(args, "hostname")?.trim().to_lowercase();
+            if hostname.is_empty()
+                || hostname.len() > 253
+                || !hostname
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+            {
+                return Err(ApiError::bad_request("invalid hostname"));
+            }
+            let ty = args["type"].as_str().unwrap_or("route");
+            if !["route", "301", "302", "307", "308"].contains(&ty) {
+                return Err(ApiError::bad_request("invalid domain type"));
+            }
+            let domain: runway_core::models::Domain = sqlx::query_as(
+                "INSERT INTO domain (project_id, hostname, type, environment_id, status)
+                 VALUES ($1,$2,$3,$4,'pending') RETURNING *",
+            )
+            .bind(&p.id)
+            .bind(&hostname)
+            .bind(ty)
+            .bind(args["environment_id"].as_str())
+            .fetch_one(&state.db)
+            .await?;
+            Ok(json!(domain))
+        }
+        "verify_domain" => {
+            let p = project_for(state, user_id, arg(args, "project_id")?).await?;
+            let domain_id = args["domain_id"]
+                .as_i64()
+                .ok_or_else(|| ApiError::bad_request("domain_id must be an integer"))?;
+            let res = sqlx::query(
+                "UPDATE domain SET status = 'active', last_checked_at = now()
+                 WHERE id = $1 AND project_id = $2",
+            )
+            .bind(domain_id)
+            .bind(&p.id)
+            .execute(&state.db)
+            .await?;
+            if res.rows_affected() == 0 {
+                return Err(ApiError::not_found("domain"));
+            }
+            runway_core::traefik::update_project_config(&state.db, &p, &state.settings, &[])
+                .await?;
+            Ok(json!({ "ok": true }))
+        }
+        "delete_domain" => {
+            let p = project_for(state, user_id, arg(args, "project_id")?).await?;
+            let domain_id = args["domain_id"]
+                .as_i64()
+                .ok_or_else(|| ApiError::bad_request("domain_id must be an integer"))?;
+            let row: Option<(String,)> =
+                sqlx::query_as("SELECT hostname FROM domain WHERE id = $1 AND project_id = $2")
+                    .bind(domain_id)
+                    .bind(&p.id)
+                    .fetch_optional(&state.db)
+                    .await?;
+            let Some((hostname,)) = row else {
+                return Err(ApiError::not_found("domain"));
+            };
+            sqlx::query("DELETE FROM domain WHERE id = $1 AND project_id = $2")
+                .bind(domain_id)
+                .bind(&p.id)
+                .execute(&state.db)
+                .await?;
+            runway_core::traefik::update_project_config(&state.db, &p, &state.settings, &[])
+                .await?;
+            Ok(json!({ "ok": true, "hostname": hostname,
+                       "note": "cloudflare record cleanup skipped — remove the DNS record manually" }))
+        }
+        "list_storage" => {
+            let items: Vec<runway_core::models::Storage> = match args["team_id"].as_str() {
+                Some(tid) => {
+                    sqlx::query_as(
+                        "SELECT s.* FROM storage s
+                     JOIN team_member tm ON tm.team_id = s.team_id
+                     WHERE tm.user_id = $1 AND s.team_id = $2",
+                    )
+                    .bind(user_id)
+                    .bind(tid)
+                    .fetch_all(&state.db)
+                    .await?
+                }
+                None => {
+                    sqlx::query_as(
+                        "SELECT s.* FROM storage s
+                     JOIN team_member tm ON tm.team_id = s.team_id
+                     WHERE tm.user_id = $1",
+                    )
+                    .bind(user_id)
+                    .fetch_all(&state.db)
+                    .await?
+                }
+            };
+            Ok(json!(items))
+        }
+        "create_storage" => {
+            let team_id = arg(args, "team_id")?;
+            let (tid, role) = crate::routes::cloudflare::team_role(state, user_id, team_id).await?;
+            crate::routes::cloudflare::require_admin(&role)?;
+            let name = arg(args, "name")?.trim();
+            if name.is_empty()
+                || name.len() > 100
+                || !name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            {
+                return Err(ApiError::bad_request("name must be 1-100 chars [a-z0-9-_]"));
+            }
+            let ty = arg(args, "type")?;
+            let engine = args["engine"]
+                .as_str()
+                .unwrap_or(if ty == "kv" { "redis" } else { "sqlite" })
+                .to_string();
+            let ok_engine = match ty {
+                "database" => matches!(engine.as_str(), "sqlite" | "postgres" | "mongodb"),
+                "kv" => engine == "redis",
+                _ => true,
+            };
+            if !ok_engine {
+                return Err(ApiError::bad_request("unsupported engine for type"));
+            }
+            let id = runway_core::slugify::token_hex(16);
+            let res = sqlx::query(
+                "INSERT INTO storage (id, name, type, status, config, team_id, created_by_user_id)
+                 VALUES ($1,$2,$3,'pending',$4,$5,$6)",
+            )
+            .bind(&id)
+            .bind(name)
+            .bind(ty)
+            .bind(json!({ "engine": engine }))
+            .bind(&tid)
+            .bind(user_id)
+            .execute(&state.db)
+            .await;
+            if let Err(e) = res {
+                if e.to_string().contains("ix_storage_team_name_lower")
+                    || e.to_string().contains("storage_team_id_name_key")
+                {
+                    return Err(ApiError::bad_request("storage name already exists"));
+                }
+                return Err(e.into());
+            }
+            runway_core::deploy::enqueue(
+                &state.db,
+                "provision_storage",
+                json!({ "storage_id": id }),
+                0,
+            )
+            .await?;
+            Ok(json!({ "storage_id": id, "status": "pending", "engine": engine }))
+        }
+        "link_storage" => {
+            let team_id = arg(args, "team_id")?;
+            let (tid, role) = crate::routes::cloudflare::team_role(state, user_id, team_id).await?;
+            crate::routes::cloudflare::require_admin(&role)?;
+            let storage_id = arg(args, "storage_id")?;
+            let exists: Option<(String,)> =
+                sqlx::query_as("SELECT id FROM storage WHERE id = $1 AND team_id = $2")
+                    .bind(storage_id)
+                    .bind(&tid)
+                    .fetch_optional(&state.db)
+                    .await?;
+            if exists.is_none() {
+                return Err(ApiError::not_found("storage"));
+            }
+            let p = project_for(state, user_id, arg(args, "project_id")?).await?;
+            if p.team_id != tid {
+                return Err(ApiError::bad_request("project belongs to another team"));
+            }
+            let env_ids = args["environment_ids"].as_array().map(|v| json!(v));
+            sqlx::query(
+                "INSERT INTO storage_project (id, storage_id, project_id, environment_ids)
+                 VALUES ($1,$2,$3,$4)
+                 ON CONFLICT (storage_id, project_id) DO UPDATE SET
+                   environment_ids = EXCLUDED.environment_ids, updated_at = now()",
+            )
+            .bind(runway_core::slugify::token_hex(16))
+            .bind(storage_id)
+            .bind(&p.id)
+            .bind(&env_ids)
+            .execute(&state.db)
+            .await?;
             Ok(json!({ "ok": true }))
         }
         _ => Err(ApiError::bad_request(format!("unknown tool '{name}'"))),

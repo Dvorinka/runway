@@ -151,7 +151,19 @@ pub async fn create(
         .environment_for_deploy(branch)
         .ok_or_else(|| Error::Validation(format!("no environment matches branch '{branch}'")))?;
 
-    let env_vars = project.env_vars_for(crypto, environment.env_scope_slug())?;
+    let mut env_vars = project.env_vars_for(crypto, environment.env_scope_slug())?;
+    // Synthetic preview envs inherit their template's vars; vars scoped to
+    // the literal "preview" environment override them (Vercel parity).
+    if environment.extra.get("template_slug").is_some() {
+        for var in project
+            .env_vars(crypto)?
+            .into_iter()
+            .filter(|v| v.environment.as_deref() == Some("preview"))
+        {
+            env_vars.retain(|v| v.key != var.key);
+            env_vars.push(var);
+        }
+    }
     let env_vars_enc = crypto.encrypt(&serde_json::to_string(&env_vars)?)?;
 
     let mut config = project.config.clone();
@@ -235,36 +247,25 @@ pub async fn update_status(
     if status.is_none() && conclusion.is_none() && error.is_none() && container_status.is_none() {
         return Ok(());
     }
-    let mut tx = db.begin().await?;
-    if let Some(s) = status {
-        sqlx::query("UPDATE deployment SET status = $1 WHERE id = $2")
-            .bind(s)
-            .bind(deployment_id)
-            .execute(&mut *tx)
-            .await?;
-    }
-    if let Some(c) = conclusion {
-        sqlx::query("UPDATE deployment SET conclusion = $1, concluded_at = now() WHERE id = $2")
-            .bind(c)
-            .bind(deployment_id)
-            .execute(&mut *tx)
-            .await?;
-    }
-    if let Some(e) = error {
-        sqlx::query("UPDATE deployment SET error = $1 WHERE id = $2")
-            .bind(e)
-            .bind(deployment_id)
-            .execute(&mut *tx)
-            .await?;
-    }
-    if let Some(cs) = container_status {
-        sqlx::query("UPDATE deployment SET container_status = $1 WHERE id = $2")
-            .bind(cs)
-            .bind(deployment_id)
-            .execute(&mut *tx)
-            .await?;
-    }
-    tx.commit().await?;
+    // One statement, one row-lock hold, one WAL flush — under concurrent
+    // deploys the 4-statement version held the row lock across multiple
+    // round-trips and stalled the deployment-observer UPDATE (>1s).
+    sqlx::query(
+        "UPDATE deployment SET
+         status = COALESCE($2::text, status),
+         conclusion = COALESCE($3::text, conclusion),
+         concluded_at = CASE WHEN $3 IS NULL THEN concluded_at ELSE now() END,
+         error = COALESCE($4::jsonb, error),
+         container_status = COALESCE($5::text, container_status)
+         WHERE id = $1",
+    )
+    .bind(deployment_id)
+    .bind(status)
+    .bind(conclusion)
+    .bind(error)
+    .bind(container_status)
+    .execute(db)
+    .await?;
 
     if let Some(dep) = get(db, deployment_id).await? {
         let value = conclusion.or(status).unwrap_or_default();
@@ -390,11 +391,19 @@ pub fn runtime_env_vars(
     settings: &Settings,
     crypto: &Crypto,
 ) -> Result<Vec<(String, String)>> {
-    let mut vars: HashMap<String, String> = deployment
-        .env_vars(crypto)?
-        .into_iter()
-        .map(|v| (v.key, v.value))
-        .collect();
+    // Fork-PR builds run untrusted code — withhold project env vars
+    // (Vercel parity: forks get no project env). Only RUNWAY_* system
+    // vars reach the container.
+    let fork = deployment.config.get("pr_fork") == Some(&json!(true));
+    let mut vars: HashMap<String, String> = if fork {
+        HashMap::new()
+    } else {
+        deployment
+            .env_vars(crypto)?
+            .into_iter()
+            .map(|v| (v.key, v.value))
+            .collect()
+    };
 
     let env_slug = project
         .environment_by_id(&deployment.environment_id)
@@ -916,5 +925,38 @@ mod tests {
         p.config = serde_json::json!({ "preview_domain": "https://staging.example.com/x" });
         let m = alias_domains(&d, &p, &s);
         assert_eq!(m["branch_domain"], "proj-branch-dev-feat.deploy.test");
+    }
+
+    #[test]
+    fn fork_preview_scrubs_project_env() {
+        let s = test_settings();
+        let crypto = crate::crypto::Crypto::new("test-key").unwrap();
+        let mut d = deployment("stg", "dev-feat");
+        let vars = vec![crate::models::EnvVar {
+            key: "SECRET_DB_PASS".into(),
+            value: "hunter2".into(),
+            environment: None,
+        }];
+        d.env_vars = crypto
+            .encrypt(&serde_json::to_string(&vars).unwrap())
+            .unwrap();
+        let p = project();
+
+        let normal: std::collections::HashMap<_, _> = runtime_env_vars(&d, &p, &s, &crypto)
+            .unwrap()
+            .into_iter()
+            .collect();
+        assert_eq!(
+            normal.get("SECRET_DB_PASS").map(String::as_str),
+            Some("hunter2")
+        );
+
+        d.config = serde_json::json!({ "pr_number": 7, "pr_fork": true });
+        let forked: std::collections::HashMap<_, _> = runtime_env_vars(&d, &p, &s, &crypto)
+            .unwrap()
+            .into_iter()
+            .collect();
+        assert!(!forked.contains_key("SECRET_DB_PASS"));
+        assert_eq!(forked.get("RUNWAY").map(String::as_str), Some("true"));
     }
 }

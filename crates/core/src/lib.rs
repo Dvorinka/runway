@@ -18,6 +18,7 @@ pub mod error;
 pub mod events;
 pub mod git_providers;
 pub mod github;
+pub mod kern;
 pub mod logs;
 pub mod mail;
 pub mod models;

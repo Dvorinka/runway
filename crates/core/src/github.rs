@@ -425,6 +425,7 @@ impl GithubService {
     }
 
     /// Commit status (installation token) — PR preview check on the commit.
+    #[allow(clippy::too_many_arguments)] // mirrors GitHub's status fields
     pub async fn commit_status(
         &self,
         installation_token: &str,
@@ -433,6 +434,7 @@ impl GithubService {
         state: &str,
         target_url: Option<&str>,
         description: &str,
+        context: &str,
     ) -> Result<()> {
         self.http
             .post(format!(
@@ -446,7 +448,44 @@ impl GithubService {
                 "state": state,
                 "target_url": target_url,
                 "description": description,
-                "context": "runway/deploy",
+                "context": context,
+            }))
+            .send()
+            .await?
+            .error_for_status()?;
+        Ok(())
+    }
+
+    /// Create a check run (Checks API). Gives the PR a native "Re-run"
+    /// button — GitHub delivers `check_run.rerequested` on click, which
+    /// the webhook maps back through `external_id` to the deployment.
+    #[allow(clippy::too_many_arguments)] // mirrors GitHub's check-run fields
+    pub async fn create_check_run(
+        &self,
+        installation_token: &str,
+        repo_full_name: &str,
+        head_sha: &str,
+        name: &str,
+        status: &str,
+        conclusion: Option<&str>,
+        details_url: Option<&str>,
+        external_id: &str,
+    ) -> Result<()> {
+        self.http
+            .post(format!(
+                "{}/repos/{}/check-runs",
+                self.api_base, repo_full_name
+            ))
+            .bearer_auth(installation_token)
+            .header("Accept", "application/vnd.github+json")
+            .header("User-Agent", "runway")
+            .json(&serde_json::json!({
+                "name": name,
+                "head_sha": head_sha,
+                "status": status,
+                "conclusion": conclusion,
+                "details_url": details_url,
+                "external_id": external_id,
             }))
             .send()
             .await?

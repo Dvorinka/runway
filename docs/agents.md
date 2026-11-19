@@ -54,18 +54,59 @@ Settings → API keys mint `ak_` tokens. Use as
 `POST /api/mcp` speaks JSON-RPC 2.0 (`initialize` / `tools/list` /
 `tools/call`). Tool surface:
 
+Also: `runway doctor [--json]` (API/auth/link preflight) and
+`runway deploy --dry-run` (resolved plan JSON, nothing deployed).
+
+## Deploy hooks
+
+`POST /api/deploy-hook/{token}` triggers a deployment with no auth —
+the 128-bit `dh_` token is the credential (Vercel Deploy Hooks parity).
+Manage via `POST/GET/DELETE /api/v1/projects/{id}/hooks` or the MCP
+tools; the token is returned once at creation.
+
+## PR preview policy
+
+`deployment_rules` gains, beyond `preview_prs`/`auto_deploy`:
+`preview_drafts` (default true), `preview_forks` (default false —
+untrusted code, opt in explicitly), `preview_label` (PR must carry the
+label), `cancel_superseded` (default true — pending builds on the same
+ref cancel when a newer push arrives), `preview_comment`
+(`off`/`minimal`/`full` — full updates the comment with ready/failed +
+duration).
+
+Fork-PR deployments run untrusted code: `preview_forks` is opt-in, and
+when enabled the build and runtime containers receive only `RUNWAY_*`
+system vars — project env vars are withheld (Vercel parity).
+
 `list_projects`, `get_project`, `list_deployments`, `get_deployment`,
 `get_deployment_logs`, `deployment_stats`, `deploy_project`,
 `cancel_deployment`, `skip_deployment`, `redeploy_deployment`,
 `promote_deployment`, `promotion_diff`, `rollback_environment`, `list_env`, `set_env`,
 `list_domains`, `list_audit`, `export_audit`,
 `list_cron_jobs`, `create_cron_job`, `set_cron_job`, `delete_cron_job`.
+`update_project_config`, `create_deploy_hook`, `delete_deploy_hook`,
+`add_domain`, `verify_domain`, `delete_domain`, `list_storage`,
+`create_storage`, `link_storage`.
+`deploy_project` accepts `idempotency_key`; REST deploy endpoints take
+an `Idempotency-Key` header (same key → `idempotent_replay: true`).
 The protocol-level `ping` method answers `{}` — it is
 not a callable tool.
 
 Write tools (`deploy_project`, `set_env`, `rollback_environment`, …)
 respect the same RBAC gates as the REST surface — issue the key to an
 account with the minimum role the automation needs.
+
+## KERN build executor (optional)
+
+`project.config.build_executor = "kern"` sends static builds to a
+self-hosted KERN fleet instead of the local Docker runner. Required
+server envs: `RUNWAY_KERN_URL`, `RUNWAY_KERN_TOKEN`,
+`RUNWAY_KERN_PROJECT` (the KERN project slug dispatches go through).
+`config.kern_labels` (array) selects runners — default
+`["self-hosted","linux","docker"]`, i.e. docker-executor runners, since
+`container.image` is used. Source travels as a content-addressed
+bundle, the artifact returns via `actions/upload-artifact`, and the
+usual SWS serve path takes over — `output_directory` is required.
 
 ## Webhooks
 

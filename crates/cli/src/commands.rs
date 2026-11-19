@@ -395,7 +395,7 @@ pub async fn link(project: Option<String>) -> anyhow::Result<()> {
 }
 
 /// `runway deploy` — tar the current directory and upload-deploy it.
-pub async fn deploy(follow: bool) -> anyhow::Result<()> {
+pub async fn deploy(follow: bool, dry_run: bool) -> anyhow::Result<()> {
     let client = Client::from_config()?;
     let link = match client::load_link() {
         Ok(l) => l,
@@ -425,6 +425,19 @@ pub async fn deploy(follow: bool) -> anyhow::Result<()> {
     };
 
     let tarball = pack_cwd()?;
+    if dry_run {
+        let plan = client
+            .upload(
+                &format!(
+                    "/api/v1/projects/{}/deployments/upload?dry_run=1",
+                    link.project_id
+                ),
+                tarball,
+            )
+            .await?;
+        println!("{}", serde_json::to_string_pretty(&plan)?);
+        return Ok(());
+    }
     println!(
         "Uploading {} bytes to project {} ...",
         tarball.len(),
@@ -1638,4 +1651,79 @@ fn open_browser(url: &str) {
             return;
         }
     }
+}
+
+/// `runway doctor [--json]` — preflight: API reachable, auth valid,
+/// project link resolvable. Exit non-zero when a check fails.
+pub async fn doctor(json_out: bool) -> anyhow::Result<()> {
+    let mut checks = serde_json::json!({});
+    let mut ok = true;
+    let mut report = |name: &str, pass: bool, detail: String, checks: &mut serde_json::Value| {
+        if !pass {
+            ok = false;
+        }
+        checks[name] = serde_json::json!({ "ok": pass, "detail": detail });
+        if !json_out {
+            println!("{} {name} — {detail}", if pass { "ok  " } else { "FAIL" });
+        }
+    };
+
+    let client = match Client::from_config() {
+        Ok(c) => c,
+        Err(e) => {
+            report("config", false, e.to_string(), &mut checks);
+            if json_out {
+                println!("{checks}");
+            }
+            bail!("runway doctor: config unreadable");
+        }
+    };
+    report("config", true, "credentials loaded".into(), &mut checks);
+
+    match client.get("/health").await {
+        Ok(v) => report(
+            "api",
+            v["status"].as_str() == Some("ok"),
+            format!("{v}"),
+            &mut checks,
+        ),
+        Err(e) => report("api", false, e.to_string(), &mut checks),
+    }
+    match client.get("/api/auth/me").await {
+        Ok(v) => report(
+            "auth",
+            v["user"].is_object() || v["id"].is_number(),
+            v["email"].as_str().unwrap_or("?").to_string(),
+            &mut checks,
+        ),
+        Err(e) => report("auth", false, e.to_string(), &mut checks),
+    }
+    match client::load_link() {
+        Ok(link) => match client
+            .get(&format!("/api/v1/projects/{}", link.project_id))
+            .await
+        {
+            Ok(v) => report(
+                "link",
+                true,
+                v["name"].as_str().unwrap_or(&link.project_id).to_string(),
+                &mut checks,
+            ),
+            Err(e) => report("link", false, e.to_string(), &mut checks),
+        },
+        Err(_) => report(
+            "link",
+            true,
+            "no project linked (optional)".into(),
+            &mut checks,
+        ),
+    }
+
+    if json_out {
+        println!("{checks}");
+    }
+    if !ok {
+        bail!("runway doctor: one or more checks failed");
+    }
+    Ok(())
 }

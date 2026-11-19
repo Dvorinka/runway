@@ -19,7 +19,7 @@ user- and agent-first.
 | Deployment rules | `deployment_rules` config | `auto_deploy`, `preview_prs`, `preview_comment` |
 | Remote nodes | `remote_node` | token-gated enroll, mTLS, last-seen — runtime only |
 | Team webhooks (outbound) | `routes::teams` | deploy events fan out |
-| Gitea/Forgejo/GitLab webhooks | `git_providers.rs` | #41 still open for live verification |
+| Gitea/Forgejo/GitLab webhooks | `git_providers.rs` | GitLab leg verified E2E 2026-11-19; GitHub App + bitbucket legs remain on #41 |
 | MCP server | `routes::mcp` | ~20 read/deploy tools |
 | Audit export, activity log, `--json` CLI | recent PRs | agent-consumable |
 | Automation bypass secret | #78 | Vercel deployment-protection equivalent |
@@ -68,9 +68,12 @@ remote nodes). To let users build on their own hardware/arch
   claims via the same SKIP LOCKED queue, runs the `runner-*` container
   locally, and ships the artifact back (static dir tarball / image
   push to a registry Runway can pull from).
-- **Registry story** — image-based remote builds need somewhere to
-  push. Phase A: static-only remote builds (tarball return is trivial).
-  Phase B: optional embedded registry or user-supplied one.
+- **Registry story** — originally assumed for image-based remote
+  builds. Turned out unnecessary: the dockerfile fetch stages the repo
+  in-container, the context is pulled back over the archive API, and
+  `build_image` runs on the node — the image never leaves the daemon
+  that serves it. A registry only becomes relevant if we ever want the
+  build daemon and the serve daemon to differ.
 - **Fallback policy** — `node_selector` unmatched → queue holds or
   falls back to local, per team setting.
 - This also fixes the current sharp edges where `static` and
@@ -89,18 +92,32 @@ Non-goal: no hard dependency. Integration is a per-team opt-in.
 - **Level 0 — today, docs only** (free): enroll the same machines as
   both KERN runners and Runway remote nodes. One-line installers
   already exist on both sides. Write the recipe.
-- **Level 1 — `build_executor: "kern"`** on project/team config:
-  1. Deploy time → Runway generates a minimal build workflow
-     (checkout → install/build → `runway upload` the output dir as a
-     tarball to `POST /deployments/upload` or a dedicated
-     artifact-return endpoint),
-  2. dispatches it to a KERN project via KERN's REST API
-     (`/projects/{p}/workflows/{id}/runs` dispatch),
-  3. polls run status (`/runs/{id}`), maps KERN conclusion →
-     deployment status, streams step logs into the deployment log.
-  Needs on KERN's side: dispatch-with-inputs + artifact return (both
-  exist in spirit via `workflow_dispatch` + artifacts; verify exact
-  surface). Token: a scoped KERN PAT stored encrypted per team.
+- **Level 1 — `build_executor: "kern"` — SHIPPED** (verified end-to-end
+  against kern.tdvorak.dev). `project.config.build_executor = "kern"`
+  plus `RUNWAY_KERN_URL`/`RUNWAY_KERN_TOKEN`/`RUNWAY_KERN_PROJECT`:
+  1. the source ships to KERN as a content-addressed bundle
+     (`PUT /api/v1/projects/{p}/source`, resolve-then-upload dedupe)
+     which **replaces the repo checkout** — upload deploys send the
+     deployment tarball, git deploys send a marker bundle and the
+     in-workflow clone does the real fetch,
+  2. a generated workflow (`POST /api/v1/projects/{p}/runs` with inline
+     `workflow_yaml`, `trust_level: trusted`) runs the *same*
+     `commands.join(" && ")` script as the local runner — readcfg
+     overrides, presets, snippets — under `container.image` = the
+     resolved runner image, on `kern_labels` (default
+     `self-hosted,linux,docker`),
+  3. poll `GET /api/v1/runs/{id}` → conclusion; deployment cancel
+     propagates `POST /runs/{id}/cancel`; run id is recorded on the
+     deployment (`config.kern_run_id`),
+  4. the `runway-out` artifact (`actions/upload-artifact`,
+     `path: runway-out/**`) is downloaded
+     (`GET /api/v1/artifacts?run_id=` → `/{id}/download`) into the
+     static dir — SWS serve and `.runway.json` handling are unchanged.
+  Gotchas encoded: a bare `path: dir` glob yields an empty artifact
+  (must be `dir/**`); publish uses `tar --exclude` because the
+  workspace `runway-out/` would self-copy when `output_directory=.`.
+  Scope: static (output_directory) builds only; token is a single
+  instance-level PAT today — per-team scoped tokens are the upgrade.
 - **Level 2 — shared pool** (later): Runway build jobs claimable by
   KERN runners through a claim-shim adapter, or joint runner labels.
   Defer until Level 1 proves demand.
@@ -127,28 +144,49 @@ KERN's `openapi.yaml` is the bar — Runway should match it.
 
 ## Phasing
 
-**P0 (next sprint, all small):**
-- Draft-PR skip + fork-PR opt-in + label gate for previews
-- Cancel superseded preview builds on same ref
-- Per-project commit-status context (`runway/<slug>`)
-- Preview deployments default to `preview` env scope
-- PR comment: status/duration update + verbosity setting
-- Deploy hooks (tokenized URL trigger)
+**P0 — shipped 2026-11-19 (PR #97):**
+- ~~Draft-PR skip~~ `preview_drafts` + ~~fork-PR opt-in~~ `preview_forks`
+  (secure default: off) + ~~label gate~~ `preview_label`
+- ~~Cancel superseded preview builds~~ (`cancel_superseded`, default on)
+- ~~Per-project status context~~ `runway/<slug>`
+- ~~Preview env scope~~ — `preview`-scoped env vars overlay the template
+- ~~PR comment upgrades~~ — `minimal`/`full` verbosity + conclusion
+  (ready/failed + duration) updates
+- ~~Deploy hooks~~ — `/api/deploy-hook/{token}` + CRUD + MCP
+- ~~`runway doctor` + `deploy --dry-run` + `llms.txt`~~
+- ~~vercel.json import~~ — upload archives auto-translate to runway.json
+- ~~Node 24 runner~~ — `node-24` → `node:24-bookworm`
+- ~~`Idempotency-Key`~~ on deploy endpoints + MCP arg
+- ~~Preview TTL teardown~~ — `preview_ttl_hours`, reconcile sweep
+- ~~Structured API error codes~~ — `code` field on error bodies
+- ~~Traefik edge-network reattach on restart~~ (#98) — container-id
+  watcher + malformed dynamic-config sweep at startup
 
-**P1:**
-- GitHub Checks API (replaces statuses where installed)
-- `check_run` re-requested → redeploy
-- `@runway deploy` PR comment commands
-- Executor nodes (static builds on remote nodes, labels, selector)
-- MCP mutating tools batch + OpenAPI + llms.txt + skill
-- KERN Level 0 docs recipe; spec KERN dispatch/artifact surface
+**P1 — first half shipped in PR #97:**
+- ~~GitHub Checks API~~ — check runs with `external_id`, status fallback
+- ~~`check_run` re-requested → redeploy~~
+- ~~`@runway deploy` PR comment commands~~
+- ~~Node selector~~ — `project.config.node_selector` label match,
+  least-loaded pick (executor-node half of remote builds)
+- ~~MCP write batch~~ — config, hooks, domains, storage (31 tools)
+- ~~Executor builds on remote nodes (static)~~ — `/out` pulled back
+  over the docker archive API, shipped to a node volume for SWS
+- ~~KERN bridge Level 1~~ — `build_executor: "kern"` verified live
+  against kern.tdvorak.dev (bundle dispatch + artifact return)
+
+- ~~Remote dockerfile builds~~ — remote fetch + context pull-back +
+  `build_image` on the node; verified live, no registry needed
 
 **P2:**
-- Remote image builds + registry story
-- `build_executor: kern` end-to-end
-- Preview TTL teardown
-- Fork-preview isolation (KERN trust-tier model)
+- KERN Level 2 — shared runner pool, per-team tokens
+- Fork-preview isolation — env scrub shipped (`pr_fork` → no project
+  env in build/runtime, unit-tested); clone tokens moved out of
+  container env into a deleted-before-build askpass file (all builds,
+  not just forks). Remaining: egress/network isolation (KERN trust-tier)
 - Usage metering per project/team (enterprise gate from #roadmap)
+- GitHub App webhook E2E (rest of #41 — needs dev app creds; gitlab +
+  bitbucket legs verified against simulated providers incl.
+  `bitbucket_connection.base_url` for server-style topologies)
 
 ## Cross-links
 
