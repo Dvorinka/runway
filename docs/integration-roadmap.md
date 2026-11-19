@@ -127,13 +127,17 @@ KERN's `openapi.yaml` is the bar — Runway should match it.
 
 ## Phasing
 
-**P0 (next sprint, all small):**
-- Draft-PR skip + fork-PR opt-in + label gate for previews
-- Cancel superseded preview builds on same ref
-- Per-project commit-status context (`runway/<slug>`)
-- Preview deployments default to `preview` env scope
-- PR comment: status/duration update + verbosity setting
-- Deploy hooks (tokenized URL trigger)
+**P0 — shipped 2026-11-19:**
+- ~~Draft-PR skip~~ `preview_drafts` + ~~fork-PR opt-in~~ `preview_forks`
+  (secure default: off) + ~~label gate~~ `preview_label`
+- ~~Cancel superseded preview builds~~ (`cancel_superseded`, default on)
+- ~~Per-project status context~~ `runway/<slug>`
+- ~~Preview env scope~~ — `preview`-scoped env vars overlay the template
+- ~~PR comment upgrades~~ — `minimal`/`full` verbosity + conclusion
+  (ready/failed + duration) updates
+- ~~Deploy hooks~~ — `/api/deploy-hook/{token}` + CRUD + MCP
+- ~~`runway doctor` + `deploy --dry-run` + `llms.txt`~~
+- Remaining P0: preview TTL teardown
 
 **P1:**
 - GitHub Checks API (replaces statuses where installed)

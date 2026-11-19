@@ -1213,6 +1213,7 @@ pub async fn finalize(ctx: &Ctx, deployment_id: &str) -> anyhow::Result<()> {
     // log pane into build vs runtime on this marker.
     ctx.logs.step(deployment_id, "live").await;
     post_commit_status(ctx, &deployment, &project, "success", "Deployment ready").await;
+    post_preview_comment(ctx, &deployment, &project, "ready").await;
     let dep_now = deploy::get(&ctx.db, deployment_id)
         .await?
         .unwrap_or_else(|| deployment.clone());
@@ -1376,6 +1377,7 @@ pub async fn fail(
             reason.unwrap_or("Deployment failed"),
         )
         .await;
+        post_preview_comment(ctx, &deployment, &project, "failed").await;
         if let Ok(Some(dep_now)) = deploy::get(&ctx.db, deployment_id).await {
             runway_core::webhook::send_deployment_webhooks(
                 &ctx.db,
@@ -1426,6 +1428,9 @@ async fn post_commit_status(
     };
     let project_slug = project.slug.clone().unwrap_or_else(|| project.id.clone());
     let url = deployment.url(&project_slug, &ctx.settings);
+    // `runway/<slug>` so monorepos with several projects on one repo get
+    // independent required-status checks.
+    let context = format!("runway/{project_slug}");
     if let Err(e) = gh
         .commit_status(
             &token,
@@ -1434,6 +1439,7 @@ async fn post_commit_status(
             state,
             Some(&url),
             description,
+            &context,
         )
         .await
     {
@@ -1472,6 +1478,71 @@ async fn post_commit_status(
             &marker,
             &status_line,
         )
+        .await
+    {
+        tracing::warn!(deployment_id = deployment.id, error = %e, "preview comment update failed");
+    }
+}
+
+/// Refresh the PR preview comment with the final state — same upsert
+/// the API webhook writes at enqueue time. Only runs for PR previews
+/// (`config.pr_number`) when `preview_comment` is not "off"/false and
+/// verbosity is "full" (minimal comments carry no status).
+async fn post_preview_comment(
+    ctx: &Ctx,
+    deployment: &Deployment,
+    project: &Project,
+    outcome: &str,
+) {
+    let Some(pr_number) = deployment.config.get("pr_number").and_then(|v| v.as_i64()) else {
+        return;
+    };
+    let rules = deployment
+        .config
+        .get("deployment_rules")
+        .cloned()
+        .unwrap_or(json!({}));
+    match rules.get("preview_comment") {
+        Some(serde_json::Value::Bool(false)) => return,
+        // "minimal" and "off" comments carry no status text.
+        Some(serde_json::Value::String(s)) if s.as_str() != "full" => return,
+        _ => {}
+    }
+    let (Some(gh), Some(installation_id)) =
+        (ctx.github.if_configured(), project.github_installation_id)
+    else {
+        return;
+    };
+    let Ok(token) = gh
+        .installation_token(&ctx.db, &ctx.crypto, installation_id)
+        .await
+    else {
+        return;
+    };
+    let slug = project.slug.clone().unwrap_or_else(|| project.id.clone());
+    let host = format!(
+        "{slug}-branch-{}.{}",
+        runway_core::slugify::branch_slug(&deployment.branch),
+        ctx.settings.deploy_domain
+    );
+    let url = format!("{}://{}", ctx.settings.url_scheme, host);
+    let secs = (chrono::Utc::now() - deployment.created_at)
+        .num_seconds()
+        .max(0);
+    let dur = format!("{}m{:02}s", secs / 60, secs % 60);
+    let state_line = if outcome == "ready" {
+        format!("**ready** in {dur}")
+    } else {
+        format!("**failed** after {dur}")
+    };
+    let body = format!(
+        "**Runway preview** — [{url}]({url})\n\n`{}` @ `{}` — {state_line}.",
+        deployment.branch,
+        &deployment.commit_sha[..deployment.commit_sha.len().min(7)],
+    );
+    let marker = format!("<!-- runway-preview:{} -->", project.id);
+    if let Err(e) = gh
+        .upsert_issue_comment(&token, &project.repo_full_name, pr_number, &marker, &body)
         .await
     {
         tracing::warn!(deployment_id = deployment.id, error = %e, "preview comment update failed");

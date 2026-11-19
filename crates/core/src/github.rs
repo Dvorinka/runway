@@ -425,6 +425,7 @@ impl GithubService {
     }
 
     /// Commit status (installation token) — PR preview check on the commit.
+    #[allow(clippy::too_many_arguments)] // mirrors GitHub's status fields
     pub async fn commit_status(
         &self,
         installation_token: &str,
@@ -433,6 +434,7 @@ impl GithubService {
         state: &str,
         target_url: Option<&str>,
         description: &str,
+        context: &str,
     ) -> Result<()> {
         self.http
             .post(format!(
@@ -446,7 +448,7 @@ impl GithubService {
                 "state": state,
                 "target_url": target_url,
                 "description": description,
-                "context": "runway/deploy",
+                "context": context,
             }))
             .send()
             .await?

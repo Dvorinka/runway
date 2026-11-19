@@ -54,12 +54,33 @@ Settings → API keys mint `ak_` tokens. Use as
 `POST /api/mcp` speaks JSON-RPC 2.0 (`initialize` / `tools/list` /
 `tools/call`). Tool surface:
 
+Also: `runway doctor [--json]` (API/auth/link preflight) and
+`runway deploy --dry-run` (resolved plan JSON, nothing deployed).
+
+## Deploy hooks
+
+`POST /api/deploy-hook/{token}` triggers a deployment with no auth —
+the 128-bit `dh_` token is the credential (Vercel Deploy Hooks parity).
+Manage via `POST/GET/DELETE /api/v1/projects/{id}/hooks` or the MCP
+tools; the token is returned once at creation.
+
+## PR preview policy
+
+`deployment_rules` gains, beyond `preview_prs`/`auto_deploy`:
+`preview_drafts` (default true), `preview_forks` (default false —
+untrusted code, opt in explicitly), `preview_label` (PR must carry the
+label), `cancel_superseded` (default true — pending builds on the same
+ref cancel when a newer push arrives), `preview_comment`
+(`off`/`minimal`/`full` — full updates the comment with ready/failed +
+duration).
+
 `list_projects`, `get_project`, `list_deployments`, `get_deployment`,
 `get_deployment_logs`, `deployment_stats`, `deploy_project`,
 `cancel_deployment`, `skip_deployment`, `redeploy_deployment`,
 `promote_deployment`, `promotion_diff`, `rollback_environment`, `list_env`, `set_env`,
 `list_domains`, `list_audit`, `export_audit`,
 `list_cron_jobs`, `create_cron_job`, `set_cron_job`, `delete_cron_job`.
+`update_project_config`, `create_deploy_hook`, `delete_deploy_hook`.
 The protocol-level `ping` method answers `{}` — it is
 not a callable tool.
 

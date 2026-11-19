@@ -151,7 +151,19 @@ pub async fn create(
         .environment_for_deploy(branch)
         .ok_or_else(|| Error::Validation(format!("no environment matches branch '{branch}'")))?;
 
-    let env_vars = project.env_vars_for(crypto, environment.env_scope_slug())?;
+    let mut env_vars = project.env_vars_for(crypto, environment.env_scope_slug())?;
+    // Synthetic preview envs inherit their template's vars; vars scoped to
+    // the literal "preview" environment override them (Vercel parity).
+    if environment.extra.get("template_slug").is_some() {
+        for var in project
+            .env_vars(crypto)?
+            .into_iter()
+            .filter(|v| v.environment.as_deref() == Some("preview"))
+        {
+            env_vars.retain(|v| v.key != var.key);
+            env_vars.push(var);
+        }
+    }
     let env_vars_enc = crypto.encrypt(&serde_json::to_string(&env_vars)?)?;
 
     let mut config = project.config.clone();

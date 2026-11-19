@@ -164,6 +164,28 @@ fn tools() -> Value {
                                   "enabled": {"type": "boolean"}}})
         ),
         tool(
+            "update_project_config",
+            "Shallow-merge keys into a project's config (deployment_rules incl. preview policy, build/start/output settings). Pass a partial config object.",
+            json!({"type": "object", "required": ["project_id", "config"],
+                   "properties": {"project_id": {"type": "string"},
+                                  "config": {"type": "object"}}})
+        ),
+        tool(
+            "create_deploy_hook",
+            "Mint a tokenized deploy-hook URL for the project (POST it to trigger a deploy without auth). Token returned once.",
+            json!({"type": "object", "required": ["project_id"],
+                   "properties": {"project_id": {"type": "string"},
+                                  "name": {"type": "string"},
+                                  "branch": {"type": "string"}}})
+        ),
+        tool(
+            "delete_deploy_hook",
+            "Revoke a deploy hook by id",
+            json!({"type": "object", "required": ["project_id", "hook_id"],
+                   "properties": {"project_id": {"type": "string"},
+                                  "hook_id": {"type": "string"}}})
+        ),
+        tool(
             "delete_cron_job",
             "Remove a scheduled deployment job",
             json!({"type": "object", "required": ["project_id", "job_id"],
@@ -537,6 +559,81 @@ async fn call(state: &AppState, user_id: i64, name: &str, args: &Value) -> ApiRe
                 .execute(&state.db)
                 .await?;
             Ok(json!({ "ok": true, "count": vars.len() }))
+        }
+        "update_project_config" => {
+            let p = project_for(state, user_id, arg(args, "project_id")?).await?;
+            let patch = args["config"]
+                .as_object()
+                .ok_or_else(|| ApiError::bad_request("config must be an object"))?;
+            let mut config = p.config.clone();
+            let cfg = config.as_object_mut().expect("config is object");
+            for (k, v) in patch {
+                cfg.insert(k.clone(), v.clone());
+            }
+            sqlx::query("UPDATE project SET config = $1, updated_at = now() WHERE id = $2")
+                .bind(&config)
+                .bind(&p.id)
+                .execute(&state.db)
+                .await?;
+            Ok(json!({ "ok": true, "config": config }))
+        }
+        "create_deploy_hook" => {
+            let p = project_for(state, user_id, arg(args, "project_id")?).await?;
+            let name = args["name"].as_str().unwrap_or("default");
+            let token = format!("dh_{}", runway_core::slugify::token_hex(16));
+            let mut hooks = p
+                .config
+                .get("deploy_hooks")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            if hooks.len() >= 20 {
+                return Err(ApiError::bad_request("deploy hook limit reached (20)"));
+            }
+            hooks.push(json!({
+                "id": runway_core::slugify::token_hex(8),
+                "name": name,
+                "token_hash": runway_core::crypto::sha256_hex(&token),
+                "branch": args["branch"].as_str(),
+                "created_at": chrono::Utc::now().to_rfc3339(),
+            }));
+            sqlx::query(
+                "UPDATE project SET config = jsonb_set(config, '{deploy_hooks}', $1) WHERE id = $2",
+            )
+            .bind(json!(hooks))
+            .bind(&p.id)
+            .execute(&state.db)
+            .await?;
+            Ok(json!({
+                "url": format!("{}://{}/api/deploy-hook/{}",
+                    state.settings.url_scheme, state.settings.app_hostname, token),
+            }))
+        }
+        "delete_deploy_hook" => {
+            let p = project_for(state, user_id, arg(args, "project_id")?).await?;
+            let hook_id = arg(args, "hook_id")?;
+            let hooks = p
+                .config
+                .get("deploy_hooks")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let kept: Vec<Value> = hooks
+                .iter()
+                .filter(|h| h["id"].as_str() != Some(hook_id))
+                .cloned()
+                .collect();
+            if kept.len() == hooks.len() {
+                return Err(ApiError::not_found("deploy hook"));
+            }
+            sqlx::query(
+                "UPDATE project SET config = jsonb_set(config, '{deploy_hooks}', $1) WHERE id = $2",
+            )
+            .bind(json!(kept))
+            .bind(&p.id)
+            .execute(&state.db)
+            .await?;
+            Ok(json!({ "ok": true }))
         }
         "list_audit" => {
             let team = args["team_id"].as_str().filter(|s| !s.is_empty());

@@ -109,6 +109,8 @@ pub fn router(state: AppState) -> Router {
         .route("/install-node.sh", get(node_install_script))
         // GitHub integration — webhook + app-manifest registration
         .route("/api/github/webhook", post(routes::github::webhook))
+        // Deploy hooks — public token-gated trigger (Vercel parity)
+        .route("/api/deploy-hook/{token}", post(routes::hooks::trigger))
         .route("/api/v1/github/app/status", get(routes::github::app_status))
         .route(
             "/api/v1/github/app/register",
@@ -329,6 +331,14 @@ pub fn router(state: AppState) -> Router {
             axum::routing::post(routes::notifications::mark_read),
         )
         .route("/api/deploy", get(routes::notifications::deploy_button))
+        .route(
+            "/api/v1/projects/{id}/hooks",
+            get(routes::hooks::list).post(routes::hooks::create),
+        )
+        .route(
+            "/api/v1/projects/{id}/hooks/{hook_id}",
+            delete(routes::hooks::delete),
+        )
         // Team storage (Phase 5)
         .route(
             "/api/v1/teams/{id}/storage",

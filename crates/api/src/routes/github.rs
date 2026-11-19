@@ -223,7 +223,17 @@ async fn handle_push(state: &AppState, data: &Value) {
 /// `auto_deploy=false` still opts the project out.
 async fn handle_pull_request(state: &AppState, data: &Value) {
     let action = data["action"].as_str().unwrap_or("");
-    if !matches!(action, "opened" | "synchronize" | "reopened" | "closed") {
+    if !matches!(
+        action,
+        "opened"
+            | "synchronize"
+            | "reopened"
+            | "closed"
+            | "labeled"
+            | "unlabeled"
+            | "ready_for_review"
+            | "converted_to_draft"
+    ) {
         return;
     }
     let repo_id = data["repository"]["id"].as_i64().unwrap_or(0);
@@ -234,6 +244,13 @@ async fn handle_pull_request(state: &AppState, data: &Value) {
         return;
     }
     let number = pr["number"].as_i64().unwrap_or(0);
+    let is_draft = pr["draft"].as_bool().unwrap_or(false);
+    // Head repo id differs from base repo id on fork PRs.
+    let is_fork = pr["head"]["repo"]["id"].as_i64().unwrap_or(0) != repo_id;
+    let labels: Vec<&str> = pr["labels"]
+        .as_array()
+        .map(|ls| ls.iter().filter_map(|l| l["name"].as_str()).collect())
+        .unwrap_or_default();
 
     let projects: Vec<Project> = match sqlx::query_as(
         "SELECT * FROM project
@@ -250,6 +267,9 @@ async fn handle_pull_request(state: &AppState, data: &Value) {
         }
     };
 
+    // `unlabeled` and `converted_to_draft` can move a PR outside a
+    // project's preview policy — tear down rather than leave stale
+    // previews serving.
     if action == "closed" {
         for project in &projects {
             teardown_preview(state, project, &branch).await;
@@ -270,11 +290,24 @@ async fn handle_pull_request(state: &AppState, data: &Value) {
             .get("deployment_rules")
             .cloned()
             .unwrap_or(json!({}));
-        if rules.get("auto_deploy").and_then(|v| v.as_bool()) == Some(false) {
+        if !preview_allowed(&rules, is_draft, is_fork, &labels) {
+            if matches!(action, "unlabeled" | "converted_to_draft") {
+                teardown_preview(state, &project, &branch).await;
+            }
             continue;
         }
-        if rules.get("preview_prs").and_then(|v| v.as_bool()) == Some(false) {
+        if matches!(action, "unlabeled" | "converted_to_draft") {
             continue;
+        }
+
+        // Cancel superseded preview builds on the same ref — rapid pushes
+        // should not queue every SHA. `cancel_superseded=false` opts out.
+        if rules
+            .get("cancel_superseded")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true)
+        {
+            cancel_pending(state, &project, &branch).await;
         }
 
         match deploy::create(
@@ -296,8 +329,8 @@ async fn handle_pull_request(state: &AppState, data: &Value) {
                     project_id = project.id,
                     "preview deployment created from pull_request"
                 );
-                if rules.get("preview_comment").and_then(|v| v.as_bool()) != Some(false) {
-                    post_preview_comment(state, &project, &branch, number).await;
+                if let Some(level) = comment_verbosity(&rules) {
+                    post_preview_comment(state, &project, &branch, number, level, &dep).await;
                 }
             }
             Err(e) => {
@@ -307,8 +340,88 @@ async fn handle_pull_request(state: &AppState, data: &Value) {
     }
 }
 
+/// Whether a PR event may produce a preview under the project's rules.
+/// Defaults match prior behaviour (drafts deploy, previews on) except
+/// forks, which now require explicit opt-in — their code is untrusted
+/// and previews would run it with project env vars.
+fn preview_allowed(
+    rules: &serde_json::Value,
+    is_draft: bool,
+    is_fork: bool,
+    labels: &[&str],
+) -> bool {
+    if rules.get("auto_deploy").and_then(|v| v.as_bool()) == Some(false) {
+        return false;
+    }
+    if rules.get("preview_prs").and_then(|v| v.as_bool()) == Some(false) {
+        return false;
+    }
+    if is_draft && rules.get("preview_drafts").and_then(|v| v.as_bool()) == Some(false) {
+        return false;
+    }
+    if is_fork && rules.get("preview_forks").and_then(|v| v.as_bool()) != Some(true) {
+        return false;
+    }
+    // Label gate: when set, the PR must carry the label.
+    if let Some(gate) = rules.get("preview_label").and_then(|v| v.as_str()) {
+        if !gate.is_empty() && !labels.contains(&gate) {
+            return false;
+        }
+    }
+    true
+}
+
+/// `preview_comment`: bool or "off"|"minimal"|"full". None = no comment.
+fn comment_verbosity(rules: &serde_json::Value) -> Option<&'static str> {
+    match rules.get("preview_comment") {
+        Some(serde_json::Value::Bool(b)) => b.then_some("full"),
+        Some(serde_json::Value::String(s)) => match s.as_str() {
+            "off" => None,
+            "minimal" => Some("minimal"),
+            _ => Some("full"),
+        },
+        Some(_) => None,
+        None => Some("full"), // default: comment, full verbosity
+    }
+}
+
+/// Cancel unconcluded deployments on this project+branch that have not
+/// reached the finalize stage (superseded by the incoming commit).
+async fn cancel_pending(state: &AppState, project: &Project, branch: &str) {
+    let pending: Vec<runway_core::models::Deployment> = sqlx::query_as(
+        "SELECT * FROM deployment WHERE project_id = $1 AND branch = $2
+         AND conclusion IS NULL AND status IN ('prepare','deploy')",
+    )
+    .bind(&project.id)
+    .bind(branch)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+    let docker = match runway_core::docker::connect(&state.settings) {
+        Ok(d) => d,
+        Err(e) => {
+            tracing::warn!(error = %e, "superseded cancel: docker connect failed");
+            return;
+        }
+    };
+    for dep in pending {
+        if let Err(e) = deploy::cancel(&state.db, &state.bus, &state.settings, &docker, &dep).await
+        {
+            tracing::warn!(deployment_id = dep.id, error = %e, "superseded cancel failed");
+        }
+    }
+}
+
 /// Upserted PR comment with the deterministic branch preview URL.
-async fn post_preview_comment(state: &AppState, project: &Project, branch: &str, number: i64) {
+/// `level` is "minimal" (URL only) or "full" (URL + state + commit).
+async fn post_preview_comment(
+    state: &AppState,
+    project: &Project,
+    branch: &str,
+    number: i64,
+    level: &str,
+    dep: &runway_core::models::Deployment,
+) {
     let (Some(gh), Some(installation_id)) =
         (state.github.if_configured(), project.github_installation_id)
     else {
@@ -326,12 +439,16 @@ async fn post_preview_comment(state: &AppState, project: &Project, branch: &str,
         runway_core::slugify::branch_slug(branch),
         state.settings.deploy_domain
     );
-    let body = format!(
-        "**Runway preview** — [{}://{}]({}://{})\n\n\
-         Latest deployment on `{branch}` is building; the URL goes live \
-         when it finishes.",
-        state.settings.url_scheme, host, state.settings.url_scheme, host,
-    );
+    let url = format!("{}://{}", state.settings.url_scheme, host);
+    let body = if level == "minimal" {
+        format!("**Runway preview** — {url}")
+    } else {
+        format!(
+            "**Runway preview** — [{url}]({url})\n\n\
+             `{branch}` @ `{}` — building; the URL goes live when it finishes.",
+            &dep.commit_sha[..dep.commit_sha.len().min(7)],
+        )
+    };
     let marker = format!("<!-- runway-preview:{} -->", project.id);
     if let Err(e) = gh
         .upsert_issue_comment(&token, &project.repo_full_name, number, &marker, &body)
@@ -648,7 +765,7 @@ pub async fn app_callback(
 
 #[cfg(test)]
 mod tests {
-    use super::is_public_hostname;
+    use super::{comment_verbosity, is_public_hostname, preview_allowed};
 
     #[test]
     fn public_hostname() {
@@ -661,4 +778,72 @@ mod tests {
         assert!(!is_public_hostname("runway")); // single-label
         assert!(!is_public_hostname(""));
     }
+}
+
+#[test]
+fn previews_on_by_default() {
+    assert!(preview_allowed(&json!({}), false, false, &[]));
+}
+
+#[test]
+fn master_switch_off() {
+    assert!(!preview_allowed(
+        &json!({ "auto_deploy": false }),
+        false,
+        false,
+        &[]
+    ));
+    assert!(!preview_allowed(
+        &json!({ "preview_prs": false }),
+        false,
+        false,
+        &[]
+    ));
+}
+
+#[test]
+fn drafts_deploy_unless_opted_out() {
+    assert!(preview_allowed(&json!({}), true, false, &[]));
+    assert!(!preview_allowed(
+        &json!({ "preview_drafts": false }),
+        true,
+        false,
+        &[]
+    ));
+}
+
+#[test]
+fn forks_require_opt_in() {
+    assert!(!preview_allowed(&json!({}), false, true, &[]));
+    assert!(preview_allowed(
+        &json!({ "preview_forks": true }),
+        false,
+        true,
+        &[]
+    ));
+}
+
+#[test]
+fn label_gate() {
+    let r = json!({ "preview_label": "deploy-preview" });
+    assert!(!preview_allowed(&r, false, false, &[]));
+    assert!(preview_allowed(&r, false, false, &["deploy-preview"]));
+    assert!(!preview_allowed(&r, false, false, &["other"]));
+}
+
+#[test]
+fn comment_verbosity_levels() {
+    assert_eq!(comment_verbosity(&json!({})), Some("full"));
+    assert_eq!(
+        comment_verbosity(&json!({ "preview_comment": false })),
+        None
+    );
+    assert_eq!(
+        comment_verbosity(&json!({ "preview_comment": "off" })),
+        None
+    );
+    assert_eq!(
+        comment_verbosity(&json!({ "preview_comment": "minimal" })),
+        Some("minimal")
+    );
 }

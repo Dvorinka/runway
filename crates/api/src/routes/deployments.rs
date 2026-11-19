@@ -822,6 +822,7 @@ pub async fn upload(
     user: AuthUser,
     State(state): State<AppState>,
     Path(id): Path<String>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
     body: axum::body::Body,
 ) -> ApiResult<Response> {
     const MAX_UPLOAD: u64 = 512 * 1024 * 1024; // jarvis: 512MB ceiling; revisit if monorepos hurt
@@ -881,6 +882,26 @@ pub async fn upload(
                 }
             }
         }
+    }
+
+    // `?dry_run=1` — report the resolved plan without creating a
+    // deployment. Agents use this to preflight what an upload would do.
+    if q.get("dry_run")
+        .is_some_and(|v| matches!(v.as_str(), "1" | "true"))
+    {
+        let _ = tokio::fs::remove_file(&path).await;
+        let mut plan = project.config.clone();
+        if let (Some(dst), Some(src)) = (plan.as_object_mut(), extra.as_object()) {
+            for (k, v) in src {
+                dst.insert(k.clone(), v.clone());
+            }
+        }
+        return Ok(Json(json!({
+            "dry_run": true,
+            "size_bytes": size,
+            "resolved_config": plan,
+        }))
+        .into_response());
     }
 
     let sha = hex::encode(hasher.finalize())[..40].to_string();
