@@ -80,7 +80,11 @@ duration).
 `promote_deployment`, `promotion_diff`, `rollback_environment`, `list_env`, `set_env`,
 `list_domains`, `list_audit`, `export_audit`,
 `list_cron_jobs`, `create_cron_job`, `set_cron_job`, `delete_cron_job`.
-`update_project_config`, `create_deploy_hook`, `delete_deploy_hook`.
+`update_project_config`, `create_deploy_hook`, `delete_deploy_hook`,
+`add_domain`, `verify_domain`, `delete_domain`, `list_storage`,
+`create_storage`, `link_storage`.
+`deploy_project` accepts `idempotency_key`; REST deploy endpoints take
+an `Idempotency-Key` header (same key → `idempotent_replay: true`).
 The protocol-level `ping` method answers `{}` — it is
 not a callable tool.
 

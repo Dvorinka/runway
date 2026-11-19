@@ -127,7 +127,7 @@ KERN's `openapi.yaml` is the bar — Runway should match it.
 
 ## Phasing
 
-**P0 — shipped 2026-11-19:**
+**P0 — shipped 2026-11-19 (PR #97):**
 - ~~Draft-PR skip~~ `preview_drafts` + ~~fork-PR opt-in~~ `preview_forks`
   (secure default: off) + ~~label gate~~ `preview_label`
 - ~~Cancel superseded preview builds~~ (`cancel_superseded`, default on)
@@ -137,14 +137,20 @@ KERN's `openapi.yaml` is the bar — Runway should match it.
   (ready/failed + duration) updates
 - ~~Deploy hooks~~ — `/api/deploy-hook/{token}` + CRUD + MCP
 - ~~`runway doctor` + `deploy --dry-run` + `llms.txt`~~
+- ~~vercel.json import~~ — upload archives auto-translate to runway.json
+- ~~Node 24 runner~~ — `node-24` → `node:24-bookworm`
+- ~~`Idempotency-Key`~~ on deploy endpoints + MCP arg
 - Remaining P0: preview TTL teardown
 
-**P1:**
-- GitHub Checks API (replaces statuses where installed)
-- `check_run` re-requested → redeploy
-- `@runway deploy` PR comment commands
-- Executor nodes (static builds on remote nodes, labels, selector)
-- MCP mutating tools batch + OpenAPI + llms.txt + skill
+**P1 — first half shipped in PR #97:**
+- ~~GitHub Checks API~~ — check runs with `external_id`, status fallback
+- ~~`check_run` re-requested → redeploy~~
+- ~~`@runway deploy` PR comment commands~~
+- ~~Node selector~~ — `project.config.node_selector` label match,
+  least-loaded pick (executor-node half of remote builds)
+- ~~MCP write batch~~ — config, hooks, domains, storage (31 tools)
+- Executor builds on remote nodes — static `/out` read-back via
+  docker cp (still open)
 - KERN Level 0 docs recipe; spec KERN dispatch/artifact surface
 
 **P2:**
@@ -153,6 +159,8 @@ KERN's `openapi.yaml` is the bar — Runway should match it.
 - Preview TTL teardown
 - Fork-preview isolation (KERN trust-tier model)
 - Usage metering per project/team (enterprise gate from #roadmap)
+- Structured API error codes
+- Traefik edge-network reattach on restart (#98)
 
 ## Cross-links
 
