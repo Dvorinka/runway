@@ -74,6 +74,10 @@ ref cancel when a newer push arrives), `preview_comment`
 (`off`/`minimal`/`full` — full updates the comment with ready/failed +
 duration).
 
+Fork-PR deployments run untrusted code: `preview_forks` is opt-in, and
+when enabled the build and runtime containers receive only `RUNWAY_*`
+system vars — project env vars are withheld (Vercel parity).
+
 `list_projects`, `get_project`, `list_deployments`, `get_deployment`,
 `get_deployment_logs`, `deployment_stats`, `deploy_project`,
 `cancel_deployment`, `skip_deployment`, `redeploy_deployment`,

@@ -209,19 +209,21 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
                 let token = github
                     .installation_token(&ctx.db, &ctx.crypto, installation_id)
                     .await?;
-                env.push(format!("RUNWAY_GITHUB_TOKEN={token}"));
+                // Token lives only inside the askpass file, which is
+                // deleted before user build commands run — env vars
+                // would leak via /proc/1/environ (fork-PR builds run
+                // untrusted code).
                 commands.push(format!(
                     "git init -q && \
-                     printf '%s\\n' '#!/bin/sh' \
-                     'case \"$1\" in *Username*) echo \"x-access-token\";; *) echo \"$RUNWAY_GITHUB_TOKEN\";; esac' \
-                     > /tmp/runway-git-askpass && \
+                     echo {askpass} | base64 -d > /tmp/runway-git-askpass && \
                      chmod 700 /tmp/runway-git-askpass && \
                      export GIT_ASKPASS=/tmp/runway-git-askpass GIT_TERMINAL_PROMPT=0 && \
                      git fetch -q --depth 1 {base}/{repo}.git {sha} && \
                      git checkout -q FETCH_HEAD && \
-                     unset GIT_ASKPASS GIT_TERMINAL_PROMPT RUNWAY_GITHUB_TOKEN && \
+                     unset GIT_ASKPASS GIT_TERMINAL_PROMPT && \
                      rm -f /tmp/runway-git-askpass && \
                      touch /app/.runway-src-ok",
+                    askpass = b64_askpass("x-access-token", &token),
                     base = deployment.repo_base_url.trim_end_matches('/'),
                     repo = deployment.repo_full_name,
                     sha = deployment.commit_sha,
@@ -240,7 +242,6 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
                 let conn = runway_core::git_providers::connection(&ctx.db, &ctx.crypto, p, conn_id)
                     .await?
                     .ok_or_else(|| anyhow::anyhow!("{p} connection {conn_id} not found"))?;
-                env.push(format!("RUNWAY_GIT_TOKEN={}", conn.token));
                 // `repo_base_url` was resolved at project create —
                 // bitbucket clones hit bitbucket.org, not api.*.
                 let base = deployment.repo_base_url.trim_end_matches('/');
@@ -253,16 +254,16 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
                 };
                 commands.push(format!(
                     "git init -q && \
-                     printf '%s\\n' '#!/bin/sh' \
-                     'case \"$1\" in *Username*) echo \"{git_user}\";; *) echo \"$RUNWAY_GIT_TOKEN\";; esac' \
-                     > /tmp/runway-git-askpass && \
+                     echo {askpass} | base64 -d > /tmp/runway-git-askpass && \
                      chmod 700 /tmp/runway-git-askpass && \
                      export GIT_ASKPASS=/tmp/runway-git-askpass GIT_TERMINAL_PROMPT=0 && \
                      git fetch -q --depth 1 {base}/{repo}.git {sha} && \
                      git checkout -q FETCH_HEAD && \
-                     unset GIT_ASKPASS GIT_TERMINAL_PROMPT RUNWAY_GIT_TOKEN && \
+                     unset GIT_ASKPASS GIT_TERMINAL_PROMPT && \
                      rm -f /tmp/runway-git-askpass && \
                      touch /app/.runway-src-ok",
+                    askpass = b64_askpass(&git_user, &conn.token),
+                    base = base,
                     repo = deployment.repo_full_name,
                     sha = deployment.commit_sha,
                 ));
@@ -1070,6 +1071,17 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
 
     spawn_log_tailer(ctx, container_id.clone(), deployment_id.clone());
     Ok(())
+}
+
+/// Askpass script with credentials baked in, base64-encoded. The token
+/// exists only inside the file, which the fetch command deletes before
+/// user build commands run — env vars would leak via /proc/1/environ.
+fn b64_askpass(user: &str, token: &str) -> String {
+    use base64::Engine;
+    let script = format!(
+        "#!/bin/sh\ncase \"$1\" in *Username*) echo \"{user}\";; *) echo \"{token}\";; esac\n"
+    );
+    base64::engine::general_purpose::STANDARD.encode(script)
 }
 
 /// runway.json override wrapper for a config-command step (see `readcfg`).

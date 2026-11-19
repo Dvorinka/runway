@@ -340,7 +340,7 @@ async fn handle_pull_request(state: &AppState, data: &Value) {
             &commit,
             "webhook",
             None,
-            Some(json!({ "pr_number": number })),
+            Some(json!({ "pr_number": number, "pr_fork": is_fork })),
         )
         .await
         {

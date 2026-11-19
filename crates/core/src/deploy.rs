@@ -391,11 +391,19 @@ pub fn runtime_env_vars(
     settings: &Settings,
     crypto: &Crypto,
 ) -> Result<Vec<(String, String)>> {
-    let mut vars: HashMap<String, String> = deployment
-        .env_vars(crypto)?
-        .into_iter()
-        .map(|v| (v.key, v.value))
-        .collect();
+    // Fork-PR builds run untrusted code — withhold project env vars
+    // (Vercel parity: forks get no project env). Only RUNWAY_* system
+    // vars reach the container.
+    let fork = deployment.config.get("pr_fork") == Some(&json!(true));
+    let mut vars: HashMap<String, String> = if fork {
+        HashMap::new()
+    } else {
+        deployment
+            .env_vars(crypto)?
+            .into_iter()
+            .map(|v| (v.key, v.value))
+            .collect()
+    };
 
     let env_slug = project
         .environment_by_id(&deployment.environment_id)
@@ -917,5 +925,38 @@ mod tests {
         p.config = serde_json::json!({ "preview_domain": "https://staging.example.com/x" });
         let m = alias_domains(&d, &p, &s);
         assert_eq!(m["branch_domain"], "proj-branch-dev-feat.deploy.test");
+    }
+
+    #[test]
+    fn fork_preview_scrubs_project_env() {
+        let s = test_settings();
+        let crypto = crate::crypto::Crypto::new("test-key").unwrap();
+        let mut d = deployment("stg", "dev-feat");
+        let vars = vec![crate::models::EnvVar {
+            key: "SECRET_DB_PASS".into(),
+            value: "hunter2".into(),
+            environment: None,
+        }];
+        d.env_vars = crypto
+            .encrypt(&serde_json::to_string(&vars).unwrap())
+            .unwrap();
+        let p = project();
+
+        let normal: std::collections::HashMap<_, _> = runtime_env_vars(&d, &p, &s, &crypto)
+            .unwrap()
+            .into_iter()
+            .collect();
+        assert_eq!(
+            normal.get("SECRET_DB_PASS").map(String::as_str),
+            Some("hunter2")
+        );
+
+        d.config = serde_json::json!({ "pr_number": 7, "pr_fork": true });
+        let forked: std::collections::HashMap<_, _> = runtime_env_vars(&d, &p, &s, &crypto)
+            .unwrap()
+            .into_iter()
+            .collect();
+        assert!(!forked.contains_key("SECRET_DB_PASS"));
+        assert_eq!(forked.get("RUNWAY").map(String::as_str), Some("true"));
     }
 }

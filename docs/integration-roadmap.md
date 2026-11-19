@@ -179,9 +179,14 @@ KERN's `openapi.yaml` is the bar — Runway should match it.
 
 **P2:**
 - KERN Level 2 — shared runner pool, per-team tokens
-- Fork-preview isolation (KERN trust-tier model)
+- Fork-preview isolation — env scrub shipped (`pr_fork` → no project
+  env in build/runtime, unit-tested); clone tokens moved out of
+  container env into a deleted-before-build askpass file (all builds,
+  not just forks). Remaining: egress/network isolation (KERN trust-tier)
 - Usage metering per project/team (enterprise gate from #roadmap)
-- GitHub App webhook E2E + bitbucket arm (rest of #41)
+- GitHub App webhook E2E (rest of #41 — needs dev app creds; gitlab +
+  bitbucket legs verified against simulated providers incl.
+  `bitbucket_connection.base_url` for server-style topologies)
 
 ## Cross-links
 
