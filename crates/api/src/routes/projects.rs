@@ -310,10 +310,15 @@ pub async fn create(
                 .await
                 .map_err(|_| ApiError::bad_request("repository not accessible via connection"))?;
             repo_id = repo["id"].as_i64().unwrap_or(0);
-            // Bitbucket's API base is api.bitbucket.org — clones go to
-            // bitbucket.org itself.
+            // Bitbucket Cloud: API lives at api.bitbucket.org but clones
+            // go to bitbucket.org. A non-default base_url (Bitbucket
+            // Server-style) serves both API and git from the same host.
             repo_base_url = if p == "bitbucket" {
-                "https://bitbucket.org".into()
+                if client.conn.base_url == "https://api.bitbucket.org" {
+                    "https://bitbucket.org".into()
+                } else {
+                    client.conn.base_url.clone()
+                }
             } else {
                 client.conn.base_url.clone()
             };

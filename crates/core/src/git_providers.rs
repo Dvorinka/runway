@@ -54,9 +54,9 @@ pub async fn connection(
         _ => return Ok(None),
     };
     // Table name is from our own match — safe. Bitbucket stores
-    // `workspace` instead of `base_url`/`username` — same slot reused.
+    // `workspace` instead of `username` — same slot reused.
     let cols = if provider == "bitbucket" {
-        "id, 'https://api.bitbucket.org' AS base_url, workspace AS username, token"
+        "id, base_url, workspace AS username, token"
     } else {
         "id, base_url, username, token"
     };
@@ -97,7 +97,9 @@ impl Client {
         match self.provider.as_str() {
             "gitea" | "forgejo" => format!("{base}/api/v1"),
             "gitlab" => format!("{base}/api/v4"),
-            "bitbucket" => "https://api.bitbucket.org/2.0".into(),
+            // Cloud is api.bitbucket.org; a stored base_url also covers
+            // Bitbucket Server-style endpoints that share /2.0 paths.
+            "bitbucket" => format!("{base}/2.0"),
             _ => base.into(),
         }
     }

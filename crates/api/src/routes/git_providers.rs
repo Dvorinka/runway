@@ -114,7 +114,13 @@ pub async fn connect(
             .unwrap_or_else(|| "https://gitlab.com".into())
             .trim_end_matches('/')
             .to_string(),
-        "bitbucket" => "https://api.bitbucket.org".into(),
+        "bitbucket" => body
+            .base_url
+            .clone()
+            .filter(|b| !b.trim().is_empty())
+            .unwrap_or_else(|| "https://api.bitbucket.org".into())
+            .trim_end_matches('/')
+            .to_string(),
         _ => unreachable!(),
     };
     let probe = probe_client(provider, &base_url, &body);
@@ -141,15 +147,17 @@ pub async fn connect(
             .filter(|w| !w.trim().is_empty())
             .ok_or_else(|| ApiError::bad_request("workspace required"))?;
         sqlx::query_as(&format!(
-            "INSERT INTO {table} (user_id, workspace, token)
-             VALUES ($1,$2,$3)
+            "INSERT INTO {table} (user_id, workspace, token, base_url)
+             VALUES ($1,$2,$3,$4)
              ON CONFLICT (user_id, workspace) DO UPDATE SET
-                token = EXCLUDED.token, updated_at = now()
+                token = EXCLUDED.token, base_url = EXCLUDED.base_url,
+                updated_at = now()
              RETURNING id"
         ))
         .bind(user.user.id)
         .bind(&workspace)
         .bind(&ciphertext)
+        .bind(&base_url)
         .fetch_one(&state.db)
         .await?
     } else {
@@ -209,11 +217,7 @@ pub async fn list_connections(
     let rows: Vec<(i64, Option<String>, String, String)> = sqlx::query_as(&format!(
         "SELECT id, {base} AS base_url, {name} AS username, created_at::text
          FROM {table} WHERE user_id = $1 ORDER BY id",
-        base = if provider == "bitbucket" {
-            "'https://api.bitbucket.org'"
-        } else {
-            "base_url"
-        },
+        base = "base_url",
         name = if provider == "bitbucket" {
             "workspace"
         } else {
