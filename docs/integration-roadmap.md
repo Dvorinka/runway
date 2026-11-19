@@ -19,7 +19,7 @@ user- and agent-first.
 | Deployment rules | `deployment_rules` config | `auto_deploy`, `preview_prs`, `preview_comment` |
 | Remote nodes | `remote_node` | token-gated enroll, mTLS, last-seen — runtime only |
 | Team webhooks (outbound) | `routes::teams` | deploy events fan out |
-| Gitea/Forgejo/GitLab webhooks | `git_providers.rs` | #41 still open for live verification |
+| Gitea/Forgejo/GitLab webhooks | `git_providers.rs` | GitLab leg verified E2E 2026-11-19; GitHub App + bitbucket legs remain on #41 |
 | MCP server | `routes::mcp` | ~20 read/deploy tools |
 | Audit export, activity log, `--json` CLI | recent PRs | agent-consumable |
 | Automation bypass secret | #78 | Vercel deployment-protection equivalent |
@@ -154,7 +154,10 @@ KERN's `openapi.yaml` is the bar — Runway should match it.
 - ~~vercel.json import~~ — upload archives auto-translate to runway.json
 - ~~Node 24 runner~~ — `node-24` → `node:24-bookworm`
 - ~~`Idempotency-Key`~~ on deploy endpoints + MCP arg
-- Remaining P0: preview TTL teardown
+- ~~Preview TTL teardown~~ — `preview_ttl_hours`, reconcile sweep
+- ~~Structured API error codes~~ — `code` field on error bodies
+- ~~Traefik edge-network reattach on restart~~ (#98) — container-id
+  watcher + malformed dynamic-config sweep at startup
 
 **P1 — first half shipped in PR #97:**
 - ~~GitHub Checks API~~ — check runs with `external_id`, status fallback
@@ -163,18 +166,17 @@ KERN's `openapi.yaml` is the bar — Runway should match it.
 - ~~Node selector~~ — `project.config.node_selector` label match,
   least-loaded pick (executor-node half of remote builds)
 - ~~MCP write batch~~ — config, hooks, domains, storage (31 tools)
-- Executor builds on remote nodes — static `/out` read-back via
-  docker cp (still open)
-- KERN Level 0 docs recipe; spec KERN dispatch/artifact surface
+- ~~Executor builds on remote nodes (static)~~ — `/out` pulled back
+  over the docker archive API, shipped to a node volume for SWS
+- ~~KERN bridge Level 1~~ — `build_executor: "kern"` verified live
+  against kern.tdvorak.dev (bundle dispatch + artifact return)
 
 **P2:**
-- Remote image builds + registry story
-- `build_executor: kern` end-to-end
-- Preview TTL teardown
+- Remote image builds + registry story (dockerfile arm of #94)
+- KERN Level 2 — shared runner pool, per-team tokens
 - Fork-preview isolation (KERN trust-tier model)
 - Usage metering per project/team (enterprise gate from #roadmap)
-- Structured API error codes
-- Traefik edge-network reattach on restart (#98)
+- GitHub App webhook E2E + bitbucket arm (rest of #41)
 
 ## Cross-links
 

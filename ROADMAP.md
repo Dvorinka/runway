@@ -407,12 +407,15 @@ framework detection.
       Node 24; the matrix tops out at node-22. Next 16 declares
       `node >= 20.9` so it runs today, but parity needs a node-24
       image or an explicit override path.
-- [ ] **GitHub-connected CI surface** — `docs/integration-roadmap.md`:
-      preview policy (draft/fork/label gates, TTL), superseded-build
-      cancel, Checks API + re-run, `@runway deploy` PR commands,
-      deploy hooks, per-project status contexts.
-- [ ] **Executor nodes** — builds on user-owned hardware (labels,
-      node_selector); remote static builds first, registry for images.
+- [x] **GitHub-connected CI surface** — `docs/integration-roadmap.md`:
+      preview policy (draft/fork/label gates, `preview_ttl_hours`
+      teardown), superseded-build cancel, Checks API + re-run,
+      `@runway deploy` PR commands, deploy hooks, per-project status
+      contexts — all shipped in PR #97.
+- [ ] **Executor nodes** — builds on user-owned hardware: `node_selector`
+      label matching + remote static builds shipped (artifact returns
+      over the docker archive API into a node volume). Remaining:
+      remote dockerfile/image builds need a registry contract.
 - [x] **KERN bridge Level 1 (optional)** — `build_executor: "kern"` on a
       static project ships the source bundle to a KERN control plane,
       dispatches a generated workflow on `kern_labels`, and imports the
@@ -420,11 +423,13 @@ framework detection.
       live against kern.tdvorak.dev. Scope: static builds only;
       instance-level token; per-team tokens + server/image builds are
       the remaining work.
-- [ ] **Agent-first API** — OpenAPI spec, llms.txt + deploy skill,
-      dry-run plans, idempotency keys, error codes, `runway doctor`,
-      MCP write-tool parity with REST.
-- [ ] **Git-provider verification** — #41: connect probes,
-      `resolve_commit`, webhook-triggered deploys unverified live.
+- [x] **Agent-first API** — OpenAPI spec, llms.txt, dry-run plans,
+      idempotency keys, structured error codes, `runway doctor`,
+      MCP write-tool parity (31 tools) — shipped in PR #97.
+- [ ] **Git-provider verification** — #41: GitLab leg verified
+      end-to-end (connect probe, project create, push webhook →
+      clone → build → serve) against a simulated GitLab backend.
+      Remaining: GitHub App leg (needs real app creds), bitbucket.
 - [ ] **Monorepo `root_directory` upload parity** — Vercel installs
       the whole workspace at its root; uploads need the full repo
       tarball + overrides (verified pattern) or a `root_directory`
