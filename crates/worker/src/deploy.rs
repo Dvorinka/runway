@@ -2725,15 +2725,16 @@ function readBody(req) {
   return new Promise(resolve => {
     const chunks = [];
     req.on('data', d => chunks.push(d));
-    req.on('error', () => resolve({}));
+    req.on('error', () => resolve({ raw: null, parsed: {} }));
     req.on('end', () => {
       const raw = Buffer.concat(chunks);
-      if (!raw.length) return resolve({});
+      if (!raw.length) return resolve({ raw: null, parsed: {} });
       const ct = req.headers['content-type'] || '';
       if (ct.includes('application/json')) {
-        try { return resolve(JSON.parse(raw.toString())); } catch { return resolve(raw.toString()); }
+        try { return resolve({ raw, parsed: JSON.parse(raw.toString()) }); }
+        catch { return resolve({ raw, parsed: raw.toString() }); }
       }
-      resolve(raw.toString());
+      resolve({ raw, parsed: raw.toString() });
     });
   });
 }
@@ -2764,7 +2765,8 @@ http.createServer(async (req, res) => {
       const i = c.indexOf('=');
       if (i > 0) req.cookies[c.slice(0, i).trim()] = decodeURIComponent(c.slice(i + 1).trim());
     }
-    req.body = await readBody(req);
+    const { raw, parsed } = await readBody(req);
+    req.body = parsed;
     res.status = c => (res.statusCode = c, res);
     res.json = o => { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(o)); };
     res.send = b => {
@@ -2775,7 +2777,28 @@ http.createServer(async (req, res) => {
       const code = typeof a === 'number' ? a : 307, loc = typeof a === 'number' ? b : a;
       res.statusCode = code; res.setHeader('location', loc); res.end();
     };
-    await h(req, res);
+    // Two Vercel contracts: `(req,res)` handlers (declared arity ≥ 2) get
+    // the node:http objects with helpers; single-arg handlers are the
+    // edge-style `handler(req: Request): Promise<Response>` — built on
+    // the Web globals Node ships since 18.
+    if (h.length <= 1) {
+      const hop = new Set(['host', 'connection', 'content-length', 'transfer-encoding']);
+      const headers = Object.fromEntries(
+        Object.entries(req.headers).filter(([k]) => !hop.has(k)));
+      const init = { method: req.method, headers };
+      if (raw && req.method !== 'GET' && req.method !== 'HEAD') init.body = raw;
+      const out = await h(new Request(u.href, init));
+      if (out instanceof Response) {
+        res.statusCode = out.status;
+        out.headers.forEach((v, k) => res.setHeader(k, v));
+        if (out.body) for await (const chunk of out.body) res.write(chunk);
+      } else if (out !== undefined && out !== null) {
+        res.setHeader('content-type', 'application/json');
+        res.write(JSON.stringify(out));
+      }
+    } else {
+      await h(req, res);
+    }
     if (!res.writableEnded) res.end();
   } catch (e) {
     console.error('handler error:', e);
