@@ -396,11 +396,14 @@ framework detection.
 - [x] **Serverless API runtime (shim)** — static projects shipping
       `api/*.{js,ts,mjs,cjs}` now get a functions image: esbuild
       bundles each handler to CJS and an embedded `node:http`
-      dispatcher serves Vercel's `(req,res)` contract
-      (`res.status/json/send/redirect`, `req.query`, parsed JSON body,
-      `[param]`/`[...rest]` dynamic segments, `api/index.*` → `/api`)
-      alongside the static output on one domain (PR #101, verified
-      live on `github-e2e`: JS + TS + `[id]` handlers). Next route
+      dispatcher serves both Vercel contracts: `(req,res)` handlers
+      (`res.status/json/send/redirect`, `req.query`, parsed JSON body)
+      and single-arg Web-API handlers (`handler(req: Request)` whose
+      returned `Response` is piped back — Vercel `runtime: 'edge'`
+      style on Node globals). `[param]`/`[...rest]` dynamic segments,
+      `api/index.*` → `/api`; static output co-serves on one domain
+      (PR #101 + #103, verified live on `github-e2e`: JS + TS + `[id]`
+      + edge-style handlers). Next route
       handlers are served by Next's own server in dockerfile mode.
       Remaining scope under enterprise gates: per-function isolation,
       cold-start semantics, and per-function resource accounting.
