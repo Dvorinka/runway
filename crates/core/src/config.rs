@@ -44,6 +44,8 @@ pub struct Settings {
     pub max_memory_mb: Option<i64>,
     /// Seconds a deployment may stay non-ready before failing.
     pub deployment_timeout_seconds: u64,
+    /// Max pooled Postgres connections shared by API + workers.
+    pub db_max_connections: u32,
     /// Interval between monitor probe ticks.
     pub monitor_interval_seconds: u64,
     /// Interval between observed-state reconcile sweeps (non-live rows).
@@ -159,6 +161,7 @@ impl Settings {
             default_memory_mb: opt("DEFAULT_MEMORY_MB").and_then(|v| v.parse().ok()),
             max_memory_mb: opt("MAX_MEMORY_MB").and_then(|v| v.parse().ok()),
             deployment_timeout_seconds: env_u64("DEPLOYMENT_TIMEOUT_SECONDS", 300),
+            db_max_connections: env_u64("DB_MAX_CONNECTIONS", 25) as u32,
             monitor_interval_seconds: env_u64("MONITOR_INTERVAL_SECONDS", 2),
             reconcile_interval_seconds: env_u64("RECONCILE_INTERVAL_SECONDS", 60),
             container_delete_grace_seconds: env_u64("CONTAINER_DELETE_GRACE_SECONDS", 15),
@@ -298,6 +301,7 @@ pub(crate) fn test_settings() -> Settings {
         default_memory_mb: None,
         max_memory_mb: None,
         deployment_timeout_seconds: 300,
+        db_max_connections: 25,
         monitor_interval_seconds: 2,
         reconcile_interval_seconds: 60,
         container_delete_grace_seconds: 15,

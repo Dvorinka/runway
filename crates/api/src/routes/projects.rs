@@ -425,6 +425,16 @@ pub async fn get(
     Ok(Json(project_json(&state, &project).await).into_response())
 }
 
+/// serde helper: absent → None, explicit null → Some(None), value →
+/// Some(Some(v)). A bare `Option<Option<T>>` collapses null and absent.
+fn deserialize_double_option<'de, D, T>(d: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(d).map(Some)
+}
+
 #[derive(Deserialize)]
 pub struct PatchProject {
     pub name: Option<String>,
@@ -432,6 +442,8 @@ pub struct PatchProject {
     /// Shallow-merged into project.config.
     pub config: Option<Value>,
     /// Assign to a remote Docker node (null = local daemon).
+    /// Option<Option<..>> so "absent" and "explicit null" differ.
+    #[serde(default, deserialize_with = "deserialize_double_option")]
     pub remote_node_id: Option<Option<String>>,
     /// Full replacement of the environments array (add/remove/edit —
     /// devpush form semantics serialize the whole list anyway).
@@ -1774,5 +1786,15 @@ mod tests {
     fn analytics_snippet_size_cap() {
         let big = format!("<script>{}</script>", "x".repeat(17 * 1024));
         assert!(validate_analytics_config(&cfg(&big, "")).is_err());
+    }
+
+    #[test]
+    fn patch_remote_node_id_distinguishes_absent_null_and_value() {
+        let absent: PatchProject = serde_json::from_str("{}").unwrap();
+        assert!(absent.remote_node_id.is_none());
+        let null: PatchProject = serde_json::from_str("{\"remote_node_id\":null}").unwrap();
+        assert_eq!(null.remote_node_id, Some(None));
+        let node: PatchProject = serde_json::from_str("{\"remote_node_id\":\"node01\"}").unwrap();
+        assert_eq!(node.remote_node_id, Some(Some("node01".to_string())));
     }
 }

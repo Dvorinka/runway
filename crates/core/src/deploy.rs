@@ -247,36 +247,25 @@ pub async fn update_status(
     if status.is_none() && conclusion.is_none() && error.is_none() && container_status.is_none() {
         return Ok(());
     }
-    let mut tx = db.begin().await?;
-    if let Some(s) = status {
-        sqlx::query("UPDATE deployment SET status = $1 WHERE id = $2")
-            .bind(s)
-            .bind(deployment_id)
-            .execute(&mut *tx)
-            .await?;
-    }
-    if let Some(c) = conclusion {
-        sqlx::query("UPDATE deployment SET conclusion = $1, concluded_at = now() WHERE id = $2")
-            .bind(c)
-            .bind(deployment_id)
-            .execute(&mut *tx)
-            .await?;
-    }
-    if let Some(e) = error {
-        sqlx::query("UPDATE deployment SET error = $1 WHERE id = $2")
-            .bind(e)
-            .bind(deployment_id)
-            .execute(&mut *tx)
-            .await?;
-    }
-    if let Some(cs) = container_status {
-        sqlx::query("UPDATE deployment SET container_status = $1 WHERE id = $2")
-            .bind(cs)
-            .bind(deployment_id)
-            .execute(&mut *tx)
-            .await?;
-    }
-    tx.commit().await?;
+    // One statement, one row-lock hold, one WAL flush — under concurrent
+    // deploys the 4-statement version held the row lock across multiple
+    // round-trips and stalled the deployment-observer UPDATE (>1s).
+    sqlx::query(
+        "UPDATE deployment SET
+         status = COALESCE($2::text, status),
+         conclusion = COALESCE($3::text, conclusion),
+         concluded_at = CASE WHEN $3 IS NULL THEN concluded_at ELSE now() END,
+         error = COALESCE($4::jsonb, error),
+         container_status = COALESCE($5::text, container_status)
+         WHERE id = $1",
+    )
+    .bind(deployment_id)
+    .bind(status)
+    .bind(conclusion)
+    .bind(error)
+    .bind(container_status)
+    .execute(db)
+    .await?;
 
     if let Some(dep) = get(db, deployment_id).await? {
         let value = conclusion.or(status).unwrap_or_default();

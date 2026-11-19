@@ -244,6 +244,8 @@ enum Command {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // tracing-log is enabled by default in tracing-subscriber: sqlx's
+    // `log` records (incl. slow-statement warnings) reach tracing.
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
