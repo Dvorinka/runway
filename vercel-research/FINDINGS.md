@@ -159,3 +159,29 @@ Backlog candidates:
 - Composable filter chips on Deployments (vs tabs)
 - Project-scope sidebar swap (rail items become project-scoped)
 - Resources for server/image deploys (needs tarball/image inspection)
+
+## Live deploy test results (2026-11-18)
+
+Five representative archives upload-deployed to the local compose stack:
+
+| Project | Class | Result |
+|---|---|---|
+| containr | static | ✅ deployed, serves 200 |
+| bookra | Vite SPA (monorepo) | ✅ after fixes — runway.json build_command + output_directory + rewrites SPA fallback all live |
+| invico | Astro + api/chat.js | ✅ static side serves 200; ❌ /api/chat → 405, no serverless runtime |
+| monobet | Next 16 SSR + better-auth | ✅ `next start` runs on node-20; app needs env + linked Postgres to respond |
+| nothing-modes | static + api/*.ts (9 handlers) | ❌ no execution model — central parity blocker |
+
+Defects found by the tests, all fixed in PR #84:
+1. Storage provision mkdir used host path inside container → EACCES.
+2. `ensure_network` check-then-create race → 409 under parallel deploys.
+3. runway.json overrides dead without in-container `jq`; also needed
+   `eval` (else `&&` splits into npm args) and `{ }` groups (else `;`
+   breaks the `commands.join(" && ")` chain and leaks stale OVERRIDE).
+4. SWS `config.toml` silently drops `SERVER_PAGE_FALLBACK` env →
+   restated under `[general]`.
+5. Tarball `./`-prefixed `package.json` members broke dependency-based
+   framework detection (Astro detected as nodejs → `npm start` crash).
+
+Issues filed: #86 serverless api runtime, #87 vercel.json import,
+#88 Node 24 runner, #89 observer UPDATE latency. #41 still open.

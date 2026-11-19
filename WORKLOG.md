@@ -433,3 +433,52 @@ throwaway `data-run` DB; production `~/.config/runway` was untouched
 - Custom domains stay on the environment-id alias (set at deploy time).
   Redirect rules are project-scoped. Both are reported as unchanged
   because that is what `promote` actually does.
+
+## Vercel-parity audit + live deploy testing (2026-11-18)
+
+- Inventoried the full Vercel estate via CLI + REST API: 13 projects,
+  14 custom domains, env-var names per environment (no values), git
+  links, root directories, Node versions (24 across the board;
+  sportcreative 22), one lambda-bearing deployment each for
+  nothing-modes/monobet/dash/invico.
+- Upload-deployed five representative archives into the local compose
+  stack: Containr (static ✅ serves 200), Bookra (Vite monorepo SPA ✅
+  after fixes), Invico (Astro ✅ static; `/api/chat` 405 — serverless
+  gap), monobet (Next 16 `next start` ✅ runtime; app needs env +
+  storage to respond), nothing-modes (❌ `api/*.ts` handlers have no
+  execution model — the central parity blocker).
+- Fixed four defects the tests exposed (PR #84):
+  storage host-path mkdir → EACCES in-container; `ensure_network`
+  check-then-create race → 409; `runway.json` overrides dead without
+  in-container `jq` (new `readcfg` fallback chain + `eval` + brace
+  groups so `commands.join(" && ")` stays one item per step); SWS
+  `config.toml` silently dropping `SERVER_PAGE_FALLBACK` → restated
+  under `[general]`; tarball `./package.json` members breaking
+  dependency-based framework detection.
+- Storage provisioning verified end-to-end post-fix (`monobet-db`
+  → `active`).
+- Remaining, now in ROADMAP: serverless API runtime (deliberate scope
+  decision), `vercel.json` import, Node 24 runners, git-provider live
+  verification (#41), deployment-observer SQL latency, enterprise
+  gates (metering, multi-region, preview-env parity, protection rules).
+
+## GitHub/CI integration audit + roadmap (2026-11-19)
+
+- Audited Runway's GitHub surface: app manifest flow, install tokens,
+  push→rules→deploy, PR previews + teardown, marked PR comment,
+  `runway/deploy` commit statuses — more complete than expected.
+- Confirmed gaps vs Vercel: no Checks API, no draft/fork/label preview
+  policy, no superseded-build cancel, no deploy hooks, no PR commands,
+  fixed status context, previews don't scope to `preview` env.
+- Remote nodes are runtime-only; static/docker builds hard-fail on
+  them. Executor-node design (capabilities + labels + node_selector)
+  is the path to "build on your own architecture".
+- KERN (~/Desktop/PROG+HTML/KERN) assessed as optional bridge:
+  Level 0 = shared machines recipe (free today); Level 1 =
+  `build_executor: kern` generated-workflow dispatch + artifact
+  return; Level 2 = shared runner pool. Its trust-tier network
+  isolation is a spec for fork-preview isolation.
+- Agent-first gaps: MCP lacks project/domain/storage/node/webhook
+  writes; no OpenAPI, llms.txt, dry-run, idempotency keys, error
+  codes, or `runway doctor`.
+- Written up in docs/integration-roadmap.md with P0/P1/P2 phasing.

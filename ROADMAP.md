@@ -371,8 +371,72 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
       reset; superadmin-gated. Settings gains a live-refreshing Job
       queue card with status filter chips and per-row retry
 
-## Non-goals
+## Vercel-parity audit (2026-11-18)
 
-- Serverless function isolation, ISR, edge middleware runtime
+Thirteen live Vercel projects were inventoried (CLI + REST API) and five
+representative archives were upload-deployed into a local instance.
+
+Verified working today:
+
+- Static sites (Containr) — deploy, alias, serve 200
+- Vite SPA in a monorepo (Bookra) — `runway.json` `build_command` +
+  `output_directory` overrides + `rewrites` SPA fallback
+- Astro static (Invico) — `astro` preset detection → `dist` publish
+- Next.js SSR (monobet) — `next start` runs on the node-20 runner;
+  needs env (`BETTER_AUTH_SECRET`, `DATABASE_URL`) + linked storage
+- Managed Postgres provisioning (after the container-path fix)
+
+Defects fixed during the audit (PR #84): storage host-path mkdir,
+`ensure_network` create race, `runway.json` overrides gated on missing
+`jq` + `eval`/brace-group chain semantics, SWS config dropping
+`page-fallback`, tarball `./`-prefixed `package.json` breaking
+framework detection.
+
+### Remaining gaps before a full Vercel switch
+
+- [ ] **Serverless API runtime** — Vercel `api/*.ts` handlers
+      (nothing-modes ships ~9) and Next route handlers without a
+      persistent server have no Runway execution model; `/api/*`
+      currently 405s on static deploys. Largest single blocker:
+      3 of 13 projects depend on it. Deliberate scope decision —
+      currently a documented non-goal.
+- [ ] **`vercel.json` import** — redirects/rewrites/headers shape is
+      already supported via `runway.json`; auto-read `vercel.json`
+      (or a `runway vercel-import` translator) for migration.
+- [ ] **Node 24 runners** — every audited Vercel project is pinned to
+      Node 24; the matrix tops out at node-22. Next 16 declares
+      `node >= 20.9` so it runs today, but parity needs a node-24
+      image or an explicit override path.
+- [ ] **GitHub-connected CI surface** — `docs/integration-roadmap.md`:
+      preview policy (draft/fork/label gates, TTL), superseded-build
+      cancel, Checks API + re-run, `@runway deploy` PR commands,
+      deploy hooks, per-project status contexts.
+- [ ] **Executor nodes** — builds on user-owned hardware (labels,
+      node_selector); remote static builds first, registry for images.
+- [ ] **KERN bridge (optional)** — `build_executor: kern` dispatches a
+      generated build workflow to a self-hosted KERN control plane and
+      imports the artifact; Level 0 is a docs recipe today.
+- [ ] **Agent-first API** — OpenAPI spec, llms.txt + deploy skill,
+      dry-run plans, idempotency keys, error codes, `runway doctor`,
+      MCP write-tool parity with REST.
+- [ ] **Git-provider verification** — #41: connect probes,
+      `resolve_commit`, webhook-triggered deploys unverified live.
+- [ ] **Monorepo `root_directory` upload parity** — Vercel installs
+      the whole workspace at its root; uploads need the full repo
+      tarball + overrides (verified pattern) or a `root_directory`
+      config on upload projects.
+- [ ] **Deployment-observer SQL latency** — `UPDATE deployment SET
+      observed_status` measured 1.3–2.1s under load (slow-query log);
+      add index or batch.
+- [ ] **Enterprise readiness gates** — function isolation design,
+      per-deployment resource accounting/usage metering, multi-region
+      story, preview-env parity (Vercel creates preview env per PR),
+      deployment protection rules, and audit-log retention policies
+      before claiming Vercel replacement for production estates.
+
+### Deliberate non-goals (unchanged)
+
+- Serverless function isolation, ISR, edge middleware runtime —
+  see the gap list above; keeping the flag until a decision is made
 - Self-built CDN (Cloudflare proxy covers this)
 - Kubernetes orchestration
