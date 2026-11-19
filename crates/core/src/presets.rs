@@ -11,9 +11,10 @@ pub fn runner_image(slug: &str) -> Option<&'static str> {
         "python-3.12" => "ghcr.io/devpushhq/runner-python-3.12:1.0.1",
         "pypy-3.11" => "ghcr.io/devpushhq/runner-pypy-3.11:1.0.1",
         "node-20" => "ghcr.io/devpushhq/runner-node-20:1.0.1",
-        // jarvis: official image until a dedicated node-22 runner ships;
+        // jarvis: official images until dedicated node-22/24 runners ship;
         // bookworm (not slim) carries git + a C toolchain.
         "node-22" => "node:22-bookworm",
+        "node-24" => "node:24-bookworm",
         "bun-1.3" => "ghcr.io/devpushhq/runner-bun-1.3:1.0.1",
         "go-1.25" => "ghcr.io/devpushhq/runner-go-1.25:1.0.1",
         "php-fpm-8.3" => "ghcr.io/devpushhq/runner-php-fpm-8.3:1.0.4",
