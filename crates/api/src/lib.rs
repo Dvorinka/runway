@@ -297,6 +297,7 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/teams/{id}/avatar",
             put(routes::avatars::put_team).delete(routes::avatars::delete_team),
         )
+        .route("/api/v1/teams/{id}/usage", get(routes::teams::usage))
         .route(
             "/api/v1/teams/{id}/members/{user_id}",
             axum::routing::patch(routes::teams::update_member).delete(routes::teams::remove_member),

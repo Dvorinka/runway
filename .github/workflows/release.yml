@@ -66,11 +66,25 @@ jobs:
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
           sudo dpkg --add-architecture arm64
-          # GH mirrors carry amd64 only — pin them, then add ports for arm64
-          sudo sed -i 's/^Types: deb$/Types: deb\nArchitectures: amd64/' \
-            /etc/apt/sources.list.d/ubuntu.sources
-          printf 'Types: deb\nURIs: http://ports.ubuntu.com/ubuntu-ports\nSuites: noble noble-updates noble-security\nComponents: main universe\nArchitectures: arm64\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n' \
-            | sudo tee /etc/apt/sources.list.d/arm64-ports.sources >/dev/null
+          # GH mirrors carry amd64 only — pin them, then add ports for
+          # arm64. Handle both deb822 (ubuntu.sources) and legacy
+          # .list runner images; codename from os-release, not hardcoded.
+          CODENAME="$(. /etc/os-release && echo "$VERSION_CODENAME")"
+          if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
+            sudo sed -i 's/^Types: deb$/Types: deb\nArchitectures: amd64/' \
+              /etc/apt/sources.list.d/ubuntu.sources
+            printf 'Types: deb\nURIs: http://ports.ubuntu.com/ubuntu-ports\nSuites: %s %s-updates %s-security\nComponents: main universe\nArchitectures: arm64\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n' \
+              "$CODENAME" "$CODENAME" "$CODENAME" \
+              | sudo tee /etc/apt/sources.list.d/arm64-ports.sources >/dev/null
+          else
+            for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do
+              [ -f "$f" ] && sudo sed -i -E 's|^deb http|deb [arch=amd64] http|' "$f"
+            done
+            { printf 'deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports %s main universe\n' "$CODENAME"
+              printf 'deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports %s-updates main universe\n' "$CODENAME"
+              printf 'deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports %s-security main universe\n' "$CODENAME"
+            } | sudo tee /etc/apt/sources.list.d/arm64-ports.list >/dev/null
+          fi
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu libssl-dev:arm64
       - name: Build

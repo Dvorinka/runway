@@ -775,6 +775,23 @@ pub(crate) async fn project_usage(
     .bind(days as i32)
     .fetch_one(&state.db)
     .await?;
+    // Bandwidth from container-level net counters (cumulative samples —
+    // per-deployment delta is max−min over the window).
+    let bw: (i64,) = sqlx::query_as(
+        "SELECT coalesce(sum(delta), 0)::bigint FROM (
+             SELECT (max(m.net_tx) - min(m.net_tx))
+                  + (max(m.net_rx) - min(m.net_rx)) AS delta
+             FROM deployment_metric m
+             JOIN deployment d ON d.id = m.deployment_id
+             WHERE d.project_id = $1
+               AND m.ts > now() - make_interval(days => $2)
+             GROUP BY m.deployment_id
+         ) t",
+    )
+    .bind(project_id)
+    .bind(days as i32)
+    .fetch_one(&state.db)
+    .await?;
     Ok(json!({
         "project_id": project_id,
         "days": days,
@@ -784,11 +801,13 @@ pub(crate) async fn project_usage(
         "build_seconds": row.3 as i64,
         "artifact_bytes": row.4,
         "image_bytes": row.5,
+        "bandwidth_bytes": bw.0,
     }))
 }
 
 /// Per-project usage metering: deploy counts, build time, artifact and
-/// image bytes over the last N days (default 30).
+/// image bytes, and container-level bandwidth (rx+tx deltas from
+/// `deployment_metric`) over the last N days (default 30).
 pub async fn usage(
     user: AuthUser,
     State(state): State<AppState>,

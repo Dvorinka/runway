@@ -395,7 +395,11 @@ pub async fn link(project: Option<String>) -> anyhow::Result<()> {
 }
 
 /// `runway deploy` — tar the current directory and upload-deploy it.
-pub async fn deploy(follow: bool, dry_run: bool) -> anyhow::Result<()> {
+pub async fn deploy(
+    follow: bool,
+    dry_run: bool,
+    root: Option<std::path::PathBuf>,
+) -> anyhow::Result<()> {
     let client = Client::from_config()?;
     let link = match client::load_link() {
         Ok(l) => l,
@@ -424,7 +428,7 @@ pub async fn deploy(follow: bool, dry_run: bool) -> anyhow::Result<()> {
         Err(e) => bail!("{e} — run `runway create <name>` first"),
     };
 
-    let tarball = pack_cwd()?;
+    let tarball = pack_dir(root.as_deref())?;
     if dry_run {
         let plan = client
             .upload(
@@ -684,7 +688,7 @@ pub async fn usage(days: i64, json_out: bool) -> anyhow::Result<()> {
     let secs = u["build_seconds"].as_u64().unwrap_or(0);
     let mins = secs as f64 / 60.0;
     println!(
-        "{}d: {} deployments ({} ok, {} failed)  build {:.1} min  artifacts {}  images {}",
+        "{}d: {} deployments ({} ok, {} failed)  build {:.1} min  artifacts {}  images {}  bandwidth {}",
         u["days"].as_i64().unwrap_or(days),
         u["deployments"].as_u64().unwrap_or(0),
         u["succeeded"].as_u64().unwrap_or(0),
@@ -692,6 +696,7 @@ pub async fn usage(days: i64, json_out: bool) -> anyhow::Result<()> {
         mins,
         fmt_bytes(&u["artifact_bytes"]),
         fmt_bytes(&u["image_bytes"]),
+        fmt_bytes(&u["bandwidth_bytes"]),
     );
     Ok(())
 }
@@ -1555,21 +1560,32 @@ fn confirm_yes(msg: &str) -> anyhow::Result<bool> {
     Ok(!matches!(s.to_lowercase().as_str(), "n" | "no"))
 }
 
-/// Tar+gzip CWD via the system `tar` (excludes VCS/build dirs). Returns bytes.
-fn pack_cwd() -> anyhow::Result<Vec<u8>> {
-    let out = std::process::Command::new("tar")
-        .args([
-            "-czf",
-            "-",
-            "--exclude=./.git",
-            "--exclude=./node_modules",
-            "--exclude=./.runway",
-            "--exclude=./.vercel",
-            "--exclude=./target",
-            "--exclude=./.next",
-            "--exclude=./.turbo",
-            ".",
-        ])
+/// Tar+gzip a directory via the system `tar` (excludes VCS/build dirs).
+/// `None` packs CWD. Returns bytes.
+fn pack_dir(dir: Option<&std::path::Path>) -> anyhow::Result<Vec<u8>> {
+    let mut cmd = std::process::Command::new("tar");
+    cmd.args([
+        "-czf",
+        "-",
+        "--exclude=./.git",
+        "--exclude=./node_modules",
+        "--exclude=*/node_modules",
+        "--exclude=./.runway",
+        "--exclude=*/.runway",
+        "--exclude=./.vercel",
+        "--exclude=*/.vercel",
+        "--exclude=./target",
+        "--exclude=*/target",
+        "--exclude=./.next",
+        "--exclude=*/.next",
+        "--exclude=./.turbo",
+        "--exclude=*/.turbo",
+        ".",
+    ]);
+    if let Some(d) = dir {
+        cmd.current_dir(d);
+    }
+    let out = cmd
         .output()
         .context("failed to run `tar` — required for `runway deploy`")?;
     if !out.status.success() {

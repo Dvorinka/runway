@@ -434,20 +434,31 @@ framework detection.
       (`bitbucket_connection.base_url` for server-style topologies);
       GitHub App `runway-deploys` via env creds + signed synthetic
       push on a real private repo — check run posted back.
-- [ ] **Monorepo `root_directory` upload parity** — Vercel installs
-      the whole workspace at its root; uploads need the full repo
-      tarball + overrides (verified pattern) or a `root_directory`
-      config on upload projects.
+- [x] **Monorepo `root_directory` upload parity** — `runway deploy
+      --root <dir>` packs the repo root from inside an app subtree
+      while `config.root_directory` selects the app server-side;
+      pack excludes now match at any depth (`*/node_modules` etc).
 - [x] **Deployment-observer SQL latency** — diagnosed as pool-
       acquisition wait, not query time: `DB_MAX_CONNECTIONS`
       (default 25, was a shared hardcoded 10) + `update_status`
       collapsed to a single patched UPDATE. 8/8 parallel deploys
       with zero slow statements (PR #97, issue #89).
-- [ ] **Enterprise readiness gates** — function isolation design,
-      per-deployment resource accounting/usage metering, multi-region
-      story, preview-env parity (Vercel creates preview env per PR),
-      deployment protection rules, and audit-log retention policies
-      before claiming Vercel replacement for production estates.
+- [x] **Usage metering v2** — `bandwidth_bytes` on the project usage
+      endpoint (container rx+tx deltas from `deployment_metric`),
+      `GET /api/v1/teams/{id}/usage` team rollup + `get_team_usage`
+      MCP tool. Remaining: billing hooks.
+- [x] **Deployment protection + preview envs** — already shipped:
+      basicAuth `protection.users` (non-prod routers), automation
+      bypass secret, `firewall.ip_allowlist`/rate-limit, env vars
+      scoped per environment, `pv<hash>` preview environments per PR.
+- [x] **Audit-log retention** — `AUDIT_RETENTION_DAYS` (0 = keep
+      forever) prunes `audit_log` in the daily retention sweep.
+- [ ] **Enterprise readiness gates** — function isolation design
+      (per-function cold starts + resource accounting), multi-region
+      story, billing hooks on the usage aggregates. The remaining
+      non-code gates: real bitbucket.org workspace verification
+      (needs workspace creds) and live inbound GitHub webhook
+      delivery (needs a public URL for the instance).
 
 ### Deliberate non-goals (unchanged)
 

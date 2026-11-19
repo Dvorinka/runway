@@ -42,6 +42,11 @@ enum Command {
         /// Resolve the plan server-side (preset, env, config) without deploying.
         #[arg(long)]
         dry_run: bool,
+        /// Pack this directory instead of CWD — for monorepos, point at the
+        /// repo root and let the project's `root_directory` select the app
+        /// subtree server-side (Vercel parity).
+        #[arg(long, value_name = "DIR")]
+        root: Option<std::path::PathBuf>,
     },
     /// Instance + auth + link preflight — exits non-zero on failures.
     Doctor {
@@ -367,7 +372,11 @@ async fn main() -> anyhow::Result<()> {
         Command::Create { name, preset } => {
             commands::create(name, preset).await?;
         }
-        Command::Deploy { follow, dry_run } => commands::deploy(follow, dry_run).await?,
+        Command::Deploy {
+            follow,
+            dry_run,
+            root,
+        } => commands::deploy(follow, dry_run, root).await?,
         Command::Doctor { json } => commands::doctor(json).await?,
         Command::Logs {
             deployment,
