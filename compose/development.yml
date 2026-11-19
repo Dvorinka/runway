@@ -98,6 +98,10 @@ services:
       GITEA_WEBHOOK_SECRET: ${GITEA_WEBHOOK_SECRET:-dev-gitea-webhook-secret}
       GITLAB_WEBHOOK_SECRET: ${GITLAB_WEBHOOK_SECRET:-dev-gitlab-webhook-secret}
       BITBUCKET_WEBHOOK_SECRET: ${BITBUCKET_WEBHOOK_SECRET:-dev-bitbucket-webhook-secret}
+      # Optional KERN build executor (config.build_executor="kern" per project).
+      RUNWAY_KERN_URL: ${RUNWAY_KERN_URL:-}
+      RUNWAY_KERN_TOKEN: ${RUNWAY_KERN_TOKEN:-}
+      RUNWAY_KERN_PROJECT: ${RUNWAY_KERN_PROJECT:-}
       # CGNAT path — set both to auto-manage the instance tunnel.
       CF_API_TOKEN: ${CF_API_TOKEN:-}
       CF_ACCOUNT_ID: ${CF_ACCOUNT_ID:-}

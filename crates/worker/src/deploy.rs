@@ -288,6 +288,13 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
     if static_mode && remote_node.is_some() {
         anyhow::bail!("static deploys are not supported on remote nodes (artifact dir is local)");
     }
+    // Optional KERN executor: the identical build script runs on a remote
+    // KERN runner; its `runway-out` artifact lands in static_local_dir and
+    // phase 2 serves it unchanged. Static mode only.
+    let kern_build = config.get("build_executor").and_then(|v| v.as_str()) == Some("kern");
+    if kern_build && !static_mode {
+        anyhow::bail!("build_executor=kern requires output_directory (static mode)");
+    }
     // Dockerfile mode: the repo builds into an image via `docker build`;
     // the image's own CMD/ENTRYPOINT serves (or `entrypoint` overrides).
     let dockerfile_path = config
@@ -742,99 +749,115 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
     }
 
     let body = if static_mode {
-        // Phase 1: throwaway build container — clones, builds, copies
-        // output_directory into the host-mounted /out, then exits.
-        let build_name = format!("{container_name}-build");
-        let build_body = ContainerConfig {
-            image: Some(runner_image.clone()),
-            env: Some(env),
-            working_dir: Some("/app".into()),
-            labels: Some(HashMap::from([
-                ("runway.deployment_id".into(), deployment_id.clone()),
-                ("runway.project_id".into(), project.id.clone()),
-                ("runway.team_id".into(), project.team_id.clone()),
-                ("runway.role".into(), "build".into()),
-            ])),
-            networking_config: Some(NetworkingConfig {
-                endpoints_config: HashMap::from([(
-                    workspace_network.clone(),
-                    EndpointSettings::default(),
-                )]),
-            }),
-            host_config: Some(HostConfig {
-                restart_policy: Some(RestartPolicy {
-                    name: Some(RestartPolicyNameEnum::NO),
-                    maximum_retry_count: None,
-                }),
-                ..host_config.clone()
-            }),
-            cmd: Some(cmd),
-            ..Default::default()
-        };
-        let build_id = match dkr::create_or_replace_container(docker, &build_name, build_body).await
-        {
-            Ok(id) => id,
-            Err(runway_core::Error::Docker(e)) => {
-                let reason = dkr::create_error_reason(&e);
-                deploy::enqueue(
-                    &ctx.db,
-                    "fail_deployment",
-                    json!({
-                        "deployment_id": deployment_id,
-                        "status": "prepare",
-                        "reason": reason,
-                    }),
-                    0,
-                )
-                .await?;
-                return Ok(());
-            }
-            Err(e) => return Err(e.into()),
-        };
-        docker
-            .start_container(&build_id, None::<StartContainerOptions<String>>)
-            .await?;
-        spawn_log_tailer(ctx, build_id.clone(), deployment_id.clone());
-        log("Building static output...").await;
-        let exit = wait_exit(docker, &build_id, ctx.settings.deployment_timeout_seconds).await;
-        let _ = docker
-            .remove_container(
-                &build_id,
-                Some(RemoveContainerOptions {
-                    force: true,
-                    ..Default::default()
-                }),
+        if kern_build {
+            // Phase 1 (KERN): remote runner executes the same script; the
+            // uploaded artifact fills static_local_dir. No local container.
+            kern_static_build(
+                ctx,
+                deployment,
+                &commands,
+                &env,
+                &runner_image,
+                source_archive.as_deref(),
+                &static_local_dir,
+                &log,
             )
-            .await;
-        match exit {
-            Ok(0) => log("Static build completed").await,
-            Ok(code) => {
-                deploy::enqueue(
-                    &ctx.db,
-                    "fail_deployment",
-                    json!({
-                        "deployment_id": deployment_id,
-                        "status": "prepare",
-                        "reason": format!("build failed (exit code {code})"),
+            .await?;
+        } else {
+            // Phase 1: throwaway build container — clones, builds, copies
+            // output_directory into the host-mounted /out, then exits.
+            let build_name = format!("{container_name}-build");
+            let build_body = ContainerConfig {
+                image: Some(runner_image.clone()),
+                env: Some(env),
+                working_dir: Some("/app".into()),
+                labels: Some(HashMap::from([
+                    ("runway.deployment_id".into(), deployment_id.clone()),
+                    ("runway.project_id".into(), project.id.clone()),
+                    ("runway.team_id".into(), project.team_id.clone()),
+                    ("runway.role".into(), "build".into()),
+                ])),
+                networking_config: Some(NetworkingConfig {
+                    endpoints_config: HashMap::from([(
+                        workspace_network.clone(),
+                        EndpointSettings::default(),
+                    )]),
+                }),
+                host_config: Some(HostConfig {
+                    restart_policy: Some(RestartPolicy {
+                        name: Some(RestartPolicyNameEnum::NO),
+                        maximum_retry_count: None,
                     }),
-                    0,
-                )
+                    ..host_config.clone()
+                }),
+                cmd: Some(cmd),
+                ..Default::default()
+            };
+            let build_id =
+                match dkr::create_or_replace_container(docker, &build_name, build_body).await {
+                    Ok(id) => id,
+                    Err(runway_core::Error::Docker(e)) => {
+                        let reason = dkr::create_error_reason(&e);
+                        deploy::enqueue(
+                            &ctx.db,
+                            "fail_deployment",
+                            json!({
+                                "deployment_id": deployment_id,
+                                "status": "prepare",
+                                "reason": reason,
+                            }),
+                            0,
+                        )
+                        .await?;
+                        return Ok(());
+                    }
+                    Err(e) => return Err(e.into()),
+                };
+            docker
+                .start_container(&build_id, None::<StartContainerOptions<String>>)
                 .await?;
-                return Ok(());
-            }
-            Err(e) => {
-                deploy::enqueue(
-                    &ctx.db,
-                    "fail_deployment",
-                    json!({
-                        "deployment_id": deployment_id,
-                        "status": "prepare",
-                        "reason": format!("build failed: {e}"),
+            spawn_log_tailer(ctx, build_id.clone(), deployment_id.clone());
+            log("Building static output...").await;
+            let exit = wait_exit(docker, &build_id, ctx.settings.deployment_timeout_seconds).await;
+            let _ = docker
+                .remove_container(
+                    &build_id,
+                    Some(RemoveContainerOptions {
+                        force: true,
+                        ..Default::default()
                     }),
-                    0,
                 )
-                .await?;
-                return Ok(());
+                .await;
+            match exit {
+                Ok(0) => log("Static build completed").await,
+                Ok(code) => {
+                    deploy::enqueue(
+                        &ctx.db,
+                        "fail_deployment",
+                        json!({
+                            "deployment_id": deployment_id,
+                            "status": "prepare",
+                            "reason": format!("build failed (exit code {code})"),
+                        }),
+                        0,
+                    )
+                    .await?;
+                    return Ok(());
+                }
+                Err(e) => {
+                    deploy::enqueue(
+                        &ctx.db,
+                        "fail_deployment",
+                        json!({
+                            "deployment_id": deployment_id,
+                            "status": "prepare",
+                            "reason": format!("build failed: {e}"),
+                        }),
+                        0,
+                    )
+                    .await?;
+                    return Ok(());
+                }
             }
         }
 
@@ -1810,6 +1833,234 @@ struct ImageBuildSpec<'a> {
     fetch_image: &'a str,
     source_cmds: &'a [String],
     env: &'a [String],
+}
+
+/// KERN executor phase 1: dispatch the generated workflow, poll to
+/// conclusion, download the `runway-out` artifact into `static_local_dir`.
+/// The script is the local runner's `commands.join(" && ")` with the
+/// container-absolute paths rewritten to the job workspace.
+#[allow(clippy::too_many_arguments)]
+async fn kern_static_build<F, Fut>(
+    ctx: &Ctx,
+    deployment: &Deployment,
+    commands: &[String],
+    env: &[String],
+    runner_image: &str,
+    source_archive: Option<&str>,
+    static_local_dir: &std::path::Path,
+    log: &F,
+) -> anyhow::Result<()>
+where
+    F: Fn(&str) -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    use runway_core::kern;
+
+    let (url, token, project_slug) = match (
+        &ctx.settings.kern_url,
+        &ctx.settings.kern_token,
+        &ctx.settings.kern_project,
+    ) {
+        (Some(u), Some(t), Some(p)) => (u.clone(), t.clone(), p.clone()),
+        _ => anyhow::bail!(
+            "build_executor=kern but RUNWAY_KERN_URL/RUNWAY_KERN_TOKEN/RUNWAY_KERN_PROJECT unset"
+        ),
+    };
+    let client = kern::KernClient::new(&url, &token, &project_slug);
+
+    // Source delivery: upload deploys ship the deployment tarball itself;
+    // git deploys ship a marker bundle. Either way the bundle replaces
+    // KERN's repo checkout — the build script then does the real fetch.
+    let mut cmds = commands.to_vec();
+    // Local `/out` is a mount outside the workspace; on KERN `runway-out`
+    // lives inside it, so `output_directory=.` would copy into itself.
+    // Swap the publish command for a self-excluding tar pipeline.
+    let output_dir = deployment
+        .config
+        .get("output_directory")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim()
+        .trim_matches('/')
+        .to_string();
+    for c in cmds.iter_mut() {
+        if c.contains("Publishing static output") {
+            *c = format!(
+                "test -f $GITHUB_WORKSPACE/.runway-src-ok || {{ printf '\\033[31mError: source acquisition failed\\033[0m\\n' 1>&2; exit 1; }}; \
+                 OUTDIR=$(readcfg output_directory); \
+                 OUTDIR=${{OUTDIR:-{output_dir}}}; \
+                 echo \"Publishing static output ($OUTDIR)...\"; \
+                 test -d \"$OUTDIR\" || {{ printf '\\033[31mError: output directory %s not found\\033[0m\\n' \"$OUTDIR\" 1>&2; exit 1; }}; \
+                 mkdir -p \"$GITHUB_WORKSPACE/runway-out\" && \
+                 tar -cf - --exclude='./runway-out' -C \"$OUTDIR\" . | tar -xf - -C \"$GITHUB_WORKSPACE/runway-out\" && \
+                 test -n \"$(find \"$GITHUB_WORKSPACE/runway-out\" -type f -print -quit)\" || {{ printf '\\033[31mError: build produced no files\\033[0m\\n' 1>&2; exit 1; }} && \
+                 (cp runway.json \"$GITHUB_WORKSPACE/runway-out/.runway.json\" 2>/dev/null || true) && \
+                 echo 'Static output published'"
+            );
+        }
+    }
+    let bundle: Vec<u8> = if let Some(archive) = source_archive {
+        // The bundle lands pre-extracted in the job workspace, so the
+        // tarball-extract command collapses to its marker.
+        cmds[0] = "touch .runway-src-ok".into();
+        let path = std::path::Path::new(&ctx.settings.data_dir)
+            .join("uploads")
+            .join(archive);
+        tokio::fs::read(&path).await?
+    } else {
+        let tmp = static_local_dir
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join(format!(".kern-src-{}", deployment.id));
+        tokio::fs::create_dir_all(&tmp).await?;
+        tokio::fs::write(tmp.join(".runway-marker"), b"runway\n").await?;
+        let out = tokio::process::Command::new("tar")
+            .arg("-czf")
+            .arg(tmp.join("bundle.tgz"))
+            .arg("-C")
+            .arg(&tmp)
+            .arg(".runway-marker")
+            .output()
+            .await?;
+        if !out.status.success() {
+            anyhow::bail!(
+                "marker bundle failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        let bytes = tokio::fs::read(tmp.join("bundle.tgz")).await?;
+        let _ = tokio::fs::remove_dir_all(&tmp).await;
+        bytes
+    };
+    let bundle_ref = client.upload_source(&bundle).await?;
+    let script = cmds
+        .join(" && ")
+        .replace("/app", "$GITHUB_WORKSPACE")
+        .replace("/out", "$GITHUB_WORKSPACE/runway-out");
+    let script = format!("cd \"$GITHUB_WORKSPACE\" && {script}");
+
+    let labels: Vec<String> = deployment
+        .config
+        .get("kern_labels")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|l| l.as_str().map(String::from))
+                .collect::<Vec<_>>()
+        })
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| vec!["self-hosted".into(), "linux".into(), "docker".into()]);
+    let env_pairs: Vec<(String, String)> = env
+        .iter()
+        .filter_map(|e| e.split_once('='))
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+
+    log(&format!(
+        "Dispatching build to KERN ({project_slug}, labels: {})...",
+        labels.join(", ")
+    ))
+    .await;
+    let yaml = kern::workflow_yaml(&script, runner_image, &labels, &env_pairs);
+    let run_id = client
+        .dispatch(
+            &yaml,
+            &deployment.branch,
+            &deployment.commit_sha,
+            &bundle_ref,
+        )
+        .await?;
+    log(&format!("KERN run dispatched: {run_id}")).await;
+    // Record for ops/inspection and the cancel path.
+    let _ = sqlx::query("UPDATE deployment SET config = config || $1::jsonb WHERE id = $2")
+        .bind(json!({ "kern_run_id": run_id }))
+        .bind(&deployment.id)
+        .execute(&ctx.db)
+        .await;
+
+    let deadline = std::time::Instant::now()
+        + std::time::Duration::from_secs(ctx.settings.deployment_timeout_seconds);
+    loop {
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        if std::time::Instant::now() > deadline {
+            let _ = client.cancel(&run_id).await;
+            anyhow::bail!("kern run timed out");
+        }
+        let local: Option<String> =
+            sqlx::query_scalar("SELECT conclusion FROM deployment WHERE id = $1")
+                .bind(&deployment.id)
+                .fetch_optional(&ctx.db)
+                .await?
+                .flatten();
+        if local.as_deref() == Some("canceled") {
+            let _ = client.cancel(&run_id).await;
+            anyhow::bail!("deployment canceled");
+        }
+        let run = client.run(&run_id).await?;
+        if run.status.as_deref() == Some("completed") {
+            match run.conclusion.as_deref() {
+                Some("success") => break,
+                other => anyhow::bail!("kern run concluded: {}", other.unwrap_or("failure")),
+            }
+        }
+    }
+    log("KERN build finished; importing artifact...").await;
+
+    let artifacts = client.artifacts(&run_id).await?;
+    let artifact = artifacts
+        .iter()
+        .find(|a| a.name == "runway-out")
+        .ok_or_else(|| anyhow::anyhow!("kern run produced no runway-out artifact"))?;
+    let bytes = client.download(&artifact.id).await?;
+
+    // upload-artifact archives the dir as runway-out/… — flatten onto the
+    // static dir so `.runway.json` and assets land where phase 2 expects.
+    let tmp = static_local_dir
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join(format!(".kern-{}", deployment.id));
+    tokio::fs::create_dir_all(&tmp).await?;
+    // Keep the archive a sibling of the extract root — inside tmp it would
+    // be copied into the served tree along with the payload.
+    let tgz = tmp.with_extension("tgz");
+    tokio::fs::write(&tgz, &bytes).await?;
+    let untar = tokio::process::Command::new("tar")
+        .arg("-xzf")
+        .arg(&tgz)
+        .arg("-C")
+        .arg(&tmp)
+        .output()
+        .await?;
+    if !untar.status.success() {
+        let _ = tokio::fs::remove_dir_all(&tmp).await;
+        anyhow::bail!(
+            "kern artifact extract failed: {}",
+            String::from_utf8_lossy(&untar.stderr)
+        );
+    }
+    let root = if tmp.join("runway-out").is_dir() {
+        tmp.join("runway-out")
+    } else {
+        tmp.clone()
+    };
+    let copy = tokio::process::Command::new("sh")
+        .arg("-c")
+        .arg(format!(
+            "cp -a '{}'/. '{}/'",
+            root.display(),
+            static_local_dir.display()
+        ))
+        .output()
+        .await?;
+    let _ = tokio::fs::remove_dir_all(&tmp).await;
+    let _ = tokio::fs::remove_file(&tgz).await;
+    if !copy.status.success() {
+        anyhow::bail!(
+            "kern artifact copy failed: {}",
+            String::from_utf8_lossy(&copy.stderr)
+        );
+    }
+    Ok(())
 }
 
 /// `dockerfile_path` builds: a throwaway fetch container stages the repo
