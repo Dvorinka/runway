@@ -1431,19 +1431,40 @@ async fn post_commit_status(
     // `runway/<slug>` so monorepos with several projects on one repo get
     // independent required-status checks.
     let context = format!("runway/{project_slug}");
-    if let Err(e) = gh
-        .commit_status(
+    // Prefer the Checks API — the PR gets a native Re-run button
+    // (check_run.rerequested → webhook → redeploy). Older apps registered
+    // without checks:write fall back to commit statuses.
+    let conclusion = match state {
+        "success" => Some("success"),
+        _ => Some("failure"),
+    };
+    let checked = gh
+        .create_check_run(
             &token,
             &deployment.repo_full_name,
             &deployment.commit_sha,
-            state,
-            Some(&url),
-            description,
             &context,
+            "completed",
+            conclusion,
+            Some(&url),
+            &deployment.id,
         )
-        .await
-    {
-        tracing::warn!(deployment_id = deployment.id, error = %e, "commit status post failed");
+        .await;
+    if checked.is_err() {
+        if let Err(e) = gh
+            .commit_status(
+                &token,
+                &deployment.repo_full_name,
+                &deployment.commit_sha,
+                state,
+                Some(&url),
+                description,
+                &context,
+            )
+            .await
+        {
+            tracing::warn!(deployment_id = deployment.id, error = %e, "commit status post failed");
+        }
     }
 
     // PR preview deployments carry `pr_number` — update the upserted

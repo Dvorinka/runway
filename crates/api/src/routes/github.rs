@@ -143,6 +143,15 @@ pub async fn webhook(
         "pull_request" => {
             handle_pull_request(&state, &data).await;
         }
+        "check_run" => {
+            // "Re-run" on a check we created — external_id carries the
+            // deployment id; redeploy from the same source.
+            if data["action"].as_str() == Some("rerequested") {
+                if let Some(dep_id) = data["check_run"]["external_id"].as_str() {
+                    rerun_deployment(&state, dep_id).await;
+                }
+            }
+        }
         _ => {}
     }
     Ok(StatusCode::OK.into_response())
@@ -337,6 +346,64 @@ async fn handle_pull_request(state: &AppState, data: &Value) {
                 tracing::warn!(project_id = project.id, error = %e, "pull_request: deployment create failed")
             }
         }
+    }
+}
+
+/// check_run.rerequested — redeploy the deployment named by
+/// `external_id` from its recorded source. No project-config policy is
+/// applied: a human clicked Re-run.
+async fn rerun_deployment(state: &AppState, deployment_id: &str) {
+    let dep = match deploy::get(&state.db, deployment_id).await {
+        Ok(Some(d)) => d,
+        _ => return,
+    };
+    let project: Option<Project> = sqlx::query_as("SELECT * FROM project WHERE id = $1")
+        .bind(&dep.project_id)
+        .fetch_optional(&state.db)
+        .await
+        .unwrap_or(None);
+    let Some(project) = project else { return };
+    let commit = CommitInfo {
+        sha: dep.commit_sha.clone(),
+        message: dep
+            .commit_meta
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        author: dep
+            .commit_meta
+            .get("author")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        timestamp: None,
+    };
+    let mut extra = json!({});
+    if let Some(a) = dep.config.get("source_archive") {
+        extra["source_archive"] = a.clone();
+    }
+    if let Some(n) = dep.config.get("pr_number") {
+        extra["pr_number"] = n.clone();
+    }
+    match deploy::create(
+        &state.db,
+        &state.bus,
+        &state.crypto,
+        &project,
+        &dep.branch,
+        &commit,
+        "webhook",
+        None,
+        Some(extra),
+    )
+    .await
+    {
+        Ok(new_dep) => tracing::info!(
+            deployment_id = new_dep.id,
+            "check_run rerequested → redeploy"
+        ),
+        Err(e) => tracing::warn!(error = %e, "check_run rerequested: redeploy failed"),
     }
 }
 
@@ -644,6 +711,7 @@ pub async fn app_register(
             "metadata": "read",
             "pull_requests": "read",
             "statuses": "write",
+            "checks": "write",
             "issues": "write",
         },
     });
@@ -652,7 +720,7 @@ pub async fn app_register(
             "url": format!("{base}/api/github/webhook"),
             "active": true,
         });
-        manifest["default_events"] = json!(["push", "pull_request", "repository"]);
+        manifest["default_events"] = json!(["push", "pull_request", "repository", "check_run"]);
     }
     let state_token = runway_core::slugify::token_hex(16);
     let cookie = Cookie::build(("gh_app_state", state_token.clone()))

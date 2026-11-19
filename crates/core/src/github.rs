@@ -456,6 +456,43 @@ impl GithubService {
         Ok(())
     }
 
+    /// Create a check run (Checks API). Gives the PR a native "Re-run"
+    /// button — GitHub delivers `check_run.rerequested` on click, which
+    /// the webhook maps back through `external_id` to the deployment.
+    #[allow(clippy::too_many_arguments)] // mirrors GitHub's check-run fields
+    pub async fn create_check_run(
+        &self,
+        installation_token: &str,
+        repo_full_name: &str,
+        head_sha: &str,
+        name: &str,
+        status: &str,
+        conclusion: Option<&str>,
+        details_url: Option<&str>,
+        external_id: &str,
+    ) -> Result<()> {
+        self.http
+            .post(format!(
+                "{}/repos/{}/check-runs",
+                self.api_base, repo_full_name
+            ))
+            .bearer_auth(installation_token)
+            .header("Accept", "application/vnd.github+json")
+            .header("User-Agent", "runway")
+            .json(&serde_json::json!({
+                "name": name,
+                "head_sha": head_sha,
+                "status": status,
+                "conclusion": conclusion,
+                "details_url": details_url,
+                "external_id": external_id,
+            }))
+            .send()
+            .await?
+            .error_for_status()?;
+        Ok(())
+    }
+
     /// Upsert a `<!-- marker -->` comment on an issue/PR — finds an
     /// existing marked comment and patches it, else posts a new one.
     /// Keeps PR noise at one comment no matter how many pushes.
