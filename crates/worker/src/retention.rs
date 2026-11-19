@@ -2,7 +2,8 @@
 //!
 //! devpush has no analog — analytics and magic-link tokens are
 //! Runway additions — so bounds are chosen for a self-hosted box:
-//! analytics 90d, expired single-use tokens, read notifications 30d.
+//! analytics 90d, expired single-use tokens, read notifications 30d,
+//! audit rows per `AUDIT_RETENTION_DAYS` (0 = keep forever).
 
 use crate::Ctx;
 
@@ -49,12 +50,25 @@ async fn sweep(ctx: &Ctx) -> anyhow::Result<()> {
     .execute(&ctx.db)
     .await?
     .rows_affected();
-    if a + e + n + r > 0 {
+    let mut al = 0u64;
+    let days = ctx.settings.audit_retention_days;
+    if days > 0 {
+        al = sqlx::query(
+            "DELETE FROM audit_log
+             WHERE created_at < now() - make_interval(days => $1)",
+        )
+        .bind(days as i32)
+        .execute(&ctx.db)
+        .await?
+        .rows_affected();
+    }
+    if a + e + n + r + al > 0 {
         tracing::info!(
             analytics = a,
             email_tokens = e,
             node_tokens = n,
             notifications = r,
+            audit_log = al,
             "retention sweep pruned rows"
         );
     }

@@ -79,6 +79,72 @@ pub async fn get(
     .into_response())
 }
 
+/// `GET /api/v1/teams/{id}/usage?days=N` — rollup of the per-project
+/// usage metrics across every project the team owns.
+pub async fn usage(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<crate::routes::projects::UsageQuery>,
+) -> ApiResult<Response> {
+    Ok(Json(team_usage(&state, user.user.id, &id, q.days).await?).into_response())
+}
+
+/// Team usage aggregate shared by the REST route and the MCP tool.
+pub(crate) async fn team_usage(
+    state: &AppState,
+    user_id: i64,
+    id: &str,
+    days: i64,
+) -> ApiResult<Value> {
+    let team_id = accessible_team(state, user_id, id).await?;
+    let days = days.clamp(1, 365);
+    let row: (i64, i64, i64, f64, i64, i64) = sqlx::query_as(
+        "SELECT count(*),
+                count(*) FILTER (WHERE d.conclusion = 'succeeded'),
+                count(*) FILTER (WHERE d.conclusion = 'failed'),
+                coalesce(sum(extract(epoch from d.concluded_at - d.created_at)), 0)::float8,
+                coalesce(sum((d.config->>'artifact_bytes')::bigint)
+                    FILTER (WHERE d.config->>'artifact_bytes' ~ '^[0-9]+$'), 0)::bigint,
+                coalesce(sum((d.config->>'image_bytes')::bigint)
+                    FILTER (WHERE d.config->>'image_bytes' ~ '^[0-9]+$'), 0)::bigint
+         FROM deployment d
+         JOIN project p ON p.id = d.project_id
+         WHERE p.team_id = $1 AND d.created_at > now() - make_interval(days => $2)",
+    )
+    .bind(&team_id)
+    .bind(days as i32)
+    .fetch_one(&state.db)
+    .await?;
+    let bw: (i64,) = sqlx::query_as(
+        "SELECT coalesce(sum(delta), 0)::bigint FROM (
+             SELECT (max(m.net_tx) - min(m.net_tx))
+                  + (max(m.net_rx) - min(m.net_rx)) AS delta
+             FROM deployment_metric m
+             JOIN deployment d ON d.id = m.deployment_id
+             JOIN project p ON p.id = d.project_id
+             WHERE p.team_id = $1
+               AND m.ts > now() - make_interval(days => $2)
+             GROUP BY m.deployment_id
+         ) t",
+    )
+    .bind(&team_id)
+    .bind(days as i32)
+    .fetch_one(&state.db)
+    .await?;
+    Ok(json!({
+        "team_id": team_id,
+        "days": days,
+        "deployments": row.0,
+        "succeeded": row.1,
+        "failed": row.2,
+        "build_seconds": row.3 as i64,
+        "artifact_bytes": row.4,
+        "image_bytes": row.5,
+        "bandwidth_bytes": bw.0,
+    }))
+}
+
 // -- Team webhooks -----------------------------------------------------------
 
 #[derive(Deserialize)]

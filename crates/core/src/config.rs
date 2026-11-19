@@ -58,6 +58,8 @@ pub struct Settings {
     /// Uid/gid for runner containers (injected as PUID/PGID).
     pub service_uid: u32,
     pub service_gid: u32,
+    /// Days to keep `audit_log` rows; 0 keeps them forever.
+    pub audit_retention_days: i64,
 
     // GitHub App (repos + webhooks) — env creds are an alternative to
     // DB registration via the app-manifest flow.
@@ -169,6 +171,7 @@ impl Settings {
             deployment_restart_max_retries: env_i64("DEPLOYMENT_RESTART_MAX_RETRIES", 5),
             service_uid: env_u64("SERVICE_UID", 1000) as u32,
             service_gid: env_u64("SERVICE_GID", 1000) as u32,
+            audit_retention_days: env_i64("AUDIT_RETENTION_DAYS", 0),
             github_app_id: opt("GITHUB_APP_ID"),
             github_app_name: opt("GITHUB_APP_NAME"),
             github_app_private_key: opt("GITHUB_APP_PRIVATE_KEY"),
@@ -308,6 +311,7 @@ pub(crate) fn test_settings() -> Settings {
         deployment_restart_policy: "on-failure".into(),
         deployment_restart_max_retries: 5,
         service_uid: 1000,
+        audit_retention_days: 0,
         service_gid: 1000,
         github_app_id: None,
         github_app_name: None,

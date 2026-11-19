@@ -51,9 +51,16 @@ fn tools() -> Value {
         ),
         tool(
             "get_project_usage",
-            "Usage metering for a project: deploy counts, build seconds, artifact/image bytes over N days",
+            "Usage metering for a project: deploy counts, build seconds, artifact/image/bandwidth bytes over N days",
             json!({"type": "object", "required": ["project_id"],
                    "properties": {"project_id": {"type": "string"},
+                                  "days": {"type": "integer", "default": 30}}})
+        ),
+        tool(
+            "get_team_usage",
+            "Usage rollup across all projects in a team: deploy counts, build seconds, artifact/image/bandwidth bytes over N days",
+            json!({"type": "object", "required": ["team_id"],
+                   "properties": {"team_id": {"type": "string"},
                                   "days": {"type": "integer", "default": 30}}})
         ),
         tool(
@@ -411,6 +418,10 @@ async fn call(state: &AppState, user_id: i64, name: &str, args: &Value) -> ApiRe
             let p = project_for(state, user_id, arg(args, "project_id")?).await?;
             let days = args["days"].as_i64().unwrap_or(30);
             crate::routes::projects::project_usage(state, &p.id, days).await
+        }
+        "get_team_usage" => {
+            let days = args["days"].as_i64().unwrap_or(30);
+            crate::routes::teams::team_usage(state, user_id, arg(args, "team_id")?, days).await
         }
         "get_deployment_logs" => {
             let (d, _p) = deployment_for(state, user_id, arg(args, "deployment_id")?).await?;
