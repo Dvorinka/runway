@@ -161,7 +161,47 @@ async fn tick(ctx: &Ctx) -> anyhow::Result<()> {
     }
 
     sweep_nodes(ctx).await;
+    sweep_expired_previews(ctx).await;
     Ok(())
+}
+
+/// `preview_ttl_hours` per-project config: tear down PR-preview
+/// deployments older than the TTL. Mirrors the api-crate PR-close
+/// teardown (container → aliases → traefik rewrite). 0/absent = off.
+async fn sweep_expired_previews(ctx: &Ctx) {
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT d.id, d.project_id FROM deployment d
+         JOIN project p ON p.id = d.project_id
+         WHERE d.config ? 'pr_number'
+           AND p.config->>'preview_ttl_hours' ~ '^[0-9]+$'
+           AND (p.config->>'preview_ttl_hours')::int > 0
+           AND d.created_at < now() - make_interval(hours => (p.config->>'preview_ttl_hours')::int)
+           AND d.container_status != 'removed'",
+    )
+    .fetch_all(&ctx.db)
+    .await
+    .unwrap_or_default();
+    let mut touched: Vec<String> = Vec::new();
+    for (dep_id, project_id) in rows {
+        if let Err(e) = crate::deploy::delete_container(ctx, &dep_id).await {
+            tracing::warn!(deployment_id = dep_id, error = %e, "preview TTL teardown failed");
+            continue;
+        }
+        let _ = sqlx::query("DELETE FROM alias WHERE deployment_id = $1")
+            .bind(&dep_id)
+            .execute(&ctx.db)
+            .await;
+        touched.push(project_id);
+    }
+    touched.sort_unstable();
+    touched.dedup();
+    for project_id in touched {
+        if let Ok(Some(project)) = runway_core::deploy::get_project(&ctx.db, &project_id).await {
+            let _ =
+                runway_core::traefik::update_project_config(&ctx.db, &project, &ctx.settings, &[])
+                    .await;
+        }
+    }
 }
 
 /// Keep `remote_node.status`/`updated_at` honest between manual checks:
