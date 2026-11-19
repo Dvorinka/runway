@@ -58,6 +58,17 @@ Settings → API keys mint `ak_` tokens. Use as
 Also: `runway doctor [--json]` (API/auth/link preflight) and
 `runway deploy --dry-run` (resolved plan JSON, nothing deployed).
 
+## api/ functions
+
+A static project that ships an `api/` directory gets serverless
+handlers on the same domain: each `api/*.{js,ts,mjs,cjs}` file is
+bundled with esbuild and served by a shared `node:http` dispatcher
+using Vercel's `(req,res)` signature — `res.status/json/send/redirect`,
+`req.query`, parsed JSON body, `[id]`/`[...rest]` dynamic segments,
+`api/index.*` → `/api`. Static assets keep serving under `/`. One
+process, no per-function isolation — project npm deps resolve from the
+repo's `package.json` and are bundled inline.
+
 ## Deploy hooks
 
 `POST /api/deploy-hook/{token}` triggers a deployment with no auth —

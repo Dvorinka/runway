@@ -195,7 +195,9 @@ KERN's `openapi.yaml` is the bar — Runway should match it.
 ## Cross-links
 
 - ~~#41 git-provider verification~~ — closed, all legs verified
-- #86 serverless runtime — separate parity blocker
+- #86 serverless runtime — shim shipped (PR #101): static `api/*`
+  handlers bundle into a node:http dispatcher co-served with the
+  static output; per-function isolation stays under enterprise gates
 - #87 vercel.json import — `deploymentEnabled` maps to deploy rules
 - KERN repo: `~/Desktop/PROG+HTML/KERN` — runner contract:
   `docs/runner-contract.md`, API: `openapi.yaml`, compat matrix:
