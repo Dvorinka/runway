@@ -743,6 +743,63 @@ fn mask(value: &str) -> String {
 }
 
 #[derive(Deserialize)]
+pub struct UsageQuery {
+    #[serde(default = "default_usage_days")]
+    pub days: i64,
+}
+
+fn default_usage_days() -> i64 {
+    30
+}
+
+/// Usage metering aggregate shared by the REST route and the MCP tool.
+pub(crate) async fn project_usage(
+    state: &AppState,
+    project_id: &str,
+    days: i64,
+) -> ApiResult<Value> {
+    let days = days.clamp(1, 365);
+    let row: (i64, i64, i64, f64, i64, i64) = sqlx::query_as(
+        "SELECT count(*),
+                count(*) FILTER (WHERE conclusion = 'succeeded'),
+                count(*) FILTER (WHERE conclusion = 'failed'),
+                coalesce(sum(extract(epoch from concluded_at - created_at)), 0)::float8,
+                coalesce(sum((config->>'artifact_bytes')::bigint)
+                    FILTER (WHERE config->>'artifact_bytes' ~ '^[0-9]+$'), 0)::bigint,
+                coalesce(sum((config->>'image_bytes')::bigint)
+                    FILTER (WHERE config->>'image_bytes' ~ '^[0-9]+$'), 0)::bigint
+         FROM deployment
+         WHERE project_id = $1 AND created_at > now() - make_interval(days => $2)",
+    )
+    .bind(project_id)
+    .bind(days as i32)
+    .fetch_one(&state.db)
+    .await?;
+    Ok(json!({
+        "project_id": project_id,
+        "days": days,
+        "deployments": row.0,
+        "succeeded": row.1,
+        "failed": row.2,
+        "build_seconds": row.3 as i64,
+        "artifact_bytes": row.4,
+        "image_bytes": row.5,
+    }))
+}
+
+/// Per-project usage metering: deploy counts, build time, artifact and
+/// image bytes over the last N days (default 30).
+pub async fn usage(
+    user: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<UsageQuery>,
+) -> ApiResult<Response> {
+    let project = accessible_project(&state, user.user.id, &id).await?;
+    Ok(Json(project_usage(&state, &project.id, q.days).await?).into_response())
+}
+
+#[derive(Deserialize)]
 pub struct EnvVarInput {
     pub key: String,
     pub value: String,

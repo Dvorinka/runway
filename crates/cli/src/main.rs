@@ -151,6 +151,15 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Usage metering for the linked project (deploys, build time, artifact bytes).
+    Usage {
+        /// Aggregation window in days (1-365).
+        #[arg(long, default_value_t = 30)]
+        days: i64,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Audit log this account is allowed to see.
     Audit {
         /// Team id to narrow to.
@@ -369,6 +378,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Domains { args } => commands::domains(args).await?,
         Command::Cron { args } => commands::cron(args).await?,
         Command::Stats { deployment, json } => commands::stats(deployment, json).await?,
+        Command::Usage { days, json } => commands::usage(days, json).await?,
         Command::Audit {
             team,
             action,

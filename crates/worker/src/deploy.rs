@@ -628,6 +628,17 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
             },
         )
         .await?;
+        // Usage metering: built image bytes, for the usage endpoint.
+        if let Ok(info) = docker.inspect_image(&runner_image).await {
+            if let Some(bytes) = info.size {
+                let _ =
+                    sqlx::query("UPDATE deployment SET config = config || $1::jsonb WHERE id = $2")
+                        .bind(json!({ "image_bytes": bytes }))
+                        .bind(&deployment.id)
+                        .execute(&ctx.db)
+                        .await;
+            }
+        }
     }
 
     log("Checking runner image availability...").await;
@@ -845,7 +856,26 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
                 )
                 .await;
             match exit {
-                Ok(0) => log("Static build completed").await,
+                Ok(0) => {
+                    log("Static build completed").await;
+                    // Usage metering: static artifact bytes, recorded on
+                    // the deployment for the project usage endpoint.
+                    let dir = static_local_dir.clone();
+                    let bytes = tokio::task::spawn_blocking(move || {
+                        walkdir_size(std::path::Path::new(&dir))
+                    })
+                    .await
+                    .unwrap_or(0);
+                    if bytes > 0 {
+                        let _ = sqlx::query(
+                            "UPDATE deployment SET config = config || $1::jsonb WHERE id = $2",
+                        )
+                        .bind(json!({ "artifact_bytes": bytes }))
+                        .bind(&deployment.id)
+                        .execute(&ctx.db)
+                        .await;
+                    }
+                }
                 Ok(code) => {
                     deploy::enqueue(
                         &ctx.db,
@@ -2359,6 +2389,27 @@ async fn tar_context(dir: &std::path::Path) -> anyhow::Result<Vec<u8>> {
         );
     }
     Ok(out.stdout)
+}
+
+/// Recursive byte total of a directory (usage metering).
+fn walkdir_size(dir: &std::path::Path) -> u64 {
+    let mut total = 0u64;
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        if let Ok(rd) = std::fs::read_dir(&d) {
+            for e in rd.flatten() {
+                let p = e.path();
+                if let Ok(m) = e.metadata() {
+                    if m.is_dir() {
+                        stack.push(p);
+                    } else {
+                        total += m.len();
+                    }
+                }
+            }
+        }
+    }
+    total
 }
 
 /// Repo-relative path check for dockerfile_path — no absolute, no `..`.

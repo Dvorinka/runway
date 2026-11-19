@@ -50,6 +50,13 @@ fn tools() -> Value {
                    "properties": {"deployment_id": {"type": "string"}}})
         ),
         tool(
+            "get_project_usage",
+            "Usage metering for a project: deploy counts, build seconds, artifact/image bytes over N days",
+            json!({"type": "object", "required": ["project_id"],
+                   "properties": {"project_id": {"type": "string"},
+                                  "days": {"type": "integer", "default": 30}}})
+        ),
+        tool(
             "get_deployment_logs",
             "Tail of a deployment's build/runtime log",
             json!({"type": "object", "required": ["deployment_id"],
@@ -399,6 +406,11 @@ async fn call(state: &AppState, user_id: i64, name: &str, args: &Value) -> ApiRe
                 })),
                 None => Ok(json!({ "running": false })),
             }
+        }
+        "get_project_usage" => {
+            let p = project_for(state, user_id, arg(args, "project_id")?).await?;
+            let days = args["days"].as_i64().unwrap_or(30);
+            crate::routes::projects::project_usage(state, &p.id, days).await
         }
         "get_deployment_logs" => {
             let (d, _p) = deployment_for(state, user_id, arg(args, "deployment_id")?).await?;

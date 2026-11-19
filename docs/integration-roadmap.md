@@ -183,7 +183,10 @@ KERN's `openapi.yaml` is the bar — Runway should match it.
   env in build/runtime, unit-tested); clone tokens moved out of
   container env into a deleted-before-build askpass file (all builds,
   not just forks). Remaining: egress/network isolation (KERN trust-tier)
-- Usage metering per project/team (enterprise gate from #roadmap)
+- ~~Usage metering v1~~ — `GET /api/v1/projects/{id}/usage`, `runway
+  usage`, MCP `get_project_usage`: deploy counts, build seconds,
+  artifact/image bytes per project over N days. Remaining: bandwidth
+  (needs Traefik access-log accounting), team rollup, billing hooks
 - GitHub App webhook E2E (rest of #41 — needs dev app creds; gitlab +
   bitbucket legs verified against simulated providers incl.
   `bitbucket_connection.base_url` for server-style topologies)

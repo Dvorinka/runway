@@ -642,25 +642,56 @@ pub async fn stats(deployment: Option<String>, json_out: bool) -> anyhow::Result
         v["id"] = serde_json::json!(dep_id);
         return print_json(&v);
     }
-    let fmt_b = |v: &serde_json::Value| {
-        let n = v.as_u64().unwrap_or(0) as f64;
-        if n >= (1u64 << 30) as f64 {
-            format!("{:.1} GB", n / (1u64 << 30) as f64)
-        } else if n >= (1u64 << 20) as f64 {
-            format!("{:.0} MB", n / (1u64 << 20) as f64)
-        } else {
-            format!("{:.0} KB", n / (1u64 << 10) as f64)
-        }
-    };
     println!(
         "{}  cpu {:>5.1}%  mem {} / {}  net ↓{} ↑{}  pids {}",
         &dep_id[..dep_id.len().min(7)],
         s["cpu_pct"].as_f64().unwrap_or(0.0),
-        fmt_b(&s["mem_used"]),
-        fmt_b(&s["mem_limit"]),
-        fmt_b(&s["net_rx"]),
-        fmt_b(&s["net_tx"]),
+        fmt_bytes(&s["mem_used"]),
+        fmt_bytes(&s["mem_limit"]),
+        fmt_bytes(&s["net_rx"]),
+        fmt_bytes(&s["net_tx"]),
         s["pids"].as_u64().unwrap_or(0),
+    );
+    Ok(())
+}
+
+fn fmt_bytes(v: &serde_json::Value) -> String {
+    let n = v.as_u64().unwrap_or(0) as f64;
+    if n >= (1u64 << 30) as f64 {
+        format!("{:.1} GB", n / (1u64 << 30) as f64)
+    } else if n >= (1u64 << 20) as f64 {
+        format!("{:.0} MB", n / (1u64 << 20) as f64)
+    } else if n >= (1u64 << 10) as f64 {
+        format!("{:.0} KB", n / (1u64 << 10) as f64)
+    } else {
+        format!("{} B", n as u64)
+    }
+}
+
+/// `runway usage [--days N]` — project usage metering.
+pub async fn usage(days: i64, json_out: bool) -> anyhow::Result<()> {
+    let client = Client::from_config()?;
+    let link = client::load_link()?;
+    let u = client
+        .get(&format!(
+            "/api/v1/projects/{}/usage?days={days}",
+            link.project_id
+        ))
+        .await?;
+    if json_out {
+        return print_json(&u);
+    }
+    let secs = u["build_seconds"].as_u64().unwrap_or(0);
+    let mins = secs as f64 / 60.0;
+    println!(
+        "{}d: {} deployments ({} ok, {} failed)  build {:.1} min  artifacts {}  images {}",
+        u["days"].as_i64().unwrap_or(days),
+        u["deployments"].as_u64().unwrap_or(0),
+        u["succeeded"].as_u64().unwrap_or(0),
+        u["failed"].as_u64().unwrap_or(0),
+        mins,
+        fmt_bytes(&u["artifact_bytes"]),
+        fmt_bytes(&u["image_bytes"]),
     );
     Ok(())
 }
