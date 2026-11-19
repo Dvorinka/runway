@@ -457,8 +457,10 @@ framework detection.
       (per-function cold starts + resource accounting), multi-region
       story, billing hooks on the usage aggregates. The remaining
       non-code gates: real bitbucket.org workspace verification
-      (needs workspace creds) and live inbound GitHub webhook
-      delivery (needs a public URL for the instance).
+      (needs workspace creds). Live inbound GitHub webhook delivery
+      is instance config, not a gap — the manifest registers
+      `hook_attributes` automatically whenever `APP_HOSTNAME` is a
+      public name (same model as KERN).
 
 ### Deliberate non-goals (unchanged)
 
