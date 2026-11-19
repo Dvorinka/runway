@@ -19,7 +19,7 @@ user- and agent-first.
 | Deployment rules | `deployment_rules` config | `auto_deploy`, `preview_prs`, `preview_comment` |
 | Remote nodes | `remote_node` | token-gated enroll, mTLS, last-seen — runtime only |
 | Team webhooks (outbound) | `routes::teams` | deploy events fan out |
-| Gitea/Forgejo/GitLab webhooks | `git_providers.rs` | GitLab leg verified E2E 2026-11-19; GitHub App + bitbucket legs remain on #41 |
+| Gitea/Forgejo/GitLab webhooks | `git_providers.rs` | all legs verified E2E 2026-11-19 (#41 closed): GitLab + Bitbucket simulated, GitHub App real repo |
 | MCP server | `routes::mcp` | ~20 read/deploy tools |
 | Audit export, activity log, `--json` CLI | recent PRs | agent-consumable |
 | Automation bypass secret | #78 | Vercel deployment-protection equivalent |
@@ -187,13 +187,14 @@ KERN's `openapi.yaml` is the bar — Runway should match it.
   usage`, MCP `get_project_usage`: deploy counts, build seconds,
   artifact/image bytes per project over N days. Remaining: bandwidth
   (needs Traefik access-log accounting), team rollup, billing hooks
-- GitHub App webhook E2E (rest of #41 — needs dev app creds; gitlab +
-  bitbucket legs verified against simulated providers incl.
-  `bitbucket_connection.base_url` for server-style topologies)
+- ~~GitHub App webhook E2E~~ — `runway-deploys` app (env creds:
+  `GITHUB_APP_ID`/`_NAME`/`_PRIVATE_KEY`/`_WEBHOOK_SECRET`),
+  signed push → deploy → private clone → serve → check run. Live
+  inbound delivery still needs a public webhook URL.
 
 ## Cross-links
 
-- #41 git-provider verification — gate for all of the above
+- ~~#41 git-provider verification~~ — closed, all legs verified
 - #86 serverless runtime — separate parity blocker
 - #87 vercel.json import — `deploymentEnabled` maps to deploy rules
 - KERN repo: `~/Desktop/PROG+HTML/KERN` — runner contract:

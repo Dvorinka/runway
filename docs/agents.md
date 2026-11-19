@@ -121,3 +121,12 @@ GitHub (app manifest or manual), GitLab, Gitea, and Bitbucket push to
 `/api/{provider}/webhook`. Bitbucket payloads are verified by resolving
 the real branch head through the connection API — the payload sha is
 never trusted.
+
+GitHub App credentials resolve two ways: the one-click manifest flow
+(`GET /api/v1/github/app/register` → `app/callback`, stored encrypted
+in `github_app`) or env vars — `GITHUB_APP_ID`, `GITHUB_APP_NAME`,
+`GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_WEBHOOK_SECRET`. Env wins when
+set; `GET /api/v1/github/app/status` reports which source is active.
+The private key accepts `\n`-escaped newlines for dotenv/compose use.
+Bitbucket connections accept a `base_url` for Server/self-hosted
+topologies.

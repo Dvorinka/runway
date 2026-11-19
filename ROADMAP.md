@@ -426,17 +426,21 @@ framework detection.
 - [x] **Agent-first API** — OpenAPI spec, llms.txt, dry-run plans,
       idempotency keys, structured error codes, `runway doctor`,
       MCP write-tool parity (31 tools) — shipped in PR #97.
-- [ ] **Git-provider verification** — #41: GitLab leg verified
-      end-to-end (connect probe, project create, push webhook →
-      clone → build → serve) against a simulated GitLab backend.
-      Remaining: GitHub App leg (needs real app creds), bitbucket.
+- [x] **Git-provider verification** — #41 closed: all three legs
+      verified end-to-end (webhook → resolve → clone → build →
+      serve → status). GitLab + Bitbucket against simulated backends
+      (`bitbucket_connection.base_url` for server-style topologies);
+      GitHub App `runway-deploys` via env creds + signed synthetic
+      push on a real private repo — check run posted back.
 - [ ] **Monorepo `root_directory` upload parity** — Vercel installs
       the whole workspace at its root; uploads need the full repo
       tarball + overrides (verified pattern) or a `root_directory`
       config on upload projects.
-- [ ] **Deployment-observer SQL latency** — `UPDATE deployment SET
-      observed_status` measured 1.3–2.1s under load (slow-query log);
-      add index or batch.
+- [x] **Deployment-observer SQL latency** — diagnosed as pool-
+      acquisition wait, not query time: `DB_MAX_CONNECTIONS`
+      (default 25, was a shared hardcoded 10) + `update_status`
+      collapsed to a single patched UPDATE. 8/8 parallel deploys
+      with zero slow statements (PR #97, issue #89).
 - [ ] **Enterprise readiness gates** — function isolation design,
       per-deployment resource accounting/usage metering, multi-region
       story, preview-env parity (Vercel creates preview env per PR),
