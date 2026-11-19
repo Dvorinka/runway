@@ -300,9 +300,6 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
         .map(|s| s.trim().trim_start_matches("./").to_string())
         .filter(|s| !s.is_empty());
     let docker_build = dockerfile_path.is_some();
-    if docker_build && remote_node.is_some() {
-        anyhow::bail!("dockerfile builds are not supported on remote nodes (context is local)");
-    }
     if docker_build && static_mode {
         anyhow::bail!("dockerfile_path cannot be combined with output_directory");
     }
@@ -2144,9 +2141,11 @@ where
 }
 
 /// `dockerfile_path` builds: a throwaway fetch container stages the repo
-/// on the host (`buildctx/<dep>` mounted at /app), then `docker build`
-/// runs with that directory as a real context — devpush built with no
-/// context, so `COPY` could never work there. Returns the built tag.
+/// (`buildctx/<dep>` mounted at /app locally, pulled back over the
+/// archive API on remote nodes), then `docker build` runs with that
+/// directory as a real context — devpush built with no context, so
+/// `COPY` could never work there. Returns the built tag, which lives on
+/// whichever daemon ran the build.
 async fn dockerfile_build<F, Fut>(
     ctx: &Ctx,
     docker: &bollard::Docker,
@@ -2166,10 +2165,8 @@ where
         env,
     } = spec;
     let deployment_id = &deployment.id;
+    let remote = deployment.remote_node_id.is_some();
     let ctx_local = std::path::Path::new(&ctx.settings.data_dir)
-        .join("buildctx")
-        .join(deployment_id);
-    let ctx_host = docker_host_root(&ctx.settings)?
         .join("buildctx")
         .join(deployment_id);
     let _ = tokio::fs::remove_dir_all(&ctx_local).await;
@@ -2180,15 +2177,23 @@ where
         log(&format!("Pulling fetch image ({fetch_image})...")).await;
         pull_image(docker, fetch_image).await?;
     }
-    let host_root = docker_host_root(&ctx.settings)?;
-    let mut fetch_binds = vec![format!("{}:/app", ctx_host.display())];
-    if deployment
-        .config
-        .get("source_archive")
-        .and_then(|v| v.as_str())
-        .is_some()
-    {
-        fetch_binds.push(format!("{}:/src:ro", host_root.join("uploads").display()));
+    // Remote nodes can't see local host paths: the fetch container stages
+    // the repo inside its own layer and we pull it back as an archive.
+    let mut fetch_binds = vec![];
+    if !remote {
+        let ctx_host = docker_host_root(&ctx.settings)?
+            .join("buildctx")
+            .join(deployment_id);
+        fetch_binds.push(format!("{}:/app", ctx_host.display()));
+        let host_root = docker_host_root(&ctx.settings)?;
+        if deployment
+            .config
+            .get("source_archive")
+            .and_then(|v| v.as_str())
+            .is_some()
+        {
+            fetch_binds.push(format!("{}:/src:ro", host_root.join("uploads").display()));
+        }
     }
     let fetch_name = format!(
         "runner-{}-fetch",
@@ -2208,11 +2213,10 @@ where
             security_opt: Some(vec!["no-new-privileges:true".into()]),
             ..Default::default()
         }),
-        cmd: Some(vec![
-            "/bin/sh".into(),
-            "-c".into(),
-            source_cmds.join(" && "),
-        ]),
+        // alpine/git's ENTRYPOINT is `git` — replace it, else our
+        // /bin/sh -c script becomes git argv and dies instantly.
+        entrypoint: Some(vec!["/bin/sh".into(), "-c".into()]),
+        cmd: Some(vec![source_cmds.join(" && ")]),
         ..Default::default()
     };
     let fetch_id = dkr::create_or_replace_container(docker, &fetch_name, fetch_body)
@@ -2223,6 +2227,23 @@ where
         .await?;
     spawn_log_tailer(ctx, fetch_id.clone(), deployment_id.clone());
     let exit = wait_exit(docker, &fetch_id, ctx.settings.deployment_timeout_seconds).await;
+    if remote && matches!(exit, Ok(0)) {
+        // The repo lives in the dead fetch container's layer — pull it
+        // back as `app/` under ctx_local (same archive-API path as the
+        // remote static artifact return).
+        if let Err(e) = download_container_dir(docker, &fetch_id, "/app", &ctx_local).await {
+            let _ = docker
+                .remove_container(
+                    &fetch_id,
+                    Some(RemoveContainerOptions {
+                        force: true,
+                        ..Default::default()
+                    }),
+                )
+                .await;
+            anyhow::bail!("remote source fetch: {e}");
+        }
+    }
     let _ = docker
         .remove_container(
             &fetch_id,
@@ -2240,10 +2261,11 @@ where
 
     // `root_directory` selects the context root — a monorepo app builds
     // with only its subtree visible, matching Railway/Coolify behavior.
+    let staged_dir = ctx_local.clone();
     let context_dir = if root_dir.is_empty() {
-        ctx_local.clone()
+        staged_dir
     } else {
-        ctx_local.join(root_dir)
+        staged_dir.join(root_dir)
     };
     if !context_dir.join(dockerfile_path).is_file() {
         anyhow::bail!("Dockerfile not found at {dockerfile_path}");
@@ -2465,6 +2487,63 @@ async fn select_node_by_labels(
         }
         None => Ok(None),
     }
+}
+
+/// Pull `path` from a (possibly exited) container over the archive API
+/// and unpack the tar into `dest` — docker returns it as `<leaf>/…`.
+async fn download_container_dir(
+    docker: &bollard::Docker,
+    container: &str,
+    path: &str,
+    dest: &std::path::Path,
+) -> anyhow::Result<()> {
+    let mut stream = docker.download_from_container(
+        container,
+        Some(bollard::container::DownloadFromContainerOptions { path }),
+    );
+    let mut bytes = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        bytes.extend_from_slice(&chunk?);
+    }
+    let tmp = dest.join(".dl");
+    tokio::fs::create_dir_all(&tmp).await?;
+    let tar = tmp.with_extension("tar");
+    tokio::fs::write(&tar, &bytes).await?;
+    let out = tokio::process::Command::new("tar")
+        .arg("-xf")
+        .arg(&tar)
+        .arg("-C")
+        .arg(&tmp)
+        .output()
+        .await?;
+    let _ = tokio::fs::remove_file(&tar).await;
+    if !out.status.success() {
+        let _ = tokio::fs::remove_dir_all(&tmp).await;
+        anyhow::bail!(
+            "container archive extract failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    // Flatten `<leaf>/…` onto dest.
+    let leaf = path.rsplit('/').next().unwrap_or(path);
+    let cp = tokio::process::Command::new("sh")
+        .arg("-c")
+        .arg(format!(
+            "cp -a '{}/{}/.' '{}/'",
+            tmp.display(),
+            leaf,
+            dest.display()
+        ))
+        .output()
+        .await?;
+    let _ = tokio::fs::remove_dir_all(&tmp).await;
+    if !cp.status.success() {
+        anyhow::bail!(
+            "container archive copy failed: {}",
+            String::from_utf8_lossy(&cp.stderr)
+        );
+    }
+    Ok(())
 }
 
 /// Remote static: pull the exited build container's /out as a tar stream
