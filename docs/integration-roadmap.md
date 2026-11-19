@@ -89,18 +89,32 @@ Non-goal: no hard dependency. Integration is a per-team opt-in.
 - **Level 0 — today, docs only** (free): enroll the same machines as
   both KERN runners and Runway remote nodes. One-line installers
   already exist on both sides. Write the recipe.
-- **Level 1 — `build_executor: "kern"`** on project/team config:
-  1. Deploy time → Runway generates a minimal build workflow
-     (checkout → install/build → `runway upload` the output dir as a
-     tarball to `POST /deployments/upload` or a dedicated
-     artifact-return endpoint),
-  2. dispatches it to a KERN project via KERN's REST API
-     (`/projects/{p}/workflows/{id}/runs` dispatch),
-  3. polls run status (`/runs/{id}`), maps KERN conclusion →
-     deployment status, streams step logs into the deployment log.
-  Needs on KERN's side: dispatch-with-inputs + artifact return (both
-  exist in spirit via `workflow_dispatch` + artifacts; verify exact
-  surface). Token: a scoped KERN PAT stored encrypted per team.
+- **Level 1 — `build_executor: "kern"` — SHIPPED** (verified end-to-end
+  against kern.tdvorak.dev). `project.config.build_executor = "kern"`
+  plus `RUNWAY_KERN_URL`/`RUNWAY_KERN_TOKEN`/`RUNWAY_KERN_PROJECT`:
+  1. the source ships to KERN as a content-addressed bundle
+     (`PUT /api/v1/projects/{p}/source`, resolve-then-upload dedupe)
+     which **replaces the repo checkout** — upload deploys send the
+     deployment tarball, git deploys send a marker bundle and the
+     in-workflow clone does the real fetch,
+  2. a generated workflow (`POST /api/v1/projects/{p}/runs` with inline
+     `workflow_yaml`, `trust_level: trusted`) runs the *same*
+     `commands.join(" && ")` script as the local runner — readcfg
+     overrides, presets, snippets — under `container.image` = the
+     resolved runner image, on `kern_labels` (default
+     `self-hosted,linux,docker`),
+  3. poll `GET /api/v1/runs/{id}` → conclusion; deployment cancel
+     propagates `POST /runs/{id}/cancel`; run id is recorded on the
+     deployment (`config.kern_run_id`),
+  4. the `runway-out` artifact (`actions/upload-artifact`,
+     `path: runway-out/**`) is downloaded
+     (`GET /api/v1/artifacts?run_id=` → `/{id}/download`) into the
+     static dir — SWS serve and `.runway.json` handling are unchanged.
+  Gotchas encoded: a bare `path: dir` glob yields an empty artifact
+  (must be `dir/**`); publish uses `tar --exclude` because the
+  workspace `runway-out/` would self-copy when `output_directory=.`.
+  Scope: static (output_directory) builds only; token is a single
+  instance-level PAT today — per-team scoped tokens are the upgrade.
 - **Level 2 — shared pool** (later): Runway build jobs claimable by
   KERN runners through a claim-shim adapter, or joint runner labels.
   Defer until Level 1 proves demand.

@@ -92,6 +92,18 @@ Write tools (`deploy_project`, `set_env`, `rollback_environment`, …)
 respect the same RBAC gates as the REST surface — issue the key to an
 account with the minimum role the automation needs.
 
+## KERN build executor (optional)
+
+`project.config.build_executor = "kern"` sends static builds to a
+self-hosted KERN fleet instead of the local Docker runner. Required
+server envs: `RUNWAY_KERN_URL`, `RUNWAY_KERN_TOKEN`,
+`RUNWAY_KERN_PROJECT` (the KERN project slug dispatches go through).
+`config.kern_labels` (array) selects runners — default
+`["self-hosted","linux","docker"]`, i.e. docker-executor runners, since
+`container.image` is used. Source travels as a content-addressed
+bundle, the artifact returns via `actions/upload-artifact`, and the
+usual SWS serve path takes over — `output_directory` is required.
+
 ## Webhooks
 
 Per-project `config.webhook_url` receives deploy lifecycle events

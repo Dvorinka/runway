@@ -413,9 +413,13 @@ framework detection.
       deploy hooks, per-project status contexts.
 - [ ] **Executor nodes** — builds on user-owned hardware (labels,
       node_selector); remote static builds first, registry for images.
-- [ ] **KERN bridge (optional)** — `build_executor: kern` dispatches a
-      generated build workflow to a self-hosted KERN control plane and
-      imports the artifact; Level 0 is a docs recipe today.
+- [x] **KERN bridge Level 1 (optional)** — `build_executor: "kern"` on a
+      static project ships the source bundle to a KERN control plane,
+      dispatches a generated workflow on `kern_labels`, and imports the
+      `runway-out` artifact into the normal static-serve path. Verified
+      live against kern.tdvorak.dev. Scope: static builds only;
+      instance-level token; per-team tokens + server/image builds are
+      the remaining work.
 - [ ] **Agent-first API** — OpenAPI spec, llms.txt + deploy skill,
       dry-run plans, idempotency keys, error codes, `runway doctor`,
       MCP write-tool parity with REST.
