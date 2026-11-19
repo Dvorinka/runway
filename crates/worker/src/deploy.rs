@@ -336,6 +336,24 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
         None
     };
 
+    // Functions shim (Vercel `api/` parity): handler sources leave the
+    // build container through /fn; post-build they bundle into a Node
+    // image that serves static output + /api/* routes (#86).
+    let fn_local_dir = std::path::PathBuf::from(&ctx.settings.data_dir)
+        .join("functions")
+        .join(deployment_id);
+    if static_mode {
+        tokio::fs::create_dir_all(&fn_local_dir).await?;
+        if remote_node.is_none() {
+            let host_dir = docker_host_root(&ctx.settings)?
+                .join("functions")
+                .join(deployment_id)
+                .display()
+                .to_string();
+            binds.push(format!("{host_dir}:/fn"));
+        }
+    }
+
     let root_dir = config
         .get("root_directory")
         .and_then(|v| v.as_str())
@@ -452,15 +470,27 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
                     .to_string(),
             );
             }
+            // Vercel `api/` parity: handler sources (+ project manifests
+            // for their npm deps) stage into /fn for the functions shim.
+            commands.push(
+                "if [ -d api ] && [ -d /fn ]; then \
+                 echo 'Detected api/ — staging functions...'; \
+                 tar -cf - -C api . | tar -xmf - -C /fn && \
+                 for f in package.json package-lock.json pnpm-lock.yaml yarn.lock; do \
+                 if [ -f \"$f\" ]; then cp \"$f\" /fn/; fi; done; fi"
+                    .to_string(),
+            );
         } else {
             commands.push("echo 'Starting application...'".into());
             commands.push(config_command("start_command", cfg_str("start_command")));
         }
     }
     if static_mode && remote_node.is_some() {
-        // tmpfs /out unmounts when the build container exits — persist
-        // into the writable layer so the archive API can read it back.
+        // tmpfs /out + /fn unmount when the build container exits —
+        // persist into the writable layer so the archive API can read
+        // them back.
         commands.push("cp -a /out/. /app/.runway-out/".into());
+        commands.push("mkdir -p /app/.runway-fn && cp -a /fn/. /app/.runway-fn/".into());
     }
 
     // -- Networks ------------------------------------------------------
@@ -766,6 +796,14 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
         serve_endpoints.insert(n, EndpointSettings::default());
     }
 
+    // Function handlers receive the project env (Vercel parity); git
+    // tokens never do — they were only ever needed for the fetch.
+    let fn_serve_env: Vec<String> = env
+        .iter()
+        .filter(|e| !e.starts_with("RUNWAY_GITHUB_TOKEN=") && !e.starts_with("RUNWAY_GIT_TOKEN="))
+        .cloned()
+        .collect();
+
     let body = if static_mode {
         if kern_build {
             // Phase 1 (KERN): remote runner executes the same script; the
@@ -806,11 +844,14 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
                         name: Some(RestartPolicyNameEnum::NO),
                         maximum_retry_count: None,
                     }),
-                    // Remote builds write /out in-container; a tmpfs
-                    // keeps the non-root runner image able to create it.
-                    tmpfs: remote_node
-                        .is_some()
-                        .then(|| HashMap::from([("/out".to_string(), "rw".to_string())])),
+                    // Remote builds write /out + /fn in-container; tmpfs
+                    // keeps the non-root runner image able to create them.
+                    tmpfs: remote_node.is_some().then(|| {
+                        HashMap::from([
+                            ("/out".to_string(), "rw".to_string()),
+                            ("/fn".to_string(), "rw".to_string()),
+                        ])
+                    }),
                     ..host_config.clone()
                 }),
                 cmd: Some(cmd),
@@ -844,6 +885,7 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
             let exit = wait_exit(docker, &build_id, ctx.settings.deployment_timeout_seconds).await;
             if remote_node.is_some() && matches!(exit, Ok(0)) {
                 download_static_out(docker, &build_id, &static_local_dir).await?;
+                download_container_dir(docker, &build_id, "/app/.runway-fn", &fn_local_dir).await?;
                 log("Build artifact returned from node").await;
             }
             let _ = docker
@@ -907,6 +949,41 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
             }
         }
 
+        // Functions shim: handler sources staged to /fn bundle into a
+        // Node image that serves static output + /api/* routes (#86).
+        let fn_dir = fn_local_dir.clone();
+        let has_functions = tokio::task::spawn_blocking(move || dir_has_code_files(&fn_dir))
+            .await
+            .unwrap_or(false);
+        let fn_image = if has_functions {
+            log("Bundling api/ functions...").await;
+            let img = functions_shim_build(
+                ctx,
+                docker,
+                deployment_id,
+                &project.id,
+                &fn_local_dir,
+                &static_local_dir,
+                &log,
+            )
+            .await?;
+            // Usage metering: built image bytes, same as dockerfile builds.
+            if let Ok(info) = docker.inspect_image(&img).await {
+                if let Some(bytes) = info.size {
+                    let _ = sqlx::query(
+                        "UPDATE deployment SET config = config || $1::jsonb WHERE id = $2",
+                    )
+                    .bind(json!({ "image_bytes": bytes }))
+                    .bind(&deployment.id)
+                    .execute(&ctx.db)
+                    .await;
+                }
+            }
+            Some(img)
+        } else {
+            None
+        };
+
         // Phase 2: serve the artifact with the static-web image.
         // runway.json extracted during build → SWS config + overrides.
         let mut serve_toml: Option<String> = None;
@@ -921,85 +998,105 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
             }
         }
 
-        let (serve_env, serve_binds, serve_mounts) = if remote_node.is_none() {
-            let static_dir = static_host_dir.expect("local static_mode implies static_host_dir");
-            let mut binds = vec![format!("{static_dir}:/public:ro")];
-            binds.extend(storage_mounts);
-            if let Some(toml) = &serve_toml {
-                let toml_path = std::path::PathBuf::from(&ctx.settings.data_dir)
-                    .join("static")
-                    .join(format!("{deployment_id}.toml"));
-                if tokio::fs::write(&toml_path, toml).await.is_ok() {
-                    let host_toml = static_dir
-                        .trim_end_matches(&format!("/{deployment_id}"))
-                        .to_string()
-                        + &format!("/{deployment_id}.toml");
-                    binds.push(format!("{host_toml}:/config.toml:ro"));
-                }
-            }
-            let mut env = vec!["SERVER_ROOT=/public".to_string()];
-            if binds.len() > 1 {
-                env.push("SERVER_CONFIG_FILE=/config.toml".to_string());
-            }
+        if let Some(img) = fn_image {
+            // Functions shim: the built image's own CMD runs the Node
+            // dispatcher — static under /, handlers under /api/*.
+            let mut serve_env = fn_serve_env;
             if spa_fallback {
-                env.push("SERVER_PAGE_FALLBACK=/public/index.html".to_string());
+                serve_env.push("RUNWAY_SPA_FALLBACK=1".to_string());
             }
-            (env, binds, Vec::new())
+            ContainerConfig {
+                image: Some(img),
+                env: Some(serve_env),
+                labels: Some(labels),
+                networking_config: Some(NetworkingConfig {
+                    endpoints_config: serve_endpoints.clone(),
+                }),
+                host_config: Some(host_config),
+                ..Default::default()
+            }
         } else {
-            // Remote node: ship the artifact into a node-local volume —
-            // bind mounts can't reach our filesystem. Layout:
-            //   <vol>/public/<files>  <vol>/_cfg/config.toml
-            let vol = format!("runway-static-{deployment_id}");
-            log("Shipping artifact to node volume...").await;
-            ship_static_volume(
-                docker,
-                &vol,
-                &static_local_dir,
-                serve_toml.as_deref(),
-                &runner_image,
-            )
-            .await?;
-            let mut env = vec!["SERVER_ROOT=/srv/public".to_string()];
-            if serve_toml.is_some() {
-                env.push("SERVER_CONFIG_FILE=/srv/_cfg/config.toml".to_string());
-            }
-            if spa_fallback {
-                env.push("SERVER_PAGE_FALLBACK=/srv/public/index.html".to_string());
-            }
-            (
-                env,
-                Vec::new(),
-                vec![bollard::models::Mount {
-                    target: Some("/srv".into()),
-                    source: Some(vol),
-                    typ: Some(bollard::models::MountTypeEnum::VOLUME),
-                    read_only: Some(true),
-                    ..Default::default()
-                }],
-            )
-        };
+            let (serve_env, serve_binds, serve_mounts) = if remote_node.is_none() {
+                let static_dir =
+                    static_host_dir.expect("local static_mode implies static_host_dir");
+                let mut binds = vec![format!("{static_dir}:/public:ro")];
+                binds.extend(storage_mounts);
+                if let Some(toml) = &serve_toml {
+                    let toml_path = std::path::PathBuf::from(&ctx.settings.data_dir)
+                        .join("static")
+                        .join(format!("{deployment_id}.toml"));
+                    if tokio::fs::write(&toml_path, toml).await.is_ok() {
+                        let host_toml = static_dir
+                            .trim_end_matches(&format!("/{deployment_id}"))
+                            .to_string()
+                            + &format!("/{deployment_id}.toml");
+                        binds.push(format!("{host_toml}:/config.toml:ro"));
+                    }
+                }
+                let mut env = vec!["SERVER_ROOT=/public".to_string()];
+                if binds.len() > 1 {
+                    env.push("SERVER_CONFIG_FILE=/config.toml".to_string());
+                }
+                if spa_fallback {
+                    env.push("SERVER_PAGE_FALLBACK=/public/index.html".to_string());
+                }
+                (env, binds, Vec::new())
+            } else {
+                // Remote node: ship the artifact into a node-local volume —
+                // bind mounts can't reach our filesystem. Layout:
+                //   <vol>/public/<files>  <vol>/_cfg/config.toml
+                let vol = format!("runway-static-{deployment_id}");
+                log("Shipping artifact to node volume...").await;
+                ship_static_volume(
+                    docker,
+                    &vol,
+                    &static_local_dir,
+                    serve_toml.as_deref(),
+                    &runner_image,
+                )
+                .await?;
+                let mut env = vec!["SERVER_ROOT=/srv/public".to_string()];
+                if serve_toml.is_some() {
+                    env.push("SERVER_CONFIG_FILE=/srv/_cfg/config.toml".to_string());
+                }
+                if spa_fallback {
+                    env.push("SERVER_PAGE_FALLBACK=/srv/public/index.html".to_string());
+                }
+                (
+                    env,
+                    Vec::new(),
+                    vec![bollard::models::Mount {
+                        target: Some("/srv".into()),
+                        source: Some(vol),
+                        typ: Some(bollard::models::MountTypeEnum::VOLUME),
+                        read_only: Some(true),
+                        ..Default::default()
+                    }],
+                )
+            };
 
-        ContainerConfig {
-            image: serve_image,
-            env: Some(serve_env),
-            labels: Some(labels),
-            networking_config: Some(NetworkingConfig {
-                endpoints_config: serve_endpoints.clone(),
-            }),
-            host_config: Some(HostConfig {
-                binds: if serve_binds.is_empty() {
-                    None
-                } else {
-                    Some(serve_binds)
-                },
-                mounts: if serve_mounts.is_empty() {
-                    None
-                } else {
-                    Some(serve_mounts)
-                },
-                ..host_config
-            }),
-            ..Default::default()
+            ContainerConfig {
+                image: serve_image,
+                env: Some(serve_env),
+                labels: Some(labels),
+                networking_config: Some(NetworkingConfig {
+                    endpoints_config: serve_endpoints.clone(),
+                }),
+                host_config: Some(HostConfig {
+                    binds: if serve_binds.is_empty() {
+                        None
+                    } else {
+                        Some(serve_binds)
+                    },
+                    mounts: if serve_mounts.is_empty() {
+                        None
+                    } else {
+                        Some(serve_mounts)
+                    },
+                    ..host_config
+                }),
+                ..Default::default()
+            }
         }
     } else {
         // Dockerfile builds: image's own CMD/ENTRYPOINT (or the
@@ -1221,8 +1318,27 @@ pub async fn wait_exit(
             None => anyhow::bail!("container wait stream ended before exit"),
         }
     })
-    .await??;
-    Ok(code)
+    .await;
+    let code: anyhow::Result<i64> = match code {
+        Ok(Ok(c)) => return Ok(c),
+        Ok(Err(e)) => Err(e),
+        Err(_) => Err(anyhow::anyhow!("container wait timed out")),
+    };
+    // The daemon's wait endpoint can report an error for a container
+    // that already exited (observed on a restarted Docker Desktop).
+    // Fall back to inspect — State.ExitCode is authoritative for a
+    // container that ran to completion.
+    let e = code.unwrap_err();
+    if let Ok(info) = docker
+        .inspect_container(id, None::<InspectContainerOptions>)
+        .await
+    {
+        if let Some(code) = info.state.and_then(|s| s.exit_code) {
+            tracing::warn!(container = id, %code, "wait errored; exit code from inspect");
+            return Ok(code);
+        }
+    }
+    Err(e)
 }
 
 pub async fn pull_image(docker: &bollard::Docker, image: &str) -> anyhow::Result<()> {
@@ -2329,24 +2445,62 @@ where
         })
         .unwrap_or_default();
     let tar = tar_context(&context_dir).await?;
+    run_image_build(
+        docker,
+        dockerfile_path,
+        &tag,
+        deployment_id,
+        &deployment.project_id,
+        buildargs,
+        tar,
+        &log,
+        ctx.settings.deployment_timeout_seconds,
+    )
+    .await?;
+
+    let _ = tokio::fs::remove_dir_all(&ctx_local).await;
+    log(&format!("Image built ({tag})")).await;
+    Ok(tag)
+}
+
+/// Feed a build context to `docker build` and stream the log back.
+/// Works against the local daemon or a remote node's equally — the tar
+/// travels over the daemon API, so the built image always lands on the
+/// daemon that will serve it.
+// jarvis: build runs to completion — cancel() can't abort a daemon-side
+// build stream. Upgrade if large builds need mid-flight cancel.
+#[allow(clippy::too_many_arguments)]
+async fn run_image_build<F, Fut>(
+    docker: &bollard::Docker,
+    dockerfile: &str,
+    tag: &str,
+    deployment_id: &str,
+    project_id: &str,
+    buildargs: HashMap<String, String>,
+    tar: Vec<u8>,
+    log: &F,
+    timeout_secs: u64,
+) -> anyhow::Result<()>
+where
+    F: Fn(&str) -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
     let mut stream = docker.build_image(
         bollard::image::BuildImageOptions::<String> {
-            dockerfile: dockerfile_path.to_string(),
-            t: tag.clone(),
+            dockerfile: dockerfile.to_string(),
+            t: tag.to_string(),
             rm: true,
             forcerm: true,
             buildargs,
             labels: HashMap::from([
-                ("runway.deployment_id".into(), deployment_id.clone()),
-                ("runway.project_id".into(), deployment.project_id.clone()),
+                ("runway.deployment_id".into(), deployment_id.to_string()),
+                ("runway.project_id".into(), project_id.to_string()),
             ]),
             ..Default::default()
         },
         None,
         Some(tar.into()),
     );
-    // jarvis: build runs to completion — cancel() can't abort a daemon-side
-    // build stream. Upgrade if large builds need mid-flight cancel.
     let collect = async {
         while let Some(item) = stream.next().await {
             let info = item.map_err(|e| anyhow::anyhow!("image build stream: {e}"))?;
@@ -2362,16 +2516,274 @@ where
         Ok::<(), anyhow::Error>(())
     };
     tokio::time::timeout(
-        std::time::Duration::from_secs(ctx.settings.deployment_timeout_seconds.max(300)),
+        std::time::Duration::from_secs(timeout_secs.max(300)),
         collect,
     )
     .await
     .map_err(|_| anyhow::anyhow!("image build timed out"))??;
+    Ok(())
+}
 
-    let _ = tokio::fs::remove_dir_all(&ctx_local).await;
-    log(&format!("Image built ({tag})")).await;
+/// True when `dir` contains at least one handler source — drives whether
+/// a static project gets the functions shim or the plain SWS arm.
+fn dir_has_code_files(dir: &std::path::Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    let mut stack: Vec<std::path::PathBuf> =
+        entries.filter_map(|e| e.ok()).map(|e| e.path()).collect();
+    while let Some(p) = stack.pop() {
+        if p.is_dir() {
+            if p.file_name().and_then(|n| n.to_str()) == Some("node_modules") {
+                continue;
+            }
+            if let Ok(more) = std::fs::read_dir(&p) {
+                stack.extend(more.filter_map(|e| e.ok()).map(|e| e.path()));
+            }
+            continue;
+        }
+        if matches!(
+            p.extension().and_then(|e| e.to_str()),
+            Some("js" | "ts" | "mjs" | "cjs")
+        ) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Build the functions-shim image: static output + bundled `api/`
+/// handlers + the zero-dependency dispatcher. The image builds on the
+/// deployment's daemon (`docker` may be a remote node) so it serves
+/// from wherever the deployment is pinned.
+async fn functions_shim_build<F, Fut>(
+    ctx: &Ctx,
+    docker: &bollard::Docker,
+    deployment_id: &str,
+    project_id: &str,
+    fn_dir: &std::path::Path,
+    static_dir: &std::path::Path,
+    log: &F,
+) -> anyhow::Result<String>
+where
+    F: Fn(&str) -> Fut,
+    Fut: std::future::Future<Output = ()>,
+{
+    let ctx_dir = std::path::PathBuf::from(&ctx.settings.data_dir)
+        .join("buildctx")
+        .join(deployment_id);
+    let _ = tokio::fs::remove_dir_all(&ctx_dir).await;
+    tokio::fs::create_dir_all(&ctx_dir).await?;
+    tokio::fs::write(ctx_dir.join("Dockerfile"), SHIM_DOCKERFILE).await?;
+    tokio::fs::write(ctx_dir.join("server.mjs"), SHIM_SERVER).await?;
+    for (src, dst) in [
+        (fn_dir, ctx_dir.join("api")),
+        (static_dir, ctx_dir.join("public")),
+    ] {
+        tokio::fs::create_dir_all(&dst).await?;
+        let out = tokio::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("cp -a '{}'/. '{}/'", src.display(), dst.display()))
+            .output()
+            .await?;
+        if !out.status.success() {
+            anyhow::bail!(
+                "shim context copy failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+    }
+    let tar = tar_context(&ctx_dir).await?;
+    let tag = format!(
+        "runway-dep-{}:latest",
+        &deployment_id[..12.min(deployment_id.len())]
+    );
+    run_image_build(
+        docker,
+        "Dockerfile",
+        &tag,
+        deployment_id,
+        project_id,
+        HashMap::new(),
+        tar,
+        log,
+        ctx.settings.deployment_timeout_seconds,
+    )
+    .await?;
+    let _ = tokio::fs::remove_dir_all(&ctx_dir).await;
+    log(&format!("Functions image built ({tag})")).await;
     Ok(tag)
 }
+
+/// Generated Dockerfile for the functions shim. Stage 1 bundles every
+/// `api/*.{js,ts,mjs,cjs}` handler to CJS with esbuild — project npm
+/// deps inline (Vercel behavior: api/ uses the root package.json).
+/// Stage 2 is the slim serve image: dispatcher + static output +
+/// bundles, zero runtime npm install.
+const SHIM_DOCKERFILE: &str = r#"FROM node:24-alpine AS fnsrc
+WORKDIR /w
+COPY api/ /w/
+RUN (npm ci --omit=dev || npm install --omit=dev || true) \
+ && files=$(find . -path ./node_modules -prune -o -type f \
+      \( -name '*.ts' -o -name '*.js' -o -name '*.mjs' -o -name '*.cjs' \) -print) \
+ && [ -z "$files" ] \
+ || npx -y esbuild@0.25.10 $files --bundle --platform=node --format=cjs \
+      --outbase=. --outdir=/fn-dist --out-extension:.js=.cjs --log-level=warning
+FROM node:24-alpine
+WORKDIR /srv
+COPY public/ /srv/public/
+COPY server.mjs /srv/server.mjs
+COPY --from=fnsrc /fn-dist/ /srv/fn/
+ENV PORT=3000 SERVER_ROOT=/srv/public RUNWAY_FN_DIR=/srv/fn
+EXPOSE 3000
+CMD ["node","/srv/server.mjs"]
+"#;
+
+/// Zero-dependency dispatcher baked into the shim image. Implements the
+/// Vercel function contract on plain `node:http`: `api/foo.ts` →
+/// `/api/foo`, `api/[id].ts` → one segment, `api/[...r].ts` →
+/// catch-all, `api/index.ts` → `/api`; handlers get `(req,res)` with
+/// the Vercel helpers (`req.query`, `req.body`, `req.cookies`,
+/// `res.status/json/send/redirect`). Non-`/api` traffic serves static
+/// output with a minimal mime map + optional SPA fallback.
+// jarvis: single-runtime (node only), no per-function isolation or cold
+// start accounting — ceiling for #86 until a real function runtime.
+const SHIM_SERVER: &str = r##"import http from 'node:http';
+import { createRequire } from 'node:module';
+import fs from 'node:fs';
+import path from 'node:path';
+
+const FN_DIR = process.env.RUNWAY_FN_DIR || '/srv/fn';
+const ROOT = process.env.SERVER_ROOT || '/srv/public';
+const PORT = parseInt(process.env.PORT || '3000', 10);
+const SPA = process.env.RUNWAY_SPA_FALLBACK === '1';
+const require = createRequire(import.meta.url);
+
+function collect(dir, rel, out) {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (e.name === 'node_modules') continue;
+    if (e.isDirectory()) { collect(path.join(dir, e.name), rel + '/' + e.name, out); continue; }
+    if (!/\.(cjs|js|mjs|ts)$/.test(e.name)) continue;
+    out.push(rel + '/' + e.name.replace(/\.[^.]+$/, ''));
+  }
+}
+const entries = [];
+if (fs.existsSync(FN_DIR)) collect(FN_DIR, '', entries);
+
+const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const routes = entries.map(rel => {
+  const names = [];
+  const segs = rel.split('/').filter(Boolean);
+  let literals = 0, catchall = 0;
+  const parts = segs.map(s => {
+    let m = s.match(/^\[\.\.\.(.+)\]$/);
+    if (m) { names.push(m[1]); catchall++; return '(.+)'; }
+    m = s.match(/^\[(.+)\]$/);
+    if (m) { names.push(m[1]); return '([^/]+)'; }
+    literals++; return esc(s);
+  });
+  let src;
+  if (segs[segs.length - 1] === 'index') {
+    const base = parts.slice(0, -1).join('/');
+    src = base ? '^/' + base + '(?:/index)?$' : '^/(?:index)?$';
+  } else {
+    src = '^/' + parts.join('/') + '$';
+  }
+  return { re: new RegExp(src), names, file: path.join(FN_DIR, rel + '.cjs'),
+           score: literals * 10 - catchall * 100 };
+});
+routes.sort((a, b) => b.score - a.score);
+
+const MIME = {
+  '.html': 'text/html; charset=utf-8', '.css': 'text/css',
+  '.js': 'text/javascript', '.mjs': 'text/javascript', '.json': 'application/json',
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
+  '.webp': 'image/webp', '.avif': 'image/avif', '.txt': 'text/plain',
+  '.xml': 'application/xml', '.woff': 'font/woff', '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf', '.pdf': 'application/pdf', '.map': 'application/json',
+  '.wasm': 'application/wasm', '.mp4': 'video/mp4', '.webm': 'video/webm',
+};
+
+function serveStatic(req, res) {
+  const p = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+  if (p.includes('..')) { res.statusCode = 403; return res.end(); }
+  let f = path.join(ROOT, p);
+  try {
+    if (fs.statSync(f).isDirectory()) f = path.join(f, 'index.html');
+  } catch {}
+  if (!fs.existsSync(f) && SPA) f = path.join(ROOT, 'index.html');
+  if (!fs.existsSync(f) || !fs.statSync(f).isFile()) {
+    res.statusCode = 404; return res.end('Not Found');
+  }
+  res.setHeader('content-type', MIME[path.extname(f).toLowerCase()] || 'application/octet-stream');
+  if (req.method === 'HEAD') return res.end();
+  fs.createReadStream(f).pipe(res);
+}
+
+function readBody(req) {
+  return new Promise(resolve => {
+    const chunks = [];
+    req.on('data', d => chunks.push(d));
+    req.on('error', () => resolve({}));
+    req.on('end', () => {
+      const raw = Buffer.concat(chunks);
+      if (!raw.length) return resolve({});
+      const ct = req.headers['content-type'] || '';
+      if (ct.includes('application/json')) {
+        try { return resolve(JSON.parse(raw.toString())); } catch { return resolve(raw.toString()); }
+      }
+      resolve(raw.toString());
+    });
+  });
+}
+
+http.createServer(async (req, res) => {
+  const p = new URL(req.url, 'http://x').pathname;
+  if (p !== '/api' && !p.startsWith('/api/')) {
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      res.statusCode = 405; return res.end();
+    }
+    return serveStatic(req, res);
+  }
+  const rel = p.slice(4) || '/';
+  const route = routes.find(r => r.re.test(rel));
+  if (!route) { res.statusCode = 404; return res.end('Not Found'); }
+  try {
+    const mod = require(route.file);
+    const h = mod.default || mod.handler || mod;
+    if (typeof h !== 'function') {
+      res.statusCode = 500; return res.end('Handler is not a function');
+    }
+    const u = new URL(req.url, 'http://x');
+    req.query = Object.fromEntries(u.searchParams);
+    const m = rel.match(route.re);
+    if (m) route.names.forEach((n, i) => { req.query[n] = m[i + 1]; });
+    req.cookies = {};
+    for (const c of (req.headers.cookie || '').split(';')) {
+      const i = c.indexOf('=');
+      if (i > 0) req.cookies[c.slice(0, i).trim()] = decodeURIComponent(c.slice(i + 1).trim());
+    }
+    req.body = await readBody(req);
+    res.status = c => (res.statusCode = c, res);
+    res.json = o => { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify(o)); };
+    res.send = b => {
+      if (b !== null && typeof b === 'object') return res.json(b);
+      res.end(b == null ? '' : String(b));
+    };
+    res.redirect = (a, b) => {
+      const code = typeof a === 'number' ? a : 307, loc = typeof a === 'number' ? b : a;
+      res.statusCode = code; res.setHeader('location', loc); res.end();
+    };
+    await h(req, res);
+    if (!res.writableEnded) res.end();
+  } catch (e) {
+    console.error('handler error:', e);
+    if (!res.headersSent) res.statusCode = 500;
+    if (!res.writableEnded) res.end('Internal Server Error');
+  }
+}).listen(PORT, () => console.log(`runway fn shim :${PORT} (${routes.length} routes)`));
+"##;
 
 /// Tar a directory for `docker build` context. `.git` is excluded.
 // jarvis: .dockerignore not honored — ceiling until a real ignore parser.
@@ -2428,6 +2840,7 @@ fn safe_rel_path(p: &str) -> bool {
 async fn drop_artifacts(ctx: &Ctx, dep: &Deployment) {
     let data = std::path::Path::new(&ctx.settings.data_dir);
     let _ = tokio::fs::remove_dir_all(data.join("static").join(&dep.id)).await;
+    let _ = tokio::fs::remove_dir_all(data.join("functions").join(&dep.id)).await;
     let _ = tokio::fs::remove_dir_all(data.join("buildctx").join(&dep.id)).await;
     let _ = ctx
         .docker
