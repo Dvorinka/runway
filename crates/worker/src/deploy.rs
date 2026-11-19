@@ -285,9 +285,6 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
         .trim_matches('/')
         .to_string();
     let static_mode = !output_dir.is_empty();
-    if static_mode && remote_node.is_some() {
-        anyhow::bail!("static deploys are not supported on remote nodes (artifact dir is local)");
-    }
     // Optional KERN executor: the identical build script runs on a remote
     // KERN runner; its `runway-out` artifact lands in static_local_dir and
     // phase 2 serves it unchanged. Static mode only.
@@ -322,15 +319,21 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
     let static_local_dir = std::path::PathBuf::from(&ctx.settings.data_dir)
         .join("static")
         .join(deployment_id);
+    // Remote builds keep /out in-container; it is pulled back over the
+    // docker API after the build exits, then shipped to a node volume.
     let static_host_dir = if static_mode {
         tokio::fs::create_dir_all(&static_local_dir).await?;
-        let host_dir = docker_host_root(&ctx.settings)?
-            .join("static")
-            .join(deployment_id)
-            .display()
-            .to_string();
-        binds.push(format!("{host_dir}:/out"));
-        Some(host_dir)
+        if remote_node.is_none() {
+            let host_dir = docker_host_root(&ctx.settings)?
+                .join("static")
+                .join(deployment_id)
+                .display()
+                .to_string();
+            binds.push(format!("{host_dir}:/out"));
+            Some(host_dir)
+        } else {
+            None
+        }
     } else {
         None
     };
@@ -819,6 +822,10 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
             spawn_log_tailer(ctx, build_id.clone(), deployment_id.clone());
             log("Building static output...").await;
             let exit = wait_exit(docker, &build_id, ctx.settings.deployment_timeout_seconds).await;
+            if remote_node.is_some() && matches!(exit, Ok(0)) {
+                download_static_out(docker, &build_id, &static_local_dir).await?;
+                log("Build artifact returned from node").await;
+            }
             let _ = docker
                 .remove_container(
                     &build_id,
@@ -862,11 +869,8 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
         }
 
         // Phase 2: serve the artifact with the static-web image.
-        let static_dir = static_host_dir.expect("static_mode implies static_host_dir");
-
         // runway.json extracted during build → SWS config + overrides.
-        let mut serve_binds = vec![format!("{static_dir}:/public:ro")];
-        serve_binds.extend(storage_mounts);
+        let mut serve_toml: Option<String> = None;
         let marker = static_local_dir.join(".runway.json");
         if let Ok(raw) = tokio::fs::read_to_string(&marker).await {
             let _ = tokio::fs::remove_file(&marker).await; // never served
@@ -874,28 +878,68 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
                 if let Some(spa) = val.get("spa_fallback").and_then(|v| v.as_bool()) {
                     spa_fallback = spa;
                 }
-                if let Some(toml) = sws_config(&val, spa_fallback) {
-                    let toml_path = std::path::PathBuf::from(&ctx.settings.data_dir)
-                        .join("static")
-                        .join(format!("{deployment_id}.toml"));
-                    if tokio::fs::write(&toml_path, toml).await.is_ok() {
-                        let host_toml = static_dir
-                            .trim_end_matches(&format!("/{deployment_id}"))
-                            .to_string()
-                            + &format!("/{deployment_id}.toml");
-                        serve_binds.push(format!("{host_toml}:/config.toml:ro"));
-                    }
-                }
+                serve_toml = sws_config(&val, spa_fallback);
             }
         }
 
-        let mut serve_env = vec!["SERVER_ROOT=/public".to_string()];
-        if serve_binds.len() > 1 {
-            serve_env.push("SERVER_CONFIG_FILE=/config.toml".to_string());
-        }
-        if spa_fallback {
-            serve_env.push("SERVER_PAGE_FALLBACK=/public/index.html".to_string());
-        }
+        let (serve_env, serve_binds, serve_mounts) = if remote_node.is_none() {
+            let static_dir = static_host_dir.expect("local static_mode implies static_host_dir");
+            let mut binds = vec![format!("{static_dir}:/public:ro")];
+            binds.extend(storage_mounts);
+            if let Some(toml) = &serve_toml {
+                let toml_path = std::path::PathBuf::from(&ctx.settings.data_dir)
+                    .join("static")
+                    .join(format!("{deployment_id}.toml"));
+                if tokio::fs::write(&toml_path, toml).await.is_ok() {
+                    let host_toml = static_dir
+                        .trim_end_matches(&format!("/{deployment_id}"))
+                        .to_string()
+                        + &format!("/{deployment_id}.toml");
+                    binds.push(format!("{host_toml}:/config.toml:ro"));
+                }
+            }
+            let mut env = vec!["SERVER_ROOT=/public".to_string()];
+            if binds.len() > 1 {
+                env.push("SERVER_CONFIG_FILE=/config.toml".to_string());
+            }
+            if spa_fallback {
+                env.push("SERVER_PAGE_FALLBACK=/public/index.html".to_string());
+            }
+            (env, binds, Vec::new())
+        } else {
+            // Remote node: ship the artifact into a node-local volume —
+            // bind mounts can't reach our filesystem. Layout:
+            //   <vol>/public/<files>  <vol>/_cfg/config.toml
+            let vol = format!("runway-static-{deployment_id}");
+            log("Shipping artifact to node volume...").await;
+            ship_static_volume(
+                docker,
+                &vol,
+                &static_local_dir,
+                serve_toml.as_deref(),
+                &runner_image,
+            )
+            .await?;
+            let mut env = vec!["SERVER_ROOT=/srv/public".to_string()];
+            if serve_toml.is_some() {
+                env.push("SERVER_CONFIG_FILE=/srv/_cfg/config.toml".to_string());
+            }
+            if spa_fallback {
+                env.push("SERVER_PAGE_FALLBACK=/srv/public/index.html".to_string());
+            }
+            (
+                env,
+                Vec::new(),
+                vec![bollard::models::Mount {
+                    target: Some("/srv".into()),
+                    source: Some(vol),
+                    typ: Some(bollard::models::MountTypeEnum::VOLUME),
+                    read_only: Some(true),
+                    ..Default::default()
+                }],
+            )
+        };
+
         ContainerConfig {
             image: serve_image,
             env: Some(serve_env),
@@ -904,7 +948,16 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
                 endpoints_config: serve_endpoints.clone(),
             }),
             host_config: Some(HostConfig {
-                binds: Some(serve_binds),
+                binds: if serve_binds.is_empty() {
+                    None
+                } else {
+                    Some(serve_binds)
+                },
+                mounts: if serve_mounts.is_empty() {
+                    None
+                } else {
+                    Some(serve_mounts)
+                },
                 ..host_config
             }),
             ..Default::default()
@@ -1612,13 +1665,24 @@ pub async fn delete_container(ctx: &Ctx, deployment_id: &str) -> anyhow::Result<
     let Some(deployment) = deploy::get(&ctx.db, deployment_id).await? else {
         return Ok(());
     };
-    let Some(container_id) = &deployment.container_id else {
-        return Ok(());
-    };
-
     let Some(docker) = dep_docker(ctx, deployment.remote_node_id.as_deref()).await else {
         // Node unreachable — leave the row for a later retry.
         tracing::warn!(deployment_id, "remote node unreachable, delete deferred");
+        return Ok(());
+    };
+
+    // Remote static deploys leave their artifact volume on the node;
+    // remove it even when the serve container never materialized.
+    if deployment.remote_node_id.is_some() && deployment.is_static() {
+        let _ = docker
+            .remove_volume(
+                &format!("runway-static-{deployment_id}"),
+                None::<bollard::volume::RemoveVolumeOptions>,
+            )
+            .await;
+    }
+
+    let Some(container_id) = &deployment.container_id else {
         return Ok(());
     };
 
@@ -2385,4 +2449,174 @@ async fn select_node_by_labels(
         }
         None => Ok(None),
     }
+}
+
+/// Remote static: pull the exited build container's /out as a tar stream
+/// and unpack it into `dest` (runs before the container is removed).
+async fn download_static_out(
+    docker: &bollard::Docker,
+    container: &str,
+    dest: &std::path::Path,
+) -> anyhow::Result<()> {
+    let mut stream = docker.download_from_container(
+        container,
+        Some(bollard::container::DownloadFromContainerOptions { path: "/out" }),
+    );
+    let mut bytes = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        bytes.extend_from_slice(&chunk?);
+    }
+    let parent = dest.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let tmp = parent.join(format!(".out-{}", uuid::Uuid::new_v4()));
+    tokio::fs::create_dir_all(&tmp).await?;
+    let tar = tmp.with_extension("tar");
+    tokio::fs::write(&tar, &bytes).await?;
+    let out = tokio::process::Command::new("tar")
+        .arg("-xf")
+        .arg(&tar)
+        .arg("-C")
+        .arg(&tmp)
+        .output()
+        .await?;
+    if !out.status.success() {
+        let _ = tokio::fs::remove_dir_all(&tmp).await;
+        let _ = tokio::fs::remove_file(&tar).await;
+        anyhow::bail!(
+            "artifact tar failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    // Docker archives the dir as `out/…`; flatten onto the static dir.
+    let root = if tmp.join("out").is_dir() {
+        tmp.join("out")
+    } else {
+        tmp.clone()
+    };
+    let cp = tokio::process::Command::new("sh")
+        .arg("-c")
+        .arg(format!(
+            "cp -a '{}'/. '{}/'",
+            root.display(),
+            dest.display()
+        ))
+        .output()
+        .await?;
+    let _ = tokio::fs::remove_dir_all(&tmp).await;
+    let _ = tokio::fs::remove_file(&tar).await;
+    if !cp.status.success() {
+        anyhow::bail!(
+            "artifact copy failed: {}",
+            String::from_utf8_lossy(&cp.stderr)
+        );
+    }
+    Ok(())
+}
+
+/// Remote static: stage `src_dir` (+ optional SWS toml) into a named
+/// volume on the node. A short-lived helper container receives the tar
+/// at the volume mount — upload_to_container is the only file channel
+/// the remote daemon API exposes.
+async fn ship_static_volume(
+    docker: &bollard::Docker,
+    volume: &str,
+    src_dir: &std::path::Path,
+    toml: Option<&str>,
+    runner_image: &str,
+) -> anyhow::Result<()> {
+    docker
+        .create_volume(bollard::volume::CreateVolumeOptions {
+            name: volume,
+            ..Default::default()
+        })
+        .await?;
+
+    let parent = src_dir
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+    let stage = parent.join(format!(".vol-{}", uuid::Uuid::new_v4()));
+    tokio::fs::create_dir_all(stage.join("public")).await?;
+    let cp = tokio::process::Command::new("sh")
+        .arg("-c")
+        .arg(format!(
+            "cp -a '{}'/. '{}/public/'",
+            src_dir.display(),
+            stage.display()
+        ))
+        .output()
+        .await?;
+    if !cp.status.success() {
+        let _ = tokio::fs::remove_dir_all(&stage).await;
+        anyhow::bail!(
+            "artifact staging failed: {}",
+            String::from_utf8_lossy(&cp.stderr)
+        );
+    }
+    if let Some(toml) = toml {
+        tokio::fs::create_dir_all(stage.join("_cfg")).await?;
+        tokio::fs::write(stage.join("_cfg").join("config.toml"), toml).await?;
+    }
+    let tar = stage.with_extension("tar");
+    let mk = tokio::process::Command::new("tar")
+        .arg("-cf")
+        .arg(&tar)
+        .arg("-C")
+        .arg(&stage)
+        .arg(".")
+        .output()
+        .await?;
+    if !mk.status.success() {
+        let _ = tokio::fs::remove_dir_all(&stage).await;
+        anyhow::bail!(
+            "artifact tar failed: {}",
+            String::from_utf8_lossy(&mk.stderr)
+        );
+    }
+    let payload = tokio::fs::read(&tar).await?;
+    let _ = tokio::fs::remove_dir_all(&stage).await;
+    let _ = tokio::fs::remove_file(&tar).await;
+
+    let helper = format!("runway-ship-{}", &volume[volume.len().saturating_sub(12)..]);
+    let id = dkr::create_or_replace_container(
+        docker,
+        &helper,
+        ContainerConfig {
+            image: Some(runner_image.to_string()),
+            cmd: Some(vec!["sh".into(), "-c".into(), "sleep 600".into()]),
+            host_config: Some(HostConfig {
+                mounts: Some(vec![bollard::models::Mount {
+                    target: Some("/srv".into()),
+                    source: Some(volume.to_string()),
+                    typ: Some(bollard::models::MountTypeEnum::VOLUME),
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+    )
+    .await?;
+    docker
+        .start_container(&id, None::<StartContainerOptions<String>>)
+        .await?;
+    let shipped = docker
+        .upload_to_container(
+            &id,
+            Some(bollard::container::UploadToContainerOptions {
+                path: "/srv",
+                ..Default::default()
+            }),
+            payload.into(),
+        )
+        .await;
+    let _ = docker
+        .remove_container(
+            &id,
+            Some(RemoveContainerOptions {
+                force: true,
+                ..Default::default()
+            }),
+        )
+        .await;
+    shipped?;
+    Ok(())
 }
