@@ -5,7 +5,7 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde_json::json;
 
-pub struct ApiError(pub StatusCode, pub String);
+pub struct ApiError(pub StatusCode, pub String, pub &'static str);
 
 impl ApiError {
     pub fn internal(e: impl std::fmt::Display) -> Self {
@@ -13,28 +13,33 @@ impl ApiError {
         Self(
             StatusCode::INTERNAL_SERVER_ERROR,
             "internal server error".into(),
+            "internal_error",
         )
     }
     pub fn bad_request(msg: impl Into<String>) -> Self {
-        Self(StatusCode::BAD_REQUEST, msg.into())
+        Self(StatusCode::BAD_REQUEST, msg.into(), "bad_request")
     }
     pub fn unauthorized(msg: impl Into<String>) -> Self {
-        Self(StatusCode::UNAUTHORIZED, msg.into())
+        Self(StatusCode::UNAUTHORIZED, msg.into(), "unauthorized")
     }
     pub fn forbidden(msg: impl Into<String>) -> Self {
-        Self(StatusCode::FORBIDDEN, msg.into())
+        Self(StatusCode::FORBIDDEN, msg.into(), "forbidden")
     }
     pub fn not_found(what: impl Into<String>) -> Self {
-        Self(StatusCode::NOT_FOUND, format!("{} not found", what.into()))
+        Self(
+            StatusCode::NOT_FOUND,
+            format!("{} not found", what.into()),
+            "not_found",
+        )
     }
     pub fn conflict(msg: impl Into<String>) -> Self {
-        Self(StatusCode::CONFLICT, msg.into())
+        Self(StatusCode::CONFLICT, msg.into(), "conflict")
     }
 }
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        (self.0, Json(json!({ "error": self.1 }))).into_response()
+        (self.0, Json(json!({ "error": self.1, "code": self.2 }))).into_response()
     }
 }
 
