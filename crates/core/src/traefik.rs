@@ -520,3 +520,68 @@ pub async fn remove_project_config(project_id: &str, settings: &Settings) -> Res
     }
     Ok(())
 }
+
+/// Drop `project_*.yml` files that aren't valid Traefik dynamic configs —
+/// one malformed file poisons the whole file provider, so stale artifacts
+/// from older schema versions must not survive restarts. Valid configs
+/// are regenerated from the DB on demand. Returns the removed paths.
+pub async fn sweep_stale_configs(data_dir: &str) -> Vec<PathBuf> {
+    let dir = PathBuf::from(data_dir).join("traefik");
+    let mut entries = match tokio::fs::read_dir(&dir).await {
+        Ok(e) => e,
+        Err(_) => return vec![],
+    };
+    let mut removed = Vec::new();
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !(name.starts_with("project_") && name.ends_with(".yml")) {
+            continue;
+        }
+        let ok = tokio::fs::read_to_string(&path)
+            .await
+            .ok()
+            .and_then(|raw| serde_yaml::from_str::<serde_yaml::Value>(&raw).ok())
+            .is_some_and(|v| v.get("http").is_some());
+        if !ok {
+            tracing::warn!(file = %path.display(), "removing malformed traefik config");
+            if tokio::fs::remove_file(&path).await.is_ok() {
+                removed.push(path);
+            }
+        }
+    }
+    removed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn sweep_removes_malformed_keeps_valid() {
+        let dir = std::env::temp_dir().join(format!("runway-sweep-{}", uuid::Uuid::new_v4()));
+        tokio::fs::create_dir_all(dir.join("traefik"))
+            .await
+            .unwrap();
+        let tdir = dir.join("traefik");
+        tokio::fs::write(tdir.join("project_ok.yml"), "http:\n  routers: {}\n")
+            .await
+            .unwrap();
+        tokio::fs::write(tdir.join("project_bad.yml"), "{\n")
+            .await
+            .unwrap();
+        tokio::fs::write(tdir.join("project_nohttp.yml"), "tcp:\n  routers: {}\n")
+            .await
+            .unwrap();
+        tokio::fs::write(tdir.join("unrelated.yml"), "{\n")
+            .await
+            .unwrap();
+        let removed = sweep_stale_configs(dir.to_str().unwrap()).await;
+        assert_eq!(removed.len(), 2);
+        assert!(tdir.join("project_ok.yml").exists());
+        assert!(tdir.join("unrelated.yml").exists());
+        assert!(!tdir.join("project_bad.yml").exists());
+        assert!(!tdir.join("project_nohttp.yml").exists());
+        tokio::fs::remove_dir_all(&dir).await.unwrap();
+    }
+}

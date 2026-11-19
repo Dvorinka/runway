@@ -59,9 +59,11 @@ pub async fn run(
         github,
     };
 
-    // Attach Traefik to edge networks from before a restart.
+    // Attach Traefik to edge networks from before a restart, and drop
+    // malformed dynamic configs — one bad file poisons the provider.
     let startup_ctx = ctx.clone();
     tokio::spawn(async move {
+        runway_core::traefik::sweep_stale_configs(&startup_ctx.settings.data_dir).await;
         if let Err(e) = deploy::reconcile_edge_network(&startup_ctx, None).await {
             tracing::warn!(error = %e, "startup edge reconcile failed");
         }

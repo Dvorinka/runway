@@ -22,10 +22,23 @@ pub fn spawn(ctx: Ctx) {
     tokio::spawn(async move {
         let secs = ctx.settings.reconcile_interval_seconds.max(5);
         let mut ticker = tokio::time::interval(std::time::Duration::from_secs(secs));
+        // Traefik container recreation drops its dynamic edge-network
+        // attachments; a changed id re-runs the attach sweep.
+        let mut traefik_id = dkr::service_container_id(&ctx.docker, "traefik").await;
         loop {
             ticker.tick().await;
             if let Err(e) = tick(&ctx).await {
                 tracing::warn!(error = %e, "reconcile tick failed");
+            }
+            let now = dkr::service_container_id(&ctx.docker, "traefik").await;
+            if now.is_some() && now != traefik_id {
+                if traefik_id.is_some() {
+                    tracing::info!("traefik recreated — reattaching edge networks");
+                    if let Err(e) = crate::deploy::reconcile_edge_network(&ctx, None).await {
+                        tracing::warn!(error = %e, "edge reattach failed");
+                    }
+                }
+                traefik_id = now;
             }
         }
     });
