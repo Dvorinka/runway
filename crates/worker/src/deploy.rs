@@ -401,7 +401,8 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
              OUTDIR=${{OUTDIR:-{output_dir}}}; \
              echo \"Publishing static output ($OUTDIR -> /out)...\"; \
              test -d \"$OUTDIR\" || {{ printf '\\033[31mError: output directory %s not found\\033[0m\\n' \"$OUTDIR\" 1>&2; exit 1; }}; \
-             mkdir -p /out && cp -r \"$OUTDIR\"/. /out/ && \
+             mkdir -p /out/.w && \
+             tar -cf - --exclude='./.git' --exclude='./.runway-src-ok' --exclude='./.runway-out' -C \"$OUTDIR\" . | tar -xmf - -C /out/.w && cp -r /out/.w/. /out/ && rm -rf /out/.w && \
              test -n \"$(find /out -type f -print -quit)\" || {{ printf '\\033[31mError: build produced no files\\033[0m\\n' 1>&2; exit 1; }} && \
              (cp runway.json /out/.runway.json 2>/dev/null || true) && \
              echo 'Static output published'"
@@ -457,6 +458,11 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
             commands.push("echo 'Starting application...'".into());
             commands.push(config_command("start_command", cfg_str("start_command")));
         }
+    }
+    if static_mode && remote_node.is_some() {
+        // tmpfs /out unmounts when the build container exits — persist
+        // into the writable layer so the archive API can read it back.
+        commands.push("cp -a /out/. /app/.runway-out/".into());
     }
 
     // -- Networks ------------------------------------------------------
@@ -791,6 +797,11 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
                         name: Some(RestartPolicyNameEnum::NO),
                         maximum_retry_count: None,
                     }),
+                    // Remote builds write /out in-container; a tmpfs
+                    // keeps the non-root runner image able to create it.
+                    tmpfs: remote_node
+                        .is_some()
+                        .then(|| HashMap::from([("/out".to_string(), "rw".to_string())])),
                     ..host_config.clone()
                 }),
                 cmd: Some(cmd),
@@ -1671,18 +1682,18 @@ pub async fn delete_container(ctx: &Ctx, deployment_id: &str) -> anyhow::Result<
         return Ok(());
     };
 
-    // Remote static deploys leave their artifact volume on the node;
-    // remove it even when the serve container never materialized.
-    if deployment.remote_node_id.is_some() && deployment.is_static() {
-        let _ = docker
-            .remove_volume(
-                &format!("runway-static-{deployment_id}"),
-                None::<bollard::volume::RemoveVolumeOptions>,
-            )
-            .await;
-    }
+    // Remote static deploys leave their artifact volume on the node. It can
+    // only be removed after the serve container is gone — a mounted volume
+    // cannot be deleted while still in use.
+    let static_volume = (deployment.remote_node_id.is_some() && deployment.is_static())
+        .then(|| format!("runway-static-{deployment_id}"));
 
     let Some(container_id) = &deployment.container_id else {
+        if let Some(volume) = &static_volume {
+            let _ = docker
+                .remove_volume(volume, None::<bollard::volume::RemoveVolumeOptions>)
+                .await;
+        }
         return Ok(());
     };
 
@@ -1731,6 +1742,11 @@ pub async fn delete_container(ctx: &Ctx, deployment_id: &str) -> anyhow::Result<
             }
         }
         Err(e) => return Err(e.into()),
+    }
+    if let Some(volume) = &static_volume {
+        let _ = docker
+            .remove_volume(volume, None::<bollard::volume::RemoveVolumeOptions>)
+            .await;
     }
     Ok(())
 }
@@ -2460,7 +2476,9 @@ async fn download_static_out(
 ) -> anyhow::Result<()> {
     let mut stream = docker.download_from_container(
         container,
-        Some(bollard::container::DownloadFromContainerOptions { path: "/out" }),
+        Some(bollard::container::DownloadFromContainerOptions {
+            path: "/app/.runway-out",
+        }),
     );
     let mut bytes = Vec::new();
     while let Some(chunk) = stream.next().await {
@@ -2486,9 +2504,10 @@ async fn download_static_out(
             String::from_utf8_lossy(&out.stderr)
         );
     }
-    // Docker archives the dir as `out/…`; flatten onto the static dir.
-    let root = if tmp.join("out").is_dir() {
-        tmp.join("out")
+    // Docker archives the dir as `.runway-out/…`; flatten onto the
+    // static dir.
+    let root = if tmp.join(".runway-out").is_dir() {
+        tmp.join(".runway-out")
     } else {
         tmp.clone()
     };
