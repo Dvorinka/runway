@@ -393,12 +393,17 @@ framework detection.
 
 ### Remaining gaps before a full Vercel switch
 
-- [ ] **Serverless API runtime** — Vercel `api/*.ts` handlers
-      (nothing-modes ships ~9) and Next route handlers without a
-      persistent server have no Runway execution model; `/api/*`
-      currently 405s on static deploys. Largest single blocker:
-      3 of 13 projects depend on it. Deliberate scope decision —
-      currently a documented non-goal.
+- [x] **Serverless API runtime (shim)** — static projects shipping
+      `api/*.{js,ts,mjs,cjs}` now get a functions image: esbuild
+      bundles each handler to CJS and an embedded `node:http`
+      dispatcher serves Vercel's `(req,res)` contract
+      (`res.status/json/send/redirect`, `req.query`, parsed JSON body,
+      `[param]`/`[...rest]` dynamic segments, `api/index.*` → `/api`)
+      alongside the static output on one domain (PR #101, verified
+      live on `github-e2e`: JS + TS + `[id]` handlers). Next route
+      handlers are served by Next's own server in dockerfile mode.
+      Remaining scope under enterprise gates: per-function isolation,
+      cold-start semantics, and per-function resource accounting.
 - [x] **`vercel.json` import** — auto-translated on upload/detect
       (#87): redirects/rewrites/headers + output directory.
 - [x] **Node 24 runners** — `node-24` preset maps to
