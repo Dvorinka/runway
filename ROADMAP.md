@@ -316,11 +316,10 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
       bollard `connect_with_ssl` (rustls/ring), health checks exercise
       the same path; Settings node list gains an mTLS badge + provision
       flow with install instructions
-- [ ] **Bitbucket deploys tested against a real workspace** —
-      implementation complete (OAuth consumer `key:secret` → on-demand
-      Bearer; forged-sha vector closed by API-side head resolution) but
-      awaiting external verification with a real workspace — help
-      welcome
+- [~] **Bitbucket deploys tested against a real workspace** —
+      full webhook→clone→build→serve lifecycle verified against a
+      simulated Bitbucket API (per-connection `base_url`, #41);
+      real bitbucket.org workspace still unverified — help welcome
 - [x] **Release packaging** — `v*` tags trigger `release.yml`: linux/
       macOS CLI binaries → GitHub release assets, multi-arch image →
       `ghcr.io/dvorinka/runway`; `npm/runway` wrapper downloads the
@@ -400,22 +399,20 @@ framework detection.
       currently 405s on static deploys. Largest single blocker:
       3 of 13 projects depend on it. Deliberate scope decision —
       currently a documented non-goal.
-- [ ] **`vercel.json` import** — redirects/rewrites/headers shape is
-      already supported via `runway.json`; auto-read `vercel.json`
-      (or a `runway vercel-import` translator) for migration.
-- [ ] **Node 24 runners** — every audited Vercel project is pinned to
-      Node 24; the matrix tops out at node-22. Next 16 declares
-      `node >= 20.9` so it runs today, but parity needs a node-24
-      image or an explicit override path.
+- [x] **`vercel.json` import** — auto-translated on upload/detect
+      (#87): redirects/rewrites/headers + output directory.
+- [x] **Node 24 runners** — `node-24` preset maps to
+      `node:24-bookworm` (verified in `presets.rs` matrix).
 - [x] **GitHub-connected CI surface** — `docs/integration-roadmap.md`:
       preview policy (draft/fork/label gates, `preview_ttl_hours`
       teardown), superseded-build cancel, Checks API + re-run,
       `@runway deploy` PR commands, deploy hooks, per-project status
       contexts — all shipped in PR #97.
-- [ ] **Executor nodes** — builds on user-owned hardware: `node_selector`
-      label matching + remote static builds shipped (artifact returns
-      over the docker archive API into a node volume). Remaining:
-      remote dockerfile/image builds need a registry contract.
+- [x] **Executor nodes** — builds on user-owned hardware: `node_selector`
+      label matching, remote static builds (artifact returns over the
+      docker archive API), and remote dockerfile builds — the image
+      builds on the node daemon and never leaves it; no registry
+      needed. Verified end-to-end on node01 (PR #97).
 - [x] **KERN bridge Level 1 (optional)** — `build_executor: "kern"` on a
       static project ships the source bundle to a KERN control plane,
       dispatches a generated workflow on `kern_labels`, and imports the
