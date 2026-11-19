@@ -64,10 +64,13 @@ Also: `runway doctor [--json]` (API/auth/link preflight) and
 
 A static project that ships an `api/` directory gets serverless
 handlers on the same domain: each `api/*.{js,ts,mjs,cjs}` file is
-bundled with esbuild and served by a shared `node:http` dispatcher
-using Vercel's `(req,res)` signature — `res.status/json/send/redirect`,
-`req.query`, parsed JSON body, `[id]`/`[...rest]` dynamic segments,
-`api/index.*` → `/api`. Static assets keep serving under `/`. One
+bundled with esbuild and served by a shared `node:http` dispatcher.
+Both Vercel contracts work: `(req,res)` handlers get
+`res.status/json/send/redirect`, `req.query`, parsed JSON body; and
+single-arg handlers get a Web `Request` and can return a `Response`
+(Vercel `runtime: 'edge'` style — `export const config` is ignored,
+everything runs on Node ≥18 globals). `[id]`/`[...rest]` dynamic
+segments, `api/index.*` → `/api`. Static assets keep serving under `/`. One
 process, no per-function isolation — project npm deps resolve from the
 repo's `package.json` and are bundled inline.
 
