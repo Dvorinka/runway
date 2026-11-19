@@ -110,7 +110,7 @@ pub async fn ensure_network(
         return Ok(());
     }
     labels.insert("runway.managed".into(), "true".into());
-    docker
+    match docker
         .create_network(CreateNetworkOptions {
             name: name.to_string(),
             driver: "bridge".to_string(),
@@ -118,8 +118,16 @@ pub async fn ensure_network(
             labels,
             ..Default::default()
         })
-        .await?;
-    Ok(())
+        .await
+    {
+        Ok(_) => Ok(()),
+        // Concurrent deploys race the check above — someone else won.
+        Err(e) if network_id(docker, name).await.is_some() => {
+            let _ = e;
+            Ok(())
+        }
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// Remove the network when nothing but Traefik (or nothing) remains

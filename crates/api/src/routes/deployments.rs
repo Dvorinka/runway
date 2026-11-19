@@ -924,20 +924,30 @@ async fn detect_upload_preset(path: &std::path::Path) -> ApiResult<Option<Value>
     if !listing.status.success() {
         return Err(ApiError::bad_request("invalid gzip archive"));
     }
-    let files: Vec<String> = String::from_utf8_lossy(&listing.stdout)
+    let raw_lines: Vec<String> = String::from_utf8_lossy(&listing.stdout)
         .lines()
-        .map(|l| l.trim().trim_start_matches("./").to_string())
+        .map(|l| l.trim().to_string())
+        .collect();
+    let files: Vec<String> = raw_lines
+        .iter()
+        .map(|l| l.trim_start_matches("./").to_string())
         .filter(|l| !l.is_empty() && !l.ends_with('/'))
         .collect();
     // Package manager + framework checks mirror creation-time detection:
     // root-level entries only (monorepo root_dir is a deployment concern).
     let root: Vec<String> = files.iter().filter(|f| !f.contains('/')).cloned().collect();
 
-    let package_json = if root.iter().any(|f| f == "package.json") {
+    // `tar -x` matches member names verbatim — a `./package.json` archive
+    // (GNU tar's default when archiving `.`) is not `package.json`.
+    let package_json = raw_lines
+        .iter()
+        .find(|l| l.trim_start_matches("./") == "package.json")
+        .cloned();
+    let package_json = if let Some(member) = package_json {
         let out = tokio::process::Command::new("tar")
             .args(["-xzOf"])
             .arg(path)
-            .arg("package.json")
+            .arg(&member)
             .output()
             .await
             .map_err(ApiError::internal)?;
