@@ -96,6 +96,12 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
             }
             None => None,
         }
+    } else if let Some(selected) = select_node_by_labels(&ctx.db, project).await? {
+        let client = runway_core::docker::docker_client(&selected.docker_url)?;
+        tracing::info!(node = %selected.id, name = %selected.name,
+            "node_selector matched remote node");
+        remote_node = Some(selected);
+        Some(client)
     } else {
         None
     };
@@ -2070,4 +2076,62 @@ pub async fn reconcile_edge_network(
         dkr::connect_to_network(&ctx.docker, Some(&traefik_id), Some(&edge)).await?;
     }
     Ok(())
+}
+
+/// `project.config.node_selector` — array of label strings the remote
+/// node must carry (`["arch=arm64", "gpu"]`). Pick the least-loaded
+/// online, non-local node matching every selector. An explicit
+/// `remote_node_id` pin always wins; absence of both means local.
+async fn select_node_by_labels(
+    db: &sqlx::PgPool,
+    project: &Project,
+) -> anyhow::Result<Option<runway_core::models::RemoteNode>> {
+    let Some(selectors) = project
+        .config
+        .get("node_selector")
+        .and_then(|v| v.as_array())
+    else {
+        return Ok(None);
+    };
+    let wanted: Vec<&str> = selectors.iter().filter_map(|s| s.as_str()).collect();
+    if wanted.is_empty() {
+        return Ok(None);
+    }
+    let nodes: Vec<runway_core::models::RemoteNode> =
+        sqlx::query_as("SELECT * FROM remote_node WHERE status = 'online'")
+            .fetch_all(db)
+            .await?;
+    let mut best: Option<(runway_core::models::RemoteNode, i64)> = None;
+    for n in nodes {
+        if n.is_local() {
+            continue;
+        }
+        let labels: Vec<&str> = n
+            .labels
+            .as_array()
+            .map(|a| a.iter().filter_map(|l| l.as_str()).collect())
+            .unwrap_or_default();
+        if !wanted.iter().all(|w| labels.contains(w)) {
+            continue;
+        }
+        let active: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM deployment
+             WHERE remote_node_id = $1
+               AND status NOT IN ('completed','failed','canceled')",
+        )
+        .bind(&n.id)
+        .fetch_one(db)
+        .await?;
+        if best.as_ref().is_none_or(|(_, c)| active.0 < *c) {
+            best = Some((n, active.0));
+        }
+    }
+    match best {
+        Some((n, load)) if load < n.max_deployments as i64 => Ok(Some(n)),
+        Some((n, _)) => {
+            tracing::warn!(node = %n.id, "node_selector match at capacity, using local daemon");
+            Ok(None)
+        }
+        None => Ok(None),
+    }
 }
