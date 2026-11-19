@@ -143,6 +143,7 @@ pub async fn create(
     user: AuthUser,
     State(state): State<AppState>,
     Path(project_id): Path<String>,
+    headers: axum::http::HeaderMap,
     body: Option<Json<CreateDeployment>>,
 ) -> ApiResult<Response> {
     let project = accessible_project(&state, user.user.id, &project_id).await?;
@@ -165,8 +166,9 @@ pub async fn create(
         _ => false,
     };
 
-    let dep = if has_remote {
-        trigger_deployment(&state, &project, &branch, "user", Some(user.user.id)).await?
+    let idem = headers.get("idempotency-key").and_then(|v| v.to_str().ok());
+    let (dep, replayed) = if has_remote {
+        trigger_deployment(&state, &project, &branch, "user", Some(user.user.id), idem).await?
     } else {
         // No git remote — redeploy the latest uploaded archive on this branch.
         let prev: Option<Deployment> = sqlx::query_as(
@@ -183,7 +185,10 @@ pub async fn create(
                 "project has no git remote — deploy via `runway deploy` first",
             ));
         };
-        redeploy_dep(&state, user.user.id, &prev, &project).await?
+        (
+            redeploy_dep(&state, user.user.id, &prev, &project).await?,
+            false,
+        )
     };
     let mut a = runway_core::audit::Audit::new("deployment.create");
     a.user_id = Some(user.user.id);
@@ -193,11 +198,11 @@ pub async fn create(
     a.resource_id = Some(dep.id.clone());
     a.detail = Some(format!("branch={branch}"));
     runway_core::audit::log(&state.db, a).await;
-    Ok((
-        StatusCode::CREATED,
-        Json(deployment_json(&state, &dep, &project)),
-    )
-        .into_response())
+    let mut body = deployment_json(&state, &dep, &project);
+    if replayed {
+        body["idempotent_replay"] = true.into();
+    }
+    Ok((StatusCode::CREATED, Json(body)).into_response())
 }
 
 /// Shared: resolve latest commit via the repo's provider and
@@ -208,7 +213,27 @@ pub async fn trigger_deployment(
     branch: &str,
     trigger: &str,
     user_id: Option<i64>,
-) -> ApiResult<Deployment> {
+    idempotency_key: Option<&str>,
+) -> ApiResult<(Deployment, bool)> {
+    // `Idempotency-Key` — replay the existing deployment instead of
+    // queueing a duplicate. jarvis: check-then-create has a small race
+    // window; upgrade to a partial unique index if retries get noisy.
+    let key = idempotency_key.map(str::trim).filter(|k| !k.is_empty());
+    if let Some(key) = key {
+        let existing: Option<Deployment> = sqlx::query_as(
+            "SELECT * FROM deployment
+             WHERE project_id = $1 AND config->>'idempotency_key' = $2
+             ORDER BY created_at DESC LIMIT 1",
+        )
+        .bind(&project.id)
+        .bind(key)
+        .fetch_optional(&state.db)
+        .await?;
+        if let Some(d) = existing {
+            return Ok((d, true));
+        }
+    }
+
     let info = deploy::resolve_commit(
         &state.db,
         &state.crypto,
@@ -222,18 +247,22 @@ pub async fn trigger_deployment(
         return Err(ApiError::bad_request("could not resolve commit"));
     }
 
-    Ok(deploy::create(
-        &state.db,
-        &state.bus,
-        &state.crypto,
-        project,
-        branch,
-        &info,
-        trigger,
-        user_id,
-        None,
-    )
-    .await?)
+    let extra = key.map(|k| json!({ "idempotency_key": k }));
+    Ok((
+        deploy::create(
+            &state.db,
+            &state.bus,
+            &state.crypto,
+            project,
+            branch,
+            &info,
+            trigger,
+            user_id,
+            extra,
+        )
+        .await?,
+        false,
+    ))
 }
 
 pub async fn get(

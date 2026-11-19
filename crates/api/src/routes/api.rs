@@ -137,12 +137,14 @@ pub async fn api_deploy(
         return Err(ApiError::forbidden("token cannot deploy this environment"));
     }
 
-    let dep = trigger_deployment(&state, &project, &branch, "api", None).await?;
+    let idem = headers.get("idempotency-key").and_then(|v| v.to_str().ok());
+    let (dep, replayed) = trigger_deployment(&state, &project, &branch, "api", None, idem).await?;
     Ok((
         StatusCode::CREATED,
         Json(json!({
             "id": dep.id,
             "status": dep.status,
+            "idempotent_replay": replayed,
             "url": dep.url(project.slug.as_deref().unwrap_or(&project.id), &state.settings),
         })),
     )
@@ -197,9 +199,15 @@ pub async fn openapi() -> Response {
         ("/api/v1/projects/{id}/webhooks/{webhook_id}", &[("delete", "Delete webhook")]),
         ("/api/v1/projects/{id}/deployments", &[
             ("get", "List deployments (?limit)"),
-            ("post", "Deploy latest commit {branch?}"),
+            ("post", "Deploy latest commit {branch?}. Idempotency-Key header dedupes retries — same key returns the existing deployment with idempotent_replay=true"),
         ]),
-        ("/api/v1/projects/{id}/deployments/upload", &[("post", "Deploy a local tarball (application/gzip body, ≤512MB, no git)")]),
+        ("/api/v1/projects/{id}/deployments/upload", &[("post", "Deploy a local tarball (application/gzip body, ≤512MB, no git). ?dry_run=1 returns the resolved plan without deploying. vercel.json at archive root is auto-imported")]),
+        ("/api/v1/projects/{id}/hooks", &[
+            ("get", "List deploy hooks (token hashes only)"),
+            ("post", "Create deploy hook {name?, branch?} — tokenized trigger URL returned once"),
+        ]),
+        ("/api/v1/projects/{id}/hooks/{hook_id}", &[("delete", "Revoke a deploy hook")]),
+        ("/api/deploy-hook/{token}", &[("post", "Unauthenticated deploy trigger — the hook token is the credential")]),
         ("/api/v1/projects/{id}/environments/{env_id}/rollback", &[("post", "Roll back an environment to its previous deployment")]),
         ("/api/v1/projects/{id}/events", &[("get", "SSE stream of project deployment events")]),
         ("/api/v1/deployments/{id}", &[("get", "Deployment details incl. status/conclusion/urls")]),

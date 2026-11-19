@@ -73,7 +73,9 @@ fn tools() -> Value {
             "Trigger a new deployment on a project (latest commit, or the last uploaded archive for remote-less projects)",
             json!({"type": "object", "required": ["project_id"],
                    "properties": {"project_id": {"type": "string"},
-                                  "branch": {"type": "string"}}})
+                                  "branch": {"type": "string"},
+                                  "idempotency_key": {"type": "string",
+                                     "description": "dedupe key — same key returns the existing deployment instead of queueing a duplicate"}}})
         ),
         tool(
             "cancel_deployment",
@@ -468,15 +470,19 @@ async fn call(state: &AppState, user_id: i64, name: &str, args: &Value) -> ApiRe
                 "bitbucket" => p.bitbucket_connection_id.is_some(),
                 _ => false,
             };
+            let mut replayed = false;
             let dep = if has_remote {
-                crate::routes::deployments::trigger_deployment(
+                let (d, r) = crate::routes::deployments::trigger_deployment(
                     state,
                     &p,
                     &branch,
                     "api",
                     Some(user_id),
+                    args["idempotency_key"].as_str(),
                 )
-                .await?
+                .await?;
+                replayed = r;
+                d
             } else {
                 let prev: Option<runway_core::models::Deployment> = sqlx::query_as(
                     "SELECT * FROM deployment WHERE project_id = $1 AND branch = $2 \
@@ -494,7 +500,10 @@ async fn call(state: &AppState, user_id: i64, name: &str, args: &Value) -> ApiRe
                 };
                 crate::routes::deployments::redeploy_dep(state, user_id, &prev, &p).await?
             };
-            Ok(json!({ "deployment_id": dep.id, "status": dep.status, "branch": dep.branch }))
+            Ok(
+                json!({ "deployment_id": dep.id, "status": dep.status, "branch": dep.branch,
+                       "idempotent_replay": replayed }),
+            )
         }
         "cancel_deployment" => {
             let (d, _p) = deployment_for(state, user_id, arg(args, "deployment_id")?).await?;
