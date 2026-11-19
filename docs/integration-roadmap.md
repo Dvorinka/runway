@@ -68,9 +68,12 @@ remote nodes). To let users build on their own hardware/arch
   claims via the same SKIP LOCKED queue, runs the `runner-*` container
   locally, and ships the artifact back (static dir tarball / image
   push to a registry Runway can pull from).
-- **Registry story** — image-based remote builds need somewhere to
-  push. Phase A: static-only remote builds (tarball return is trivial).
-  Phase B: optional embedded registry or user-supplied one.
+- **Registry story** — originally assumed for image-based remote
+  builds. Turned out unnecessary: the dockerfile fetch stages the repo
+  in-container, the context is pulled back over the archive API, and
+  `build_image` runs on the node — the image never leaves the daemon
+  that serves it. A registry only becomes relevant if we ever want the
+  build daemon and the serve daemon to differ.
 - **Fallback policy** — `node_selector` unmatched → queue holds or
   falls back to local, per team setting.
 - This also fixes the current sharp edges where `static` and
@@ -171,8 +174,10 @@ KERN's `openapi.yaml` is the bar — Runway should match it.
 - ~~KERN bridge Level 1~~ — `build_executor: "kern"` verified live
   against kern.tdvorak.dev (bundle dispatch + artifact return)
 
+- ~~Remote dockerfile builds~~ — remote fetch + context pull-back +
+  `build_image` on the node; verified live, no registry needed
+
 **P2:**
-- Remote image builds + registry story (dockerfile arm of #94)
 - KERN Level 2 — shared runner pool, per-team tokens
 - Fork-preview isolation (KERN trust-tier model)
 - Usage metering per project/team (enterprise gate from #roadmap)
