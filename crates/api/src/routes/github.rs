@@ -152,6 +152,18 @@ pub async fn webhook(
                 }
             }
         }
+        "issue_comment" => {
+            // `@runway deploy` on a PR redeploys its latest preview.
+            if data["action"].as_str() == Some("created")
+                && data["issue"]["pull_request"].is_object()
+            {
+                let body = data["comment"]["body"].as_str().unwrap_or("");
+                let pr = data["issue"]["number"].as_i64().unwrap_or(0);
+                if pr > 0 && is_deploy_command(body) {
+                    rerun_pr_preview(&state, &data, pr).await;
+                }
+            }
+        }
         _ => {}
     }
     Ok(StatusCode::OK.into_response())
@@ -345,6 +357,41 @@ async fn handle_pull_request(state: &AppState, data: &Value) {
             Err(e) => {
                 tracing::warn!(project_id = project.id, error = %e, "pull_request: deployment create failed")
             }
+        }
+    }
+}
+
+/// `@runway deploy` / `/runway deploy` PR comments — first word only,
+/// so prose mentioning the command doesn't redeploy.
+fn is_deploy_command(body: &str) -> bool {
+    let cmd = body.trim().to_lowercase();
+    cmd.starts_with("@runway deploy") || cmd.starts_with("/runway deploy")
+}
+
+/// Comment-command redeploy: find the latest deployment tagged with
+/// this PR number on any project watching the repo, redeploy it.
+async fn rerun_pr_preview(state: &AppState, data: &Value, pr_number: i64) {
+    let repo_id = data["repository"]["id"].as_i64().unwrap_or(0);
+    let projects: Vec<Project> = sqlx::query_as(
+        "SELECT * FROM project WHERE repo_id = $1 AND repo_provider = 'github' AND status = 'active'",
+    )
+    .bind(repo_id)
+    .fetch_all(&state.db)
+    .await
+    .unwrap_or_default();
+    for project in projects {
+        let latest: Option<(String,)> = sqlx::query_as(
+            "SELECT id FROM deployment
+             WHERE project_id = $1 AND config->>'pr_number' = $2
+             ORDER BY created_at DESC LIMIT 1",
+        )
+        .bind(&project.id)
+        .bind(pr_number.to_string())
+        .fetch_optional(&state.db)
+        .await
+        .unwrap_or(None);
+        if let Some((dep_id,)) = latest {
+            rerun_deployment(state, &dep_id).await;
         }
     }
 }
@@ -720,7 +767,13 @@ pub async fn app_register(
             "url": format!("{base}/api/github/webhook"),
             "active": true,
         });
-        manifest["default_events"] = json!(["push", "pull_request", "repository", "check_run"]);
+        manifest["default_events"] = json!([
+            "push",
+            "pull_request",
+            "repository",
+            "check_run",
+            "issue_comment"
+        ]);
     }
     let state_token = runway_core::slugify::token_hex(16);
     let cookie = Cookie::build(("gh_app_state", state_token.clone()))
@@ -914,4 +967,13 @@ fn comment_verbosity_levels() {
         comment_verbosity(&json!({ "preview_comment": "minimal" })),
         Some("minimal")
     );
+}
+
+#[test]
+fn deploy_command_parsing() {
+    assert!(is_deploy_command("@runway deploy"));
+    assert!(is_deploy_command("  /runway deploy now"));
+    assert!(!is_deploy_command("try @runway deploy"));
+    assert!(!is_deploy_command("@runway redeploy"));
+    assert!(!is_deploy_command(""));
 }
