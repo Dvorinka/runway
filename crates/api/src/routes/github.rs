@@ -886,7 +886,7 @@ pub async fn app_callback(
 
 #[cfg(test)]
 mod tests {
-    use super::{comment_verbosity, is_public_hostname, preview_allowed};
+    use super::is_public_hostname;
 
     #[test]
     fn public_hostname() {

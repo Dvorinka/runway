@@ -12,6 +12,7 @@ runway deploy --follow            # upload source, stream build logs
 runway logs --follow              # runtime logs (deployment)
 runway logs --project             # merged tail across recent deployments
 runway stats                      # live CPU/mem/net snapshot
+runway usage [--days 30]          # deploy counts, build time, artifact/image bytes
 runway env set KEY=value          # env vars
 runway env pull                   # .env.local from project (decrypted)
 runway env diff prod staging      # key-presence diff between environments
@@ -79,7 +80,7 @@ when enabled the build and runtime containers receive only `RUNWAY_*`
 system vars — project env vars are withheld (Vercel parity).
 
 `list_projects`, `get_project`, `list_deployments`, `get_deployment`,
-`get_deployment_logs`, `deployment_stats`, `deploy_project`,
+`get_deployment_logs`, `deployment_stats`, `get_project_usage`, `deploy_project`,
 `cancel_deployment`, `skip_deployment`, `redeploy_deployment`,
 `promote_deployment`, `promotion_diff`, `rollback_environment`, `list_env`, `set_env`,
 `list_domains`, `list_audit`, `export_audit`,
@@ -120,3 +121,12 @@ GitHub (app manifest or manual), GitLab, Gitea, and Bitbucket push to
 `/api/{provider}/webhook`. Bitbucket payloads are verified by resolving
 the real branch head through the connection API — the payload sha is
 never trusted.
+
+GitHub App credentials resolve two ways: the one-click manifest flow
+(`GET /api/v1/github/app/register` → `app/callback`, stored encrypted
+in `github_app`) or env vars — `GITHUB_APP_ID`, `GITHUB_APP_NAME`,
+`GITHUB_APP_PRIVATE_KEY`, `GITHUB_APP_WEBHOOK_SECRET`. Env wins when
+set; `GET /api/v1/github/app/status` reports which source is active.
+The private key accepts `\n`-escaped newlines for dotenv/compose use.
+Bitbucket connections accept a `base_url` for Server/self-hosted
+topologies.

@@ -194,6 +194,7 @@ pub fn router(state: AppState) -> Router {
                 .put(routes::projects::put_env)
                 .patch(routes::projects::patch_env),
         )
+        .route("/api/v1/projects/{id}/usage", get(routes::projects::usage))
         .route(
             "/api/v1/projects/{id}/deploy-tokens",
             post(routes::projects::create_deploy_token),
