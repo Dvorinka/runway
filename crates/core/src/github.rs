@@ -168,7 +168,9 @@ impl GithubService {
             "exp": now + 10 * 60,
             "iss": app_id,
         });
-        let key = jsonwebtoken::EncodingKey::from_rsa_pem(private_key.as_bytes())
+        // jarvis: env-provided PEMs carry literal \n; normalize once here
+        let pem = private_key.replace("\\n", "\n");
+        let key = jsonwebtoken::EncodingKey::from_rsa_pem(pem.as_bytes())
             .map_err(|e| Error::Config(format!("invalid app private key: {e}")))?;
         let token = jsonwebtoken::encode(
             &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256),
