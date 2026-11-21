@@ -997,6 +997,11 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
                 serve_toml = sws_config(&val, spa_fallback);
             }
         }
+        // SWS 2.x ignores SERVER_PAGE_FALLBACK; the SPA fallback only
+        // takes effect via the config file.
+        if serve_toml.is_none() && spa_fallback {
+            serve_toml = sws_config(&serde_json::json!({}), true);
+        }
 
         if let Some(img) = fn_image {
             // Functions shim: the built image's own CMD runs the Node
@@ -1231,6 +1236,14 @@ fn config_command(key: &str, command: &str) -> String {
 /// file carries none of them.
 fn sws_config(val: &serde_json::Value, spa_fallback: bool) -> Option<String> {
     let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+    // SWS `source` patterns are globs, not Vercel regex — "/(.*)" → "/**".
+    let src_glob = |s: &str| -> String {
+        if let Some(prefix) = s.strip_suffix("(.*)") {
+            format!("{prefix}**")
+        } else {
+            s.to_string()
+        }
+    };
     let mut rules = String::new();
 
     if let Some(redirects) = val.get("redirects").and_then(|v| v.as_array()) {
@@ -1248,7 +1261,7 @@ fn sws_config(val: &serde_json::Value, spa_fallback: bool) -> Option<String> {
                 });
             rules += &format!(
                 "[[advanced.redirects]]\nsource = \"{}\"\ndestination = \"{}\"\nkind = {kind}\n\n",
-                esc(src),
+                esc(&src_glob(src)),
                 esc(dst)
             );
         }
@@ -1260,7 +1273,7 @@ fn sws_config(val: &serde_json::Value, spa_fallback: bool) -> Option<String> {
             };
             rules += &format!(
                 "[[advanced.rewrites]]\nsource = \"{}\"\ndestination = \"{}\"\n\n",
-                esc(src),
+                esc(&src_glob(src)),
                 esc(dst)
             );
         }
@@ -1271,17 +1284,23 @@ fn sws_config(val: &serde_json::Value, spa_fallback: bool) -> Option<String> {
                 continue;
             };
             let entries = h["headers"].as_array();
-            let mut block = format!("[[advanced.headers]]\nsource = \"{}\"\n", esc(src));
+            let mut block = format!(
+                "[[advanced.headers]]\nsource = \"{}\"\n",
+                esc(&src_glob(src))
+            );
             if let Some(entries) = entries {
+                // SWS expects a single header-name → value map under
+                // `[advanced.headers.headers]`, not an array of
+                // `{key, value}` pairs.
+                let mut map = String::from("[advanced.headers.headers]\n");
                 for e in entries {
                     let (Some(k), Some(v)) = (e["key"].as_str(), e["value"].as_str()) else {
                         continue;
                     };
-                    block += &format!(
-                        "[[advanced.headers.headers]]\nkey = \"{}\"\nvalue = \"{}\"\n",
-                        esc(k),
-                        esc(v)
-                    );
+                    map += &format!("\"{}\" = \"{}\"\n", esc(k), esc(v));
+                }
+                if !entries.is_empty() {
+                    block += &map;
                 }
             }
             rules += &block;
