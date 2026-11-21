@@ -11,6 +11,7 @@ pub struct OgReport {
     pub og: BTreeMap<String, String>,
     pub twitter: BTreeMap<String, String>,
     pub favicon: Option<String>,
+    pub favicons: Vec<String>,
 }
 
 /// Parse OG/twitter/meta tags out of an HTML document.
@@ -55,8 +56,15 @@ pub fn parse(html: &str) -> OgReport {
         } else if lower.starts_with("link") {
             let attrs = attrs_of(&tag[4..]);
             let rel = attrs.get("rel").cloned().unwrap_or_default();
-            if (rel == "icon" || rel == "shortcut icon") && r.favicon.is_none() {
-                r.favicon = attrs.get("href").cloned();
+            if rel == "icon" || rel == "shortcut icon" {
+                if r.favicon.is_none() {
+                    r.favicon = attrs.get("href").cloned();
+                }
+                if let Some(href) = attrs.get("href") {
+                    if !r.favicons.iter().any(|h| h == href) {
+                        r.favicons.push(href.clone());
+                    }
+                }
             }
         }
         rest = &rest[tag_end + 1..];
@@ -138,6 +146,7 @@ mod tests {
             Some("summary_large_image")
         );
         assert_eq!(r.favicon.as_deref(), Some("/favicon.svg"));
+        assert_eq!(r.favicons, vec!["/favicon.svg".to_string()]);
     }
 
     #[test]
