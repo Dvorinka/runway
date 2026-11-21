@@ -151,6 +151,26 @@ pub async fn create(
         .environment_for_deploy(branch)
         .ok_or_else(|| Error::Validation(format!("no environment matches branch '{branch}'")))?;
 
+    // One in-flight deployment per project+environment. A retried upload
+    // after an edge 504 would otherwise race two runners on the same env.
+    let in_flight: Option<(String,)> = sqlx::query_as(
+        "SELECT id FROM deployment
+         WHERE project_id = $1 AND environment_id = $2
+           AND conclusion IS NULL AND status IN ('prepare','deploy')
+         LIMIT 1",
+    )
+    .bind(&project.id)
+    .bind(&environment.id)
+    .fetch_optional(db)
+    .await?;
+    if let Some((existing,)) = in_flight {
+        return Err(Error::Validation(format!(
+            "deployment {existing} is already in progress for environment \
+             '{}'; wait for it, or cancel it (`runway cancel`) and retry",
+            environment.env_scope_slug()
+        )));
+    }
+
     let mut env_vars = project.env_vars_for(crypto, environment.env_scope_slug())?;
     // Synthetic preview envs inherit their template's vars; vars scoped to
     // the literal "preview" environment override them (Vercel parity).

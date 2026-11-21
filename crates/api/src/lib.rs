@@ -469,7 +469,7 @@ async fn api_not_found() -> impl axum::response::IntoResponse {
 }
 
 async fn health() -> Json<serde_json::Value> {
-    Json(json!({ "status": "ok", "service": "runway" }))
+    Json(json!({ "status": "ok", "service": "runway", "version": env!("CARGO_PKG_VERSION") }))
 }
 
 /// `GET /install-node.sh` — the fleet-enrollment installer, embedded so

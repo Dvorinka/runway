@@ -162,7 +162,63 @@ async fn tick(ctx: &Ctx) -> anyhow::Result<()> {
 
     sweep_nodes(ctx).await;
     sweep_expired_previews(ctx).await;
+    sweep_orphaned_containers(ctx).await;
     Ok(())
+}
+
+/// Backstop for wedged rows: deployments that concluded but whose
+/// container is still marked running. `fail`/`cleanup_inactive` own the
+/// normal teardown; this catches whatever they missed (lost jobs,
+/// restarts) so stale runner-* containers and their log tails can't
+/// pile up on the daemon.
+async fn sweep_orphaned_containers(ctx: &Ctx) {
+    let rows: Vec<(String,)> = sqlx::query_as(
+        "SELECT id FROM deployment
+         WHERE container_status = 'running'
+           AND container_id IS NOT NULL
+           AND (conclusion IS NOT NULL OR status IN ('fail','canceled'))
+           AND id NOT IN (SELECT deployment_id FROM alias WHERE deployment_id IS NOT NULL
+                          UNION SELECT previous_deployment_id FROM alias
+                          WHERE previous_deployment_id IS NOT NULL)",
+    )
+    .fetch_all(&ctx.db)
+    .await
+    .unwrap_or_default();
+    if rows.is_empty() {
+        return;
+    }
+    let containers = match ctx
+        .docker
+        .list_containers(Some(ListContainersOptions::<String> {
+            all: false,
+            ..Default::default()
+        }))
+        .await
+    {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(error = %e, "orphan sweep container list failed");
+            return;
+        }
+    };
+    for (dep_id,) in rows {
+        let still_up = containers.iter().any(|c| {
+            c.labels
+                .as_ref()
+                .and_then(|l| l.get("runway.deployment_id"))
+                .map(|id| id == &dep_id)
+                .unwrap_or(false)
+        });
+        if still_up {
+            tracing::info!(
+                deployment_id = dep_id,
+                "reaping orphaned concluded container"
+            );
+            if let Err(e) = crate::deploy::delete_container(ctx, &dep_id).await {
+                tracing::warn!(deployment_id = dep_id, error = %e, "orphan reap failed");
+            }
+        }
+    }
 }
 
 /// `preview_ttl_hours` per-project config: tear down PR-preview

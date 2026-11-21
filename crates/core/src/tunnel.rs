@@ -161,11 +161,19 @@ pub async fn traefik_network(docker: &Docker) -> Option<String> {
         .await
         .ok()?;
     let networks = info.network_settings?.networks?;
-    // Prefer a non-bridge named network; traefik is always on the
-    // compose project network in our stacks.
+    // cloudflared must sit on the shared ingress net (compose project
+    // net), never on a per-deployment net: edge reconcile attaches
+    // runway_edge_* to traefik, and a wrong pick here recreates
+    // cloudflared on a network that can't reach traefik → full outage.
+    let managed = |n: &str| {
+        n == "bridge"
+            || n.starts_with(crate::deploy::EDGE_NETWORK_PREFIX)
+            || n.starts_with(crate::deploy::WORKSPACE_NETWORK_PREFIX)
+    };
     networks
         .keys()
-        .find(|n| n.as_str() != "bridge")
+        .find(|n| !managed(n) && n.ends_with("_default"))
+        .or_else(|| networks.keys().find(|n| !managed(n)))
         .cloned()
         .or_else(|| networks.keys().next().cloned())
 }

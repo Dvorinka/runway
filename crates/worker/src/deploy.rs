@@ -673,8 +673,23 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
 
     log("Checking runner image availability...").await;
     if docker.inspect_image(&runner_image).await.is_err() {
+        // Locally-built tags (runway-dep-*, override_image pointing at a
+        // local image) can't be pulled from a registry — a pull attempt
+        // dies with "access denied" and hides the real fix. Say what
+        // actually happened instead.
+        if is_local_image(&runner_image) {
+            anyhow::bail!(
+                "runner image {runner_image} is missing locally and is not pullable — \
+                 rebuild the image on this node or redeploy with `runway deploy`"
+            );
+        }
         log(&format!("Pulling runner image ({runner_image})...")).await;
-        pull_image(docker, &runner_image).await?;
+        pull_image(docker, &runner_image).await.map_err(|e| {
+            anyhow::anyhow!(
+                "pull failed for {runner_image}: {e} — if this image was built locally, \
+                 rebuild it on this node; Runway does not push runner images to a registry"
+            )
+        })?;
         log("Runner image pulled").await;
     } else {
         log(&format!("Runner image already present ({runner_image})")).await;
@@ -1341,6 +1356,16 @@ pub async fn wait_exit(
     Err(e)
 }
 
+/// True when an image tag names one of our locally-built artifacts —
+/// these live on the daemon only, no registry will serve them.
+fn is_local_image(image: &str) -> bool {
+    image
+        .split(':')
+        .next()
+        .unwrap_or(image)
+        .starts_with("runway-")
+}
+
 pub async fn pull_image(docker: &bollard::Docker, image: &str) -> anyhow::Result<()> {
     use bollard::image::CreateImageOptions;
     let (from, tag) = image.rsplit_once(':').unwrap_or((image, "latest"));
@@ -1363,6 +1388,9 @@ pub async fn pull_image(docker: &bollard::Docker, image: &str) -> anyhow::Result
 }
 
 /// Tail `docker logs -f` into the deployment log file + SSE bus.
+/// Bounded: a dead HTTP stream through docker-proxy can hang forever
+/// and wedge the API's docker connection pool, so a liveness poll ends
+/// the tail once the container exits or disappears.
 fn spawn_log_tailer(ctx: &Ctx, container_id: String, deployment_id: String) {
     let ctx = ctx.clone();
     tokio::spawn(async move {
@@ -1377,17 +1405,50 @@ fn spawn_log_tailer(ctx: &Ctx, container_id: String, deployment_id: String) {
                 ..Default::default()
             }),
         );
-        while let Some(item) = stream.next().await {
-            match item {
-                Ok(output) => {
-                    let text = output.to_string();
-                    for line in text.lines() {
-                        ctx.logs.append_raw(&deployment_id, "runtime", line).await;
+        let mut liveness = tokio::time::interval(std::time::Duration::from_secs(30));
+        liveness.tick().await; // first tick is immediate — skip it
+        loop {
+            tokio::select! {
+                item = stream.next() => {
+                    match item {
+                        Some(Ok(output)) => {
+                            let text = output.to_string();
+                            for line in text.lines() {
+                                ctx.logs.append_raw(&deployment_id, "runtime", line).await;
+                            }
+                        }
+                        Some(Err(e)) => {
+                            tracing::warn!(deployment_id, error = %e, "log tail ended");
+                            break;
+                        }
+                        None => break,
                     }
                 }
-                Err(e) => {
-                    tracing::warn!(deployment_id, error = %e, "log tail ended");
-                    break;
+                _ = liveness.tick() => {
+                    let running = ctx
+                        .docker
+                        .inspect_container(&container_id, None::<InspectContainerOptions>)
+                        .await
+                        .ok()
+                        .and_then(|i| i.state)
+                        .and_then(|s| s.running)
+                        .unwrap_or(false);
+                    if !running {
+                        // Drain whatever is buffered, then stop the
+                        // follow — container is gone or stopped.
+                        while let Ok(Some(item)) =
+                            tokio::time::timeout(std::time::Duration::from_millis(200), stream.next())
+                                .await
+                        {
+                            if let Ok(output) = item {
+                                let text = output.to_string();
+                                for line in text.lines() {
+                                    ctx.logs.append_raw(&deployment_id, "runtime", line).await;
+                                }
+                            }
+                        }
+                        break;
+                    }
                 }
             }
         }
@@ -1529,10 +1590,7 @@ async fn try_project_avatar(ctx: &Ctx, base: &str, project_id: &str) -> anyhow::
     };
     // Same-origin only: a deployed page could otherwise point its favicon
     // at an internal address and exfil it through the avatar endpoint.
-    anyhow::ensure!(
-        icon_url.origin() == base_url.origin(),
-        "favicon off-origin"
-    );
+    anyhow::ensure!(icon_url.origin() == base_url.origin(), "favicon off-origin");
     let resp = client.get(icon_url.clone()).send().await?;
     anyhow::ensure!(resp.status().is_success(), "favicon HTTP {}", resp.status());
     let head_ct = resp

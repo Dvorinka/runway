@@ -659,7 +659,10 @@ pub async fn installation_repos(
     Path(installation_id): Path<i64>,
 ) -> ApiResult<Response> {
     if !state.github.configured() {
-        return Err(ApiError::bad_request("GitHub App is not configured"));
+        return Err(ApiError::bad_request(
+            "GitHub App is not configured — register one in Settings → GitHub App \
+             (or set GITHUB_APP_* env vars); use `runway create` for upload-based deploys",
+        ));
     }
     let token = state
         .github

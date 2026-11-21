@@ -1728,12 +1728,21 @@ pub async fn doctor(json_out: bool) -> anyhow::Result<()> {
     report("config", true, "credentials loaded".into(), &mut checks);
 
     match client.get("/health").await {
-        Ok(v) => report(
-            "api",
-            v["status"].as_str() == Some("ok"),
-            format!("{v}"),
-            &mut checks,
-        ),
+        Ok(v) => {
+            let server_ok = v["status"].as_str() == Some("ok");
+            report("api", server_ok, format!("{v}"), &mut checks);
+            // Version skew is a warning, not a hard failure — an older
+            // CLI still works, it just lacks newer commands.
+            let client_v = env!("CARGO_PKG_VERSION");
+            if let Some(server_v) = v["version"].as_str() {
+                if server_v != client_v {
+                    println!(
+                        "warn version — cli {client_v} vs server {server_v}; \
+                         update the local binary for newer commands"
+                    );
+                }
+            }
+        }
         Err(e) => report("api", false, e.to_string(), &mut checks),
     }
     match client.get("/api/auth/me").await {
