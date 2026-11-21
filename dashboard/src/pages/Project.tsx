@@ -2,6 +2,7 @@ import { api, type Project } from "@/lib/api";
 import { Avatar, EmptyState } from "@/components/ui";
 import { Analytics } from "@/pages/project/analytics";
 import { Cron } from "@/pages/project/cron";
+import { Overview } from "@/pages/project/overview";
 import { Deployments } from "@/pages/project/deployments";
 import { Domains } from "@/pages/project/domains";
 import { Environment } from "@/pages/project/environment";
@@ -15,6 +16,7 @@ import { useEffect, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 
 const TABS = [
+  "overview",
   "deployments",
   "logs",
   "environment",
@@ -35,9 +37,9 @@ export default function ProjectPage() {
   const tabParam = params.get("tab");
   const tab: Tab = (TABS as readonly string[]).includes(tabParam ?? "")
     ? (tabParam as Tab)
-    : "deployments";
+    : "overview";
   const setTab = (t: Tab) =>
-    setParams(t === "deployments" ? {} : { tab: t }, { replace: true });
+    setParams(t === "overview" ? {} : { tab: t }, { replace: true });
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -132,6 +134,7 @@ export default function ProjectPage() {
           </button>
         ))}
       </div>
+      {tab === "overview" && project && <Overview id={id} project={project} />}
       {tab === "deployments" && <Deployments id={id} project={project ?? null} />}
       {tab === "logs" && <ProjectLogs id={id} />}
       {tab === "environment" && <Environment id={id} />}

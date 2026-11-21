@@ -331,6 +331,20 @@ function ShortcutHint() {
   );
 }
 
+function VersionTag() {
+  const [version, setVersion] = useState<string | null>(null);
+  useEffect(() => {
+    api
+      .health()
+      .then((h) => setVersion(h.version ?? null))
+      .catch(() => {});
+  }, []);
+  if (!version) return null;
+  return (
+    <div className="px-4 pb-1 pt-2 text-[11px] text-muted-foreground/50">v{version}</div>
+  );
+}
+
 function AccountRow({ me }: { me: Me }) {
   const nav = useNavigate();
   return (
@@ -393,6 +407,7 @@ export default function Layout({ me, children }: { me: Me; children: React.React
       <FindButton />
       <RailNav unread={unread} />
       <ShortcutHint />
+      <VersionTag />
       <AccountRow me={me} />
     </>
   );
