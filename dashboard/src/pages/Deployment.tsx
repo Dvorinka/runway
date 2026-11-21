@@ -117,10 +117,14 @@ function DeployInfo({ dep, active }: { dep: Deployment; active: boolean }) {
   const mainUrl = envUrl ?? immUrl ?? null;
   const extraUrls = [immUrl && immUrl !== envUrl ? immUrl : null, dep.urls?.branch]
     .filter(Boolean) as string[];
+  // urls.* are bare hostnames — inherit the scheme dep.url already carries
+  // (http under DISABLE_TLS, https in production).
+  const scheme = dep.url?.split("://")[0] || "https";
+  const toHref = (u: string) => (u.startsWith("http") ? u : `${scheme}://${u}`);
 
   function copy(text: string) {
     navigator.clipboard
-      .writeText(text.startsWith("http") ? text : `https://${text}`)
+      .writeText(toHref(text))
       .then(() => {
         setCopied(true);
         setTimeout(() => setCopied(false), 1500);
@@ -183,7 +187,7 @@ function DeployInfo({ dep, active }: { dep: Deployment; active: boolean }) {
           <div className="flex items-center gap-2">
             <Globe className="h-4 w-4 shrink-0 text-muted-foreground" />
             <a
-              href={mainUrl.startsWith("http") ? mainUrl : `https://${mainUrl}`}
+              href={toHref(mainUrl)}
               target="_blank"
               rel="noreferrer"
               className="truncate font-mono text-sm hover:text-foreground"
@@ -217,7 +221,7 @@ function DeployInfo({ dep, active }: { dep: Deployment; active: boolean }) {
             {extraUrls.map((u) => (
               <a
                 key={u}
-                href={`https://${u}`}
+                href={toHref(u)}
                 target="_blank"
                 rel="noreferrer"
                 className="font-mono text-xs text-muted-foreground hover:text-foreground"
@@ -229,7 +233,7 @@ function DeployInfo({ dep, active }: { dep: Deployment; active: boolean }) {
         )}
       </div>
     </div>
-    {mainUrl && <Preview url={mainUrl} />}
+    {mainUrl && <Preview url={toHref(mainUrl)} />}
     <DeployStats id={dep.id} />
     </>
   );
