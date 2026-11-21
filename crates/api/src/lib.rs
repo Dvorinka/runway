@@ -486,9 +486,16 @@ async fn security_headers(mut res: axum::response::Response) -> axum::response::
     let h = res.headers_mut();
     h.insert(
         "content-security-policy",
-        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
-         img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; \
-         base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+        // cloudflareinsights: beacon injected by the Cloudflare proxy.
+        // https:/http: on connect-src + frame-src: deployment previews
+        // embed and probe arbitrary operator-controlled origins.
+        // github.com on form-action: the App manifest flow POSTs to
+        // github.com/settings/apps/new.
+        "default-src 'self'; script-src 'self' https://static.cloudflareinsights.com; \
+         style-src 'self' 'unsafe-inline'; img-src 'self' data:; \
+         connect-src 'self' https: http:; font-src 'self'; object-src 'none'; \
+         base-uri 'self'; form-action 'self' https://github.com; \
+         frame-src 'self' https: http:; frame-ancestors 'none'"
             .parse()
             .unwrap(),
     );

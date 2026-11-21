@@ -9,16 +9,31 @@ use crate::error::{Error, Result};
 
 pub const MAX_BYTES: usize = 2 * 1024 * 1024;
 
-/// image content-type → stored extension. No svg: Pillow never accepted
-/// it either, and inline svg is an XSS vector.
+/// (extension, mime) — single source for `ext_for`/`find`/`mime_for`.
+/// No svg: Pillow never accepted it either, and inline svg is an XSS vector.
+const TYPES: [(&str, &str); 5] = [
+    ("png", "image/png"),
+    ("jpg", "image/jpeg"),
+    ("webp", "image/webp"),
+    ("gif", "image/gif"),
+    ("ico", "image/x-icon"),
+];
+
+/// image content-type → stored extension.
 pub fn ext_for(content_type: &str) -> Option<&'static str> {
-    match content_type.split(';').next().unwrap_or("").trim() {
-        "image/png" => Some("png"),
-        "image/jpeg" => Some("jpg"),
-        "image/webp" => Some("webp"),
-        "image/gif" => Some("gif"),
-        _ => None,
-    }
+    let mime = content_type.split(';').next().unwrap_or("").trim();
+    TYPES
+        .iter()
+        .find(|(_, m)| *m == mime || (mime == "image/vnd.microsoft.icon" && *m == "image/x-icon"))
+        .map(|(e, _)| *e)
+}
+
+/// file extension (from a URL path) → content-type. Used when a fetched
+/// image arrives as application/octet-stream or without a Content-Type.
+pub fn mime_for_path(path: &str) -> Option<&'static str> {
+    let ext = path.rsplit('/').next()?.rsplit('.').next()?;
+    let ext = if ext == "jpeg" { "jpg" } else { ext };
+    TYPES.iter().find(|(e, _)| *e == ext).map(|(_, m)| *m)
 }
 
 fn dir(data_dir: &Path) -> PathBuf {
@@ -34,7 +49,7 @@ pub async fn save(
     bytes: &[u8],
 ) -> Result<()> {
     let ext = ext_for(content_type)
-        .ok_or_else(|| Error::BadRequest("avatar must be png, jpeg, webp or gif".into()))?;
+        .ok_or_else(|| Error::BadRequest("avatar must be png, jpeg, webp, gif or ico".into()))?;
     if bytes.is_empty() || bytes.len() > MAX_BYTES {
         return Err(Error::BadRequest("avatar must be under 2MB".into()));
     }
@@ -48,12 +63,7 @@ pub async fn save(
 /// Locate the stored avatar file, if any. Returns (path, content-type).
 pub async fn find(data_dir: &Path, kind: &str, id: &str) -> Option<(PathBuf, &'static str)> {
     let dir = dir(data_dir);
-    for (ext, mime) in [
-        ("png", "image/png"),
-        ("jpg", "image/jpeg"),
-        ("webp", "image/webp"),
-        ("gif", "image/gif"),
-    ] {
+    for (ext, mime) in TYPES {
         let path = dir.join(format!("{kind}_{id}.{ext}"));
         if tokio::fs::try_exists(&path).await.unwrap_or(false) {
             return Some((path, mime));

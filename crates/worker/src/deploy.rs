@@ -1487,12 +1487,83 @@ pub async fn finalize(ctx: &Ctx, deployment_id: &str) -> anyhow::Result<()> {
     )
     .await;
 
+    if !project.has_avatar {
+        detect_project_avatar(ctx, &deployment, &project).await;
+    }
+
     deploy::enqueue(
         &ctx.db,
         "cleanup_inactive_containers",
         json!({ "project_id": deployment.project_id }),
         0,
     )
+    .await?;
+    Ok(())
+}
+
+/// Best-effort project logo: pull the favicon off the just-deployed site
+/// and store it as the project avatar. Runs until any avatar exists
+/// (manual upload or an earlier detect); failures only log.
+async fn detect_project_avatar(ctx: &Ctx, deployment: &Deployment, project: &Project) {
+    let slug = project.slug.as_deref().unwrap_or(&project.id);
+    let base = deployment.url(slug, &ctx.settings);
+    if let Err(e) = try_project_avatar(ctx, &base, &project.id).await {
+        tracing::debug!(deployment_id = %deployment.id, error = %e, "project avatar detect skipped");
+    }
+}
+
+async fn try_project_avatar(ctx: &Ctx, base: &str, project_id: &str) -> anyhow::Result<()> {
+    use anyhow::Context;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .redirect(reqwest::redirect::Policy::limited(3))
+        .build()?;
+    let base_url = reqwest::Url::parse(base)?;
+    let page = client.get(base_url.clone()).send().await?;
+    let bytes = page.bytes().await?;
+    let html = String::from_utf8_lossy(&bytes[..bytes.len().min(256 * 1024)]);
+    let report = runway_core::opengraph::parse(&html);
+    let icon_url = match report.favicon.as_deref() {
+        Some(href) => base_url.join(href)?,
+        None => base_url.join("/favicon.ico")?,
+    };
+    // Same-origin only: a deployed page could otherwise point its favicon
+    // at an internal address and exfil it through the avatar endpoint.
+    anyhow::ensure!(
+        icon_url.origin() == base_url.origin(),
+        "favicon off-origin"
+    );
+    let resp = client.get(icon_url.clone()).send().await?;
+    anyhow::ensure!(resp.status().is_success(), "favicon HTTP {}", resp.status());
+    let head_ct = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let ct = if runway_core::avatars::ext_for(&head_ct).is_some() {
+        head_ct
+    } else {
+        runway_core::avatars::mime_for_path(icon_url.path())
+            .context("unrecognized favicon type")?
+            .to_string()
+    };
+    let body = resp.bytes().await?;
+    runway_core::avatars::save(
+        std::path::Path::new(&ctx.settings.data_dir),
+        "project",
+        project_id,
+        &ct,
+        &body,
+    )
+    .await?;
+    // Conditional flag: a manual upload landing mid-fetch keeps precedence.
+    sqlx::query(
+        "UPDATE project SET has_avatar = TRUE, updated_at = now() \
+         WHERE id = $1 AND has_avatar = FALSE",
+    )
+    .bind(project_id)
+    .execute(&ctx.db)
     .await?;
     Ok(())
 }
