@@ -89,6 +89,9 @@ services:
       SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set ENCRYPTION_KEY in .env}
       DISABLE_TLS: ${DISABLE_TLS:-false}
+      # Public scheme when an upstream edge terminates TLS (DISABLE_TLS=true
+      # but public URLs are https). Leave unset otherwise.
+      URL_SCHEME: ${URL_SCHEME:-}
       RUNWAY_ENV: production
       DATA_DIR: /home/runway/data
       # Absolute host path of the data dir (== the volume below).
