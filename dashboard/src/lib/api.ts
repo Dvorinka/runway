@@ -337,6 +337,10 @@ export const api = {
       install_url: string | null;
       web_base: string;
     }>("/api/v1/github/app/status"),
+  githubAppRegister: () =>
+    req<{ url: string; manifest: Record<string, unknown>; state: string }>(
+      "/api/v1/github/app/register",
+    ),
 
   projects: () => req<{ projects: Project[] }>("/api/v1/projects"),
   project: (id: string) => req<Project>(`/api/v1/projects/${id}`),

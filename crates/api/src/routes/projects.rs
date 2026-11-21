@@ -261,10 +261,13 @@ pub async fn create(
             repo_base_url = String::new();
         }
         "github" | "github_enterprise" => {
-            let gh = state
-                .github
-                .if_configured()
-                .ok_or_else(|| ApiError::bad_request("GitHub App is not configured"))?;
+            let gh = state.github.if_configured().ok_or_else(|| {
+                ApiError::bad_request(
+                    "repo-bound projects need a GitHub App — register one in \
+                         Settings → GitHub App, or use `runway create` for \
+                         upload-based deploys",
+                )
+            })?;
             let installation_id = body.installation_id.ok_or_else(|| {
                 ApiError::bad_request("installation_id required for github projects")
             })?;
@@ -1035,6 +1038,8 @@ pub async fn add_domain(
     }
     // DNS verification lands with the domain service (Phase 3); for now
     // domains start pending and are activated by verify.
+    // environment_id defaults to prod — a domain without one gets no
+    // matching environment alias and the router is silently skipped.
     let domain: runway_core::models::Domain = sqlx::query_as(
         "INSERT INTO domain (project_id, hostname, type, environment_id, status)
          VALUES ($1,$2,$3,$4,'pending')
@@ -1043,7 +1048,12 @@ pub async fn add_domain(
     .bind(&project.id)
     .bind(&hostname)
     .bind(&body.r#type)
-    .bind(&body.environment_id)
+    .bind(
+        body.environment_id
+            .clone()
+            .filter(|e| !e.is_empty())
+            .or_else(|| Some("prod".into())),
+    )
     .fetch_one(&state.db)
     .await?;
     Ok((StatusCode::CREATED, Json(domain)).into_response())

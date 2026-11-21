@@ -34,6 +34,37 @@ impl CloudflareClient {
         }
     }
 
+    /// Send a request, surfacing Cloudflare's `errors[].message` on
+    /// failure. 4xx → BadRequest so callers see the real reason
+    /// ("conflicting DNS record") instead of a bare internal_error.
+    async fn send_checked(&self, req: reqwest::RequestBuilder) -> Result<reqwest::Response> {
+        use crate::error::Error;
+        let res = req.send().await?;
+        let status = res.status();
+        if status.is_success() {
+            return Ok(res);
+        }
+        let body = res.text().await.unwrap_or_default();
+        let detail = serde_json::from_str::<Value>(&body)
+            .ok()
+            .and_then(|v| {
+                v["errors"].as_array().map(|errs| {
+                    errs.iter()
+                        .filter_map(|e| e["message"].as_str().map(String::from))
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                })
+            })
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| body.chars().take(300).collect());
+        let msg = format!("cloudflare {status}: {detail}");
+        Err(if status.is_client_error() {
+            Error::BadRequest(msg)
+        } else {
+            Error::Other(anyhow::anyhow!(msg))
+        })
+    }
+
     /// Verify the token.
     pub async fn verify(&self) -> Result<Value> {
         let res = self
@@ -114,19 +145,19 @@ impl CloudflareClient {
         proxied: bool,
     ) -> Result<Option<Value>> {
         let res: Value = self
-            .http
-            .post(format!("{API_BASE}/zones/{zone_id}/dns_records"))
-            .bearer_auth(&self.token)
-            .json(&json!({
-                "type": record_type,
-                "name": name,
-                "content": content,
-                "proxied": proxied,
-                "ttl": 1,
-            }))
-            .send()
+            .send_checked(
+                self.http
+                    .post(format!("{API_BASE}/zones/{zone_id}/dns_records"))
+                    .bearer_auth(&self.token)
+                    .json(&json!({
+                        "type": record_type,
+                        "name": name,
+                        "content": content,
+                        "proxied": proxied,
+                        "ttl": 1,
+                    })),
+            )
             .await?
-            .error_for_status()?
             .json()
             .await?;
         Ok(if res["success"].as_bool() == Some(true) {
@@ -202,32 +233,29 @@ impl CloudflareClient {
         let is_apex = hostname == zone_name && target.parse::<std::net::IpAddr>().is_ok();
         let record_type = if is_apex { "A" } else { "CNAME" };
 
-        let existing = self
-            .list_dns_records(&zone_id, Some(hostname))
-            .await?
-            .into_iter()
-            .find(|r| {
-                r["type"].as_str() == Some(record_type) && r["name"].as_str() == Some(hostname)
-            });
+        let records = self.list_dns_records(&zone_id, Some(hostname)).await?;
+        let existing = records.iter().find(|r| {
+            r["type"].as_str() == Some(record_type) && r["name"].as_str() == Some(hostname)
+        });
 
         if let Some(existing) = existing {
             let record_id = existing["id"].as_str().unwrap_or("").to_string();
             let res: Value = self
-                .http
-                .put(format!(
-                    "{API_BASE}/zones/{zone_id}/dns_records/{record_id}"
-                ))
-                .bearer_auth(&self.token)
-                .json(&json!({
-                    "type": record_type,
-                    "name": hostname,
-                    "content": target,
-                    "proxied": proxied,
-                    "ttl": 1,
-                }))
-                .send()
+                .send_checked(
+                    self.http
+                        .put(format!(
+                            "{API_BASE}/zones/{zone_id}/dns_records/{record_id}"
+                        ))
+                        .bearer_auth(&self.token)
+                        .json(&json!({
+                            "type": record_type,
+                            "name": hostname,
+                            "content": target,
+                            "proxied": proxied,
+                            "ttl": 1,
+                        })),
+                )
                 .await?
-                .error_for_status()?
                 .json()
                 .await?;
             return Ok(if res["success"].as_bool() == Some(true) {
@@ -235,6 +263,23 @@ impl CloudflareClient {
             } else {
                 None
             });
+        }
+
+        // A CNAME can't coexist with other records at the name (RFC, and
+        // CF enforces it both ways). Moving a host onto Runway means
+        // replacing its address records — drop conflicting A/AAAA/CNAME
+        // before create; MX/TXT etc. stay and a still-failing create
+        // surfaces Cloudflare's own message via send_checked.
+        for r in &records {
+            let ty = r["type"].as_str().unwrap_or("");
+            if r["name"].as_str() == Some(hostname)
+                && ty != record_type
+                && matches!(ty, "A" | "AAAA" | "CNAME")
+            {
+                if let Some(id) = r["id"].as_str() {
+                    let _ = self.delete_dns_record(&zone_id, id).await;
+                }
+            }
         }
 
         Ok(self

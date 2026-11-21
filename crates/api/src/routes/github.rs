@@ -659,7 +659,10 @@ pub async fn installation_repos(
     Path(installation_id): Path<i64>,
 ) -> ApiResult<Response> {
     if !state.github.configured() {
-        return Err(ApiError::bad_request("GitHub App is not configured"));
+        return Err(ApiError::bad_request(
+            "GitHub App is not configured — register one in Settings → GitHub App \
+             (or set GITHUB_APP_* env vars); use `runway create` for upload-based deploys",
+        ));
     }
     let token = state
         .github
@@ -726,9 +729,11 @@ fn is_public_hostname(host: &str) -> bool {
         && host.contains('.')
 }
 
-/// `GET /api/v1/github/app/register` — admin only. Returns an
-/// auto-submitting HTML form that POSTs the manifest to GitHub; GitHub
-/// then redirects to `app_callback` with `?code=`.
+/// `GET /api/v1/github/app/register` — admin only. Returns the manifest
+/// JSON + target URL; the dashboard builds and submits the form to
+/// GitHub itself (an auto-submitting page would need inline script,
+/// which the CSP forbids). GitHub redirects to `app_callback` with
+/// `?code=` and echoes `state`.
 pub async fn app_register(
     user: AuthUser,
     State(state): State<AppState>,
@@ -782,21 +787,15 @@ pub async fn app_register(
         .same_site(axum_extra::extract::cookie::SameSite::Lax)
         .max_age(time::Duration::minutes(10))
         .build();
-    let manifest_json = serde_json::to_string(&manifest)
-        .map_err(ApiError::internal)?
-        .replace('\'', "&#39;");
-    let html = format!(
-        r#"<!doctype html><html><body>
-<p>Redirecting to GitHub…</p>
-<form id="f" method="post" action="{}/settings/apps/new">
-  <input type="hidden" name="manifest" value='{}'>
-  <input type="hidden" name="state" value="{}">
-</form>
-<script>document.getElementById("f").submit()</script>
-</body></html>"#,
-        state.github.web_base, manifest_json, state_token
-    );
-    Ok((jar.add(cookie), axum::response::Html(html)).into_response())
+    Ok((
+        jar.add(cookie),
+        Json(json!({
+            "url": format!("{}/settings/apps/new", state.github.web_base),
+            "manifest": manifest,
+            "state": state_token,
+        })),
+    )
+        .into_response())
 }
 
 #[derive(Deserialize)]

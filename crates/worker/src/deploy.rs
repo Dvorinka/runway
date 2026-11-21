@@ -673,8 +673,23 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
 
     log("Checking runner image availability...").await;
     if docker.inspect_image(&runner_image).await.is_err() {
+        // Locally-built tags (runway-dep-*, override_image pointing at a
+        // local image) can't be pulled from a registry — a pull attempt
+        // dies with "access denied" and hides the real fix. Say what
+        // actually happened instead.
+        if is_local_image(&runner_image) {
+            anyhow::bail!(
+                "runner image {runner_image} is missing locally and is not pullable — \
+                 rebuild the image on this node or redeploy with `runway deploy`"
+            );
+        }
         log(&format!("Pulling runner image ({runner_image})...")).await;
-        pull_image(docker, &runner_image).await?;
+        pull_image(docker, &runner_image).await.map_err(|e| {
+            anyhow::anyhow!(
+                "pull failed for {runner_image}: {e} — if this image was built locally, \
+                 rebuild it on this node; Runway does not push runner images to a registry"
+            )
+        })?;
         log("Runner image pulled").await;
     } else {
         log(&format!("Runner image already present ({runner_image})")).await;
@@ -1360,6 +1375,16 @@ pub async fn wait_exit(
     Err(e)
 }
 
+/// True when an image tag names one of our locally-built artifacts —
+/// these live on the daemon only, no registry will serve them.
+fn is_local_image(image: &str) -> bool {
+    image
+        .split(':')
+        .next()
+        .unwrap_or(image)
+        .starts_with("runway-")
+}
+
 pub async fn pull_image(docker: &bollard::Docker, image: &str) -> anyhow::Result<()> {
     use bollard::image::CreateImageOptions;
     let (from, tag) = image.rsplit_once(':').unwrap_or((image, "latest"));
@@ -1382,6 +1407,9 @@ pub async fn pull_image(docker: &bollard::Docker, image: &str) -> anyhow::Result
 }
 
 /// Tail `docker logs -f` into the deployment log file + SSE bus.
+/// Bounded: a dead HTTP stream through docker-proxy can hang forever
+/// and wedge the API's docker connection pool, so a liveness poll ends
+/// the tail once the container exits or disappears.
 fn spawn_log_tailer(ctx: &Ctx, container_id: String, deployment_id: String) {
     let ctx = ctx.clone();
     tokio::spawn(async move {
@@ -1396,17 +1424,50 @@ fn spawn_log_tailer(ctx: &Ctx, container_id: String, deployment_id: String) {
                 ..Default::default()
             }),
         );
-        while let Some(item) = stream.next().await {
-            match item {
-                Ok(output) => {
-                    let text = output.to_string();
-                    for line in text.lines() {
-                        ctx.logs.append_raw(&deployment_id, "runtime", line).await;
+        let mut liveness = tokio::time::interval(std::time::Duration::from_secs(30));
+        liveness.tick().await; // first tick is immediate — skip it
+        loop {
+            tokio::select! {
+                item = stream.next() => {
+                    match item {
+                        Some(Ok(output)) => {
+                            let text = output.to_string();
+                            for line in text.lines() {
+                                ctx.logs.append_raw(&deployment_id, "runtime", line).await;
+                            }
+                        }
+                        Some(Err(e)) => {
+                            tracing::warn!(deployment_id, error = %e, "log tail ended");
+                            break;
+                        }
+                        None => break,
                     }
                 }
-                Err(e) => {
-                    tracing::warn!(deployment_id, error = %e, "log tail ended");
-                    break;
+                _ = liveness.tick() => {
+                    let running = ctx
+                        .docker
+                        .inspect_container(&container_id, None::<InspectContainerOptions>)
+                        .await
+                        .ok()
+                        .and_then(|i| i.state)
+                        .and_then(|s| s.running)
+                        .unwrap_or(false);
+                    if !running {
+                        // Drain whatever is buffered, then stop the
+                        // follow — container is gone or stopped.
+                        while let Ok(Some(item)) =
+                            tokio::time::timeout(std::time::Duration::from_millis(200), stream.next())
+                                .await
+                        {
+                            if let Ok(output) = item {
+                                let text = output.to_string();
+                                for line in text.lines() {
+                                    ctx.logs.append_raw(&deployment_id, "runtime", line).await;
+                                }
+                            }
+                        }
+                        break;
+                    }
                 }
             }
         }
@@ -1506,12 +1567,80 @@ pub async fn finalize(ctx: &Ctx, deployment_id: &str) -> anyhow::Result<()> {
     )
     .await;
 
+    if !project.has_avatar {
+        detect_project_avatar(ctx, &deployment, &project).await;
+    }
+
     deploy::enqueue(
         &ctx.db,
         "cleanup_inactive_containers",
         json!({ "project_id": deployment.project_id }),
         0,
     )
+    .await?;
+    Ok(())
+}
+
+/// Best-effort project logo: pull the favicon off the just-deployed site
+/// and store it as the project avatar. Runs until any avatar exists
+/// (manual upload or an earlier detect); failures only log.
+async fn detect_project_avatar(ctx: &Ctx, deployment: &Deployment, project: &Project) {
+    let slug = project.slug.as_deref().unwrap_or(&project.id);
+    let base = deployment.url(slug, &ctx.settings);
+    if let Err(e) = try_project_avatar(ctx, &base, &project.id).await {
+        tracing::debug!(deployment_id = %deployment.id, error = %e, "project avatar detect skipped");
+    }
+}
+
+async fn try_project_avatar(ctx: &Ctx, base: &str, project_id: &str) -> anyhow::Result<()> {
+    use anyhow::Context;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .redirect(reqwest::redirect::Policy::limited(3))
+        .build()?;
+    let base_url = reqwest::Url::parse(base)?;
+    let page = client.get(base_url.clone()).send().await?;
+    let bytes = page.bytes().await?;
+    let html = String::from_utf8_lossy(&bytes[..bytes.len().min(256 * 1024)]);
+    let report = runway_core::opengraph::parse(&html);
+    let icon_url = match report.favicon.as_deref() {
+        Some(href) => base_url.join(href)?,
+        None => base_url.join("/favicon.ico")?,
+    };
+    // Same-origin only: a deployed page could otherwise point its favicon
+    // at an internal address and exfil it through the avatar endpoint.
+    anyhow::ensure!(icon_url.origin() == base_url.origin(), "favicon off-origin");
+    let resp = client.get(icon_url.clone()).send().await?;
+    anyhow::ensure!(resp.status().is_success(), "favicon HTTP {}", resp.status());
+    let head_ct = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let ct = if runway_core::avatars::ext_for(&head_ct).is_some() {
+        head_ct
+    } else {
+        runway_core::avatars::mime_for_path(icon_url.path())
+            .context("unrecognized favicon type")?
+            .to_string()
+    };
+    let body = resp.bytes().await?;
+    runway_core::avatars::save(
+        std::path::Path::new(&ctx.settings.data_dir),
+        "project",
+        project_id,
+        &ct,
+        &body,
+    )
+    .await?;
+    // Conditional flag: a manual upload landing mid-fetch keeps precedence.
+    sqlx::query(
+        "UPDATE project SET has_avatar = TRUE, updated_at = now() \
+         WHERE id = $1 AND has_avatar = FALSE",
+    )
+    .bind(project_id)
+    .execute(&ctx.db)
     .await?;
     Ok(())
 }

@@ -219,9 +219,18 @@ pub async fn update_project_config(
     }
 
     for domain in &domains {
-        // Domains route to the current deployment of their environment alias.
+        // Domains route to the current deployment of their environment
+        // alias. Rows predating the environment_id default carry none —
+        // treat them as prod-bound rather than silently dropping the
+        // router, which leaves the domain 404ing while status reads
+        // 'active'.
+        let wanted = domain
+            .environment_id
+            .as_deref()
+            .filter(|e| !e.is_empty())
+            .unwrap_or("prod");
         let env_alias = aliases.iter().find(|(_, _, ty, value, _, _, _, _, _)| {
-            ty == "environment_id" && value.as_deref() == domain.environment_id.as_deref()
+            ty == "environment_id" && value.as_deref() == Some(wanted)
         });
         let Some((_, deployment_id, _, _, _, rnode, rport, rhost, outdir)) = env_alias else {
             continue;

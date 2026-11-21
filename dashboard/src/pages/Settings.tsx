@@ -137,10 +137,42 @@ function GitProviders() {
 
 function GithubApp() {
   const [st, setSt] = useState<Awaited<ReturnType<typeof api.githubAppStatus>> | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     api.githubAppStatus().then(setSt).catch(() => {});
   }, []);
+
+  // GitHub's app-manifest flow must leave the browser as a form POST —
+  // fetch the manifest, then submit it to github.com so the app is
+  // created under the user's own account. GitHub redirects back to the
+  // instance callback, which lands on /settings.
+  async function register() {
+    setBusy(true);
+    setError("");
+    try {
+      const data = await api.githubAppRegister();
+      const form = document.createElement("form");
+      form.method = "post";
+      form.action = data.url;
+      for (const [name, value] of [
+        ["manifest", JSON.stringify(data.manifest)],
+        ["state", data.state],
+      ]) {
+        const input = document.createElement("input");
+        input.type = "hidden";
+        input.name = name;
+        input.value = value;
+        form.appendChild(input);
+      }
+      document.body.appendChild(form);
+      form.submit();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "registration failed");
+      setBusy(false);
+    }
+  }
 
   return (
     <Card className="p-5">
@@ -171,9 +203,10 @@ function GithubApp() {
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-2">
-          <a href="/api/v1/github/app/register" className="w-fit">
-            <Button size="sm">Register with GitHub</Button>
-          </a>
+          <Button size="sm" className="w-fit" onClick={register} disabled={busy}>
+            {busy ? "Redirecting…" : "Register with GitHub"}
+          </Button>
+          {error && <p className="text-xs text-red-400">{error}</p>}
           <p className="text-xs text-muted-foreground">
             Creates a private GitHub App on your account with the permissions Runway needs —
             credentials are stored encrypted on this instance. The GITHUB_APP_* environment
