@@ -3407,7 +3407,8 @@ mod tests {
         .unwrap();
         assert!(cfg.contains("kind = 301"));
         assert!(cfg.contains("kind = 302"));
-        assert!(!cfg.contains("kind = 30[78]"));
+        assert!(!cfg.contains("kind = 307"));
+        assert!(!cfg.contains("kind = 308"));
     }
 
     #[test]
