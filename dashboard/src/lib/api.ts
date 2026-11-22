@@ -284,6 +284,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   me: () => req<Me>("/api/auth/me"),
+  health: () => req<{ status: string; version?: string }>("/health"),
   login: (email: string, password: string) =>
     req<{ ok?: boolean; two_factor?: boolean; pending?: string }>("/api/auth/login", {
       method: "POST",

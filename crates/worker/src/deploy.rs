@@ -1266,14 +1266,13 @@ fn sws_config(val: &serde_json::Value, spa_fallback: bool) -> Option<String> {
             let (Some(src), Some(dst)) = (r["source"].as_str(), r["destination"].as_str()) else {
                 continue;
             };
-            let kind = r["status_code"]
-                .as_i64()
-                .or_else(|| r["status"].as_i64())
-                .unwrap_or(if r["permanent"].as_bool() == Some(true) {
-                    308
-                } else {
-                    307
-                });
+            // SWS accepts only 301/302 — map permanent→301, everything
+            // else→302 (vercel's 307/308 have no SWS equivalent).
+            let requested = r["status_code"].as_i64().or_else(|| r["status"].as_i64());
+            let permanent = requested
+                .map(|k| k == 301 || k == 308)
+                .unwrap_or(r["permanent"].as_bool() == Some(true));
+            let kind = if permanent { 301 } else { 302 };
             rules += &format!(
                 "[[advanced.redirects]]\nsource = \"{}\"\ndestination = \"{}\"\nkind = {kind}\n\n",
                 esc(&src_glob(src)),
@@ -1593,7 +1592,6 @@ async fn detect_project_avatar(ctx: &Ctx, deployment: &Deployment, project: &Pro
 }
 
 async fn try_project_avatar(ctx: &Ctx, base: &str, project_id: &str) -> anyhow::Result<()> {
-    use anyhow::Context;
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .redirect(reqwest::redirect::Policy::limited(3))
@@ -1603,13 +1601,54 @@ async fn try_project_avatar(ctx: &Ctx, base: &str, project_id: &str) -> anyhow::
     let bytes = page.bytes().await?;
     let html = String::from_utf8_lossy(&bytes[..bytes.len().min(256 * 1024)]);
     let report = runway_core::opengraph::parse(&html);
-    let icon_url = match report.favicon.as_deref() {
-        Some(href) => base_url.join(href)?,
-        None => base_url.join("/favicon.ico")?,
-    };
+    let mut candidates: Vec<reqwest::Url> = report
+        .favicons
+        .iter()
+        .filter_map(|h| base_url.join(h).ok())
+        .collect();
+    if candidates.is_empty() {
+        candidates.push(base_url.join("/favicon.ico")?);
+    }
     // Same-origin only: a deployed page could otherwise point its favicon
     // at an internal address and exfil it through the avatar endpoint.
-    anyhow::ensure!(icon_url.origin() == base_url.origin(), "favicon off-origin");
+    let mut last_err = anyhow::anyhow!("no favicon candidates");
+    for icon_url in candidates {
+        if icon_url.origin() != base_url.origin() {
+            continue;
+        }
+        match fetch_avatar_icon(&client, &icon_url).await {
+            Ok((ct, body)) => {
+                runway_core::avatars::save(
+                    std::path::Path::new(&ctx.settings.data_dir),
+                    "project",
+                    project_id,
+                    &ct,
+                    &body,
+                )
+                .await?;
+                // Conditional flag: a manual upload landing mid-fetch keeps precedence.
+                sqlx::query(
+                    "UPDATE project SET has_avatar = TRUE, updated_at = now() \
+                     WHERE id = $1 AND has_avatar = FALSE",
+                )
+                .bind(project_id)
+                .execute(&ctx.db)
+                .await?;
+                return Ok(());
+            }
+            Err(e) => last_err = e,
+        }
+    }
+    Err(last_err)
+}
+
+/// Fetch one favicon candidate; unsupported types (svg etc.) are skipped
+/// by the caller trying the next candidate.
+async fn fetch_avatar_icon(
+    client: &reqwest::Client,
+    icon_url: &reqwest::Url,
+) -> anyhow::Result<(String, Vec<u8>)> {
+    use anyhow::Context;
     let resp = client.get(icon_url.clone()).send().await?;
     anyhow::ensure!(resp.status().is_success(), "favicon HTTP {}", resp.status());
     let head_ct = resp
@@ -1625,24 +1664,8 @@ async fn try_project_avatar(ctx: &Ctx, base: &str, project_id: &str) -> anyhow::
             .context("unrecognized favicon type")?
             .to_string()
     };
-    let body = resp.bytes().await?;
-    runway_core::avatars::save(
-        std::path::Path::new(&ctx.settings.data_dir),
-        "project",
-        project_id,
-        &ct,
-        &body,
-    )
-    .await?;
-    // Conditional flag: a manual upload landing mid-fetch keeps precedence.
-    sqlx::query(
-        "UPDATE project SET has_avatar = TRUE, updated_at = now() \
-         WHERE id = $1 AND has_avatar = FALSE",
-    )
-    .bind(project_id)
-    .execute(&ctx.db)
-    .await?;
-    Ok(())
+    let body = resp.bytes().await?.to_vec();
+    Ok((ct, body))
 }
 
 /// Exact proxied CNAMEs for a deployment's served hostnames, pointed at
@@ -3364,4 +3387,35 @@ async fn ship_static_volume(
         .await;
     shipped?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sws_config;
+    use serde_json::json;
+
+    #[test]
+    fn sws_redirect_kinds_are_sws_legal() {
+        let cfg = sws_config(
+            &json!({"redirects": [
+                {"source": "/a", "destination": "/b", "permanent": true},
+                {"source": "/c", "destination": "/d", "permanent": false},
+                {"source": "/e", "destination": "/f", "status_code": 308}
+            ]}),
+            false,
+        )
+        .unwrap();
+        assert!(cfg.contains("kind = 301"));
+        assert!(cfg.contains("kind = 302"));
+        assert!(!cfg.contains("kind = 307"));
+        assert!(!cfg.contains("kind = 308"));
+    }
+
+    #[test]
+    fn sws_config_none_without_rules_or_fallback() {
+        assert!(sws_config(&json!({}), false).is_none());
+        assert!(sws_config(&json!({}), true)
+            .unwrap()
+            .contains("page-fallback"));
+    }
 }

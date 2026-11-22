@@ -240,17 +240,7 @@ function DeployInfo({ dep, active }: { dep: Deployment; active: boolean }) {
 }
 
 function Preview({ url }: { url: string }) {
-  const [state, setState] = useState<"probing" | "ok" | "dead">("probing");
   const href = url.startsWith("http") ? url : `https://${url}`;
-  useEffect(() => {
-    let live = true;
-    fetch(href, { mode: "no-cors", signal: AbortSignal.timeout(5000) })
-      .then(() => live && setState("ok"))
-      .catch(() => live && setState("dead"));
-    return () => {
-      live = false;
-    };
-  }, [href]);
   return (
     <div className="mb-4 overflow-hidden rounded-lg border border-border">
       <div className="flex items-center justify-between border-b border-border px-3 py-2">
@@ -264,23 +254,13 @@ function Preview({ url }: { url: string }) {
           Open ↗
         </a>
       </div>
-      {state === "dead" ? (
-        <div className="flex h-[200px] flex-col items-center justify-center gap-2 bg-muted/20">
-          <Globe className="h-5 w-5 text-muted-foreground" />
-          <p className="text-sm text-muted-foreground">
-            Preview unavailable — <span className="font-mono">{url.replace(/^https?:\/\//, "")}</span>{" "}
-            isn't reachable from this network.
-          </p>
-        </div>
-      ) : (
-        <iframe
-          src={href}
-          title="Deployment preview"
-          loading="lazy"
-          sandbox="allow-scripts allow-forms allow-popups allow-modals"
-          className="h-[420px] w-full bg-muted/20"
-        />
-      )}
+      <iframe
+        src={href}
+        title="Deployment preview"
+        loading="lazy"
+        sandbox="allow-scripts allow-forms allow-popups allow-modals"
+        className="h-[420px] w-full bg-muted/20"
+      />
     </div>
   );
 }

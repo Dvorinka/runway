@@ -133,12 +133,17 @@ impl Settings {
 
         let disable_tls = env_bool("DISABLE_TLS", false);
         let env_dev = env_or("RUNWAY_ENV", "") == "development";
-        let url_scheme = if disable_tls || env_dev {
-            "http"
+        // URL_SCHEME overrides the derivation: edge-terminated TLS
+        // (Cloudflare tunnel, external LB) means DISABLE_TLS=true while
+        // public URLs — webhooks, redirects — are still https.
+        let url_scheme = env_or("URL_SCHEME", "");
+        let url_scheme = if !url_scheme.is_empty() {
+            url_scheme
+        } else if disable_tls || env_dev {
+            "http".into()
         } else {
-            "https"
-        }
-        .to_string();
+            "https".into()
+        };
 
         let data_dir = env_or("DATA_DIR", "./data");
 
