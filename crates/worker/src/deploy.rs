@@ -1266,14 +1266,13 @@ fn sws_config(val: &serde_json::Value, spa_fallback: bool) -> Option<String> {
             let (Some(src), Some(dst)) = (r["source"].as_str(), r["destination"].as_str()) else {
                 continue;
             };
-            let kind = r["status_code"]
-                .as_i64()
-                .or_else(|| r["status"].as_i64())
-                .unwrap_or(if r["permanent"].as_bool() == Some(true) {
-                    308
-                } else {
-                    307
-                });
+            // SWS accepts only 301/302 — map permanent→301, everything
+            // else→302 (vercel's 307/308 have no SWS equivalent).
+            let requested = r["status_code"].as_i64().or_else(|| r["status"].as_i64());
+            let permanent = requested
+                .map(|k| k == 301 || k == 308)
+                .unwrap_or(r["permanent"].as_bool() == Some(true));
+            let kind = if permanent { 301 } else { 302 };
             rules += &format!(
                 "[[advanced.redirects]]\nsource = \"{}\"\ndestination = \"{}\"\nkind = {kind}\n\n",
                 esc(&src_glob(src)),
@@ -3388,4 +3387,34 @@ async fn ship_static_volume(
         .await;
     shipped?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sws_config;
+    use serde_json::json;
+
+    #[test]
+    fn sws_redirect_kinds_are_sws_legal() {
+        let cfg = sws_config(
+            &json!({"redirects": [
+                {"source": "/a", "destination": "/b", "permanent": true},
+                {"source": "/c", "destination": "/d", "permanent": false},
+                {"source": "/e", "destination": "/f", "status_code": 308}
+            ]}),
+            false,
+        )
+        .unwrap();
+        assert!(cfg.contains("kind = 301"));
+        assert!(cfg.contains("kind = 302"));
+        assert!(!cfg.contains("kind = 30[78]"));
+    }
+
+    #[test]
+    fn sws_config_none_without_rules_or_fallback() {
+        assert!(sws_config(&json!({}), false).is_none());
+        assert!(sws_config(&json!({}), true)
+            .unwrap()
+            .contains("page-fallback"));
+    }
 }
