@@ -187,3 +187,21 @@ pub async fn verify_deploy_token(
         .ok();
     Ok(token)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_and_pending_jwt_roundtrip() {
+        let secret = "test-secret-key-for-jwt";
+        let tok = mint_session(secret, 42, 3600).expect("mint_session");
+        assert_eq!(session_user_id(secret, &tok), Some(42));
+        assert_eq!(session_user_id("wrong-secret", &tok), None);
+        assert_eq!(decode_pending(secret, &tok), None);
+
+        let pending = mint_pending(secret, 99).expect("mint_pending");
+        assert_eq!(decode_pending(secret, &pending), Some(99));
+        assert_eq!(session_user_id(secret, &pending), None);
+    }
+}
