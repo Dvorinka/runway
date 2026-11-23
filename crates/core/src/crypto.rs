@@ -7,7 +7,6 @@
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};
 use base64::Engine;
-use rand::RngCore;
 use sha2::{Digest, Sha256};
 
 use crate::error::{Error, Result};
@@ -38,10 +37,11 @@ impl Crypto {
 
     pub fn encrypt(&self, plaintext: &str) -> Result<String> {
         let mut nonce_bytes = [0u8; 12];
-        rand::thread_rng().fill_bytes(&mut nonce_bytes);
+        rand::fill(&mut nonce_bytes);
+        let nonce = Nonce::from(nonce_bytes);
         let ct = self
             .cipher
-            .encrypt(Nonce::from_slice(&nonce_bytes), plaintext.as_bytes())
+            .encrypt(&nonce, plaintext.as_bytes())
             .map_err(|e| Error::Crypto(e.to_string()))?;
         let mut blob = nonce_bytes.to_vec();
         blob.extend_from_slice(&ct);
@@ -56,9 +56,13 @@ impl Crypto {
             return Err(Error::Crypto("ciphertext too short".into()));
         }
         let (nonce, ct) = blob.split_at(12);
+        let nonce_arr: [u8; 12] = nonce
+            .try_into()
+            .map_err(|_| Error::Crypto("invalid nonce length".into()))?;
+        let nonce = Nonce::from(nonce_arr);
         let pt = self
             .cipher
-            .decrypt(Nonce::from_slice(nonce), ct)
+            .decrypt(&nonce, ct)
             .map_err(|e| Error::Crypto(e.to_string()))?;
         String::from_utf8(pt).map_err(|e| Error::Crypto(e.to_string()))
     }
@@ -87,8 +91,8 @@ pub fn sha256_hex(input: &str) -> String {
 /// HMAC-SHA256 hex — outbound webhook payload signing
 /// (`X-Runway-Signature: sha256=<hmac>`, same scheme devpush emits).
 pub fn hmac_sha256_hex(key: &[u8], payload: &[u8]) -> String {
-    use hmac::{Hmac, Mac};
-    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(key).expect("hmac accepts any key length");
+    use hmac::{Hmac, KeyInit as _, Mac};
+    let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("hmac accepts any key length");
     mac.update(payload);
     hex::encode(mac.finalize().into_bytes())
 }

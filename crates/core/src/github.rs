@@ -572,6 +572,7 @@ impl GithubService {
 
     /// Verify `X-Hub-Signature-256`. Constant-time compare.
     pub fn verify_webhook(secret: &str, payload: &[u8], signature_header: &str) -> bool {
+        use hmac::KeyInit as _;
         let Some(sig) = signature_header.strip_prefix("sha256=") else {
             return false;
         };
@@ -599,7 +600,7 @@ mod tests {
     use super::*;
 
     fn sign(secret: &str, payload: &[u8]) -> String {
-        use hmac::Mac;
+        use hmac::{KeyInit as _, Mac};
         let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
         mac.update(payload);
         format!("sha256={}", hex::encode(mac.finalize().into_bytes()))

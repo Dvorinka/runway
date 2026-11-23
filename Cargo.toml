@@ -29,7 +29,7 @@ dotenvy = "0.15"
 futures = "0.3"
 hex = "0.4"
 hmac = "0.13"
-jsonwebtoken = "9"
+jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 lettre = { version = "0.11", default-features = false, features = [
     "builder",
     "smtp-transport",
@@ -37,13 +37,14 @@ lettre = { version = "0.11", default-features = false, features = [
 ] }
 rand = "0.10"
 regex = "1"
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.13", default-features = false, features = ["form", "json", "query", "rustls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
 sha2 = "0.11"
 sqlx = { version = "0.9", default-features = false, features = [
-    "runtime-tokio-rustls",
+    "runtime-tokio",
+    "tls-rustls-ring",
     "postgres",
     "uuid",
     "chrono",
@@ -59,6 +60,5 @@ tokio-util = { version = "0.7", features = ["codec", "io"] }
 tower-http = { version = "0.7", features = ["cors", "trace", "fs"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-tracing-log = "0.2"
 log = "0.4"
 uuid = { version = "1", features = ["v4", "serde"] }

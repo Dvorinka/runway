@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 
-use bollard::container::ListContainersOptions;
+use bollard::query_parameters::ListContainersOptions;
 use chrono::Utc;
 use serde_json::json;
 
@@ -60,12 +60,12 @@ async fn tick(ctx: &Ctx) -> anyhow::Result<()> {
     // stored container_id is stale (devpush falls back the same way).
     let containers = ctx
         .docker
-        .list_containers(Some(ListContainersOptions::<String> {
+        .list_containers(Some(ListContainersOptions {
             all: true,
-            filters: HashMap::from([(
+            filters: Some(HashMap::from([(
                 "label".to_string(),
                 vec!["runway.deployment_id".to_string()],
-            )]),
+            )])),
             ..Default::default()
         }))
         .await
@@ -189,7 +189,7 @@ async fn sweep_orphaned_containers(ctx: &Ctx) {
     }
     let containers = match ctx
         .docker
-        .list_containers(Some(ListContainersOptions::<String> {
+        .list_containers(Some(ListContainersOptions {
             all: false,
             ..Default::default()
         }))

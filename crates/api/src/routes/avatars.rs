@@ -61,9 +61,9 @@ async fn put(
         body,
     )
     .await?;
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE {table} SET has_avatar = TRUE, updated_at = now() WHERE id::text = $1"
-    ))
+    )))
     .bind(id)
     .execute(&state.db)
     .await?;
@@ -72,9 +72,9 @@ async fn put(
 
 async fn delete(state: &AppState, kind: &str, id: &str, table: &str) -> ApiResult<Response> {
     avatars::remove(std::path::Path::new(&state.settings.data_dir), kind, id).await?;
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE {table} SET has_avatar = FALSE, updated_at = now() WHERE id::text = $1"
-    ))
+    )))
     .bind(id)
     .execute(&state.db)
     .await?;

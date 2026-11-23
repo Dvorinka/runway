@@ -1,11 +1,9 @@
 //! Slug generation and token helpers, ported from devpush models.py.
 
-use rand::Rng;
-
 /// Random hex token of `n` bytes → 2n chars (token_hex(16) = 32 chars).
 pub fn token_hex(n: usize) -> String {
     let mut bytes = vec![0u8; n];
-    rand::thread_rng().fill(&mut bytes[..]);
+    rand::fill(&mut bytes[..]);
     hex::encode(bytes)
 }
 

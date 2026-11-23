@@ -1,15 +1,14 @@
 //! Password hashing — Argon2id (PHC string format) for email+password auth.
 
-use argon2::password_hash::rand_core::OsRng;
-use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+use argon2::password_hash::phc::PasswordHash;
+use argon2::password_hash::{PasswordHasher, PasswordVerifier};
 use argon2::Argon2;
 
 use crate::error::{Error, Result};
 
 pub fn hash(password: &str) -> Result<String> {
-    let salt = SaltString::generate(&mut OsRng);
     Argon2::default()
-        .hash_password(password.as_bytes(), &salt)
+        .hash_password(password.as_bytes())
         .map(|h| h.to_string())
         .map_err(|e| Error::Other(anyhow::anyhow!("{e}")))
 }

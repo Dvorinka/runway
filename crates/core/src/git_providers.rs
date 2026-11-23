@@ -60,11 +60,12 @@ pub async fn connection(
     } else {
         "id, base_url, username, token"
     };
-    let row: Option<(i64, String, String, String)> =
-        sqlx::query_as(&format!("SELECT {cols} FROM {table} WHERE id = $1"))
-            .bind(conn_id)
-            .fetch_optional(db)
-            .await?;
+    let row: Option<(i64, String, String, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {cols} FROM {table} WHERE id = $1"
+    )))
+    .bind(conn_id)
+    .fetch_optional(db)
+    .await?;
     row.map(|(id, base_url, username, token)| {
         Ok::<_, Error>(Connection {
             id,
@@ -392,7 +393,7 @@ fn split_full_name(full: &str) -> Result<(&str, &str)> {
 /// `X-Gitea-Signature` check — plain hex HMAC-SHA256 of the raw body
 /// (no `sha256=` prefix; devpush `_verify_gitea_webhook`).
 pub fn verify_gitea_signature(secret: &str, payload: &[u8], signature: &str) -> bool {
-    use hmac::{Hmac, Mac};
+    use hmac::{Hmac, KeyInit as _, Mac};
     type HmacSha256 = Hmac<sha2::Sha256>;
     let Ok(expected) = hex::decode(signature) else {
         return false;
@@ -406,7 +407,7 @@ pub fn verify_gitea_signature(secret: &str, payload: &[u8], signature: &str) -> 
 
 /// `X-Gitlab-Token` check — shared-secret equality, constant-time.
 pub fn verify_gitlab_token(secret: &str, token: &str) -> bool {
-    use hmac::{Hmac, Mac};
+    use hmac::{Hmac, KeyInit as _, Mac};
     type HmacSha256 = Hmac<sha2::Sha256>;
     // HMAC both sides to compare fixed-size digests.
     let Ok(mut a) = HmacSha256::new_from_slice(b"runway-gitlab") else {
@@ -467,7 +468,7 @@ mod tests {
 
     #[test]
     fn gitea_signature_roundtrip() {
-        use hmac::{Hmac, Mac};
+        use hmac::{Hmac, KeyInit as _, Mac};
         let payload = br#"{"ref":"refs/heads/main"}"#;
         let mut mac = Hmac::<sha2::Sha256>::new_from_slice(b"sec").unwrap();
         mac.update(payload);

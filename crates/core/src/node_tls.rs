@@ -42,6 +42,7 @@ pub fn generate_node_tls(host: &str) -> Result<NodeTlsBundle> {
     let ca_cert = ca_params
         .self_signed(&ca_key)
         .map_err(|e| Error::Crypto(format!("ca generation failed: {e}")))?;
+    let ca_issuer = rcgen::Issuer::new(ca_params, &ca_key);
 
     // CertificateParams::new parses IP SANs automatically.
     let mut server_params = CertificateParams::new(vec![host.to_string()])
@@ -52,7 +53,7 @@ pub fn generate_node_tls(host: &str) -> Result<NodeTlsBundle> {
         .push(DnType::CommonName, host);
     let server_key = new_key()?;
     let server_cert = server_params
-        .signed_by(&server_key, &ca_cert, &ca_key)
+        .signed_by(&server_key, &ca_issuer)
         .map_err(|e| Error::Crypto(format!("server cert failed: {e}")))?;
 
     let mut client_params = CertificateParams::default();
@@ -62,7 +63,7 @@ pub fn generate_node_tls(host: &str) -> Result<NodeTlsBundle> {
         .push(DnType::CommonName, "runway-node-client");
     let client_key = new_key()?;
     let client_cert = client_params
-        .signed_by(&client_key, &ca_cert, &ca_key)
+        .signed_by(&client_key, &ca_issuer)
         .map_err(|e| Error::Crypto(format!("client cert failed: {e}")))?;
 
     Ok(NodeTlsBundle {

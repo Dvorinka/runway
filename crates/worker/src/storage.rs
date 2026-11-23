@@ -13,8 +13,13 @@
 
 use std::collections::HashMap;
 
-use bollard::container::{Config, NetworkingConfig, StartContainerOptions};
-use bollard::models::{EndpointSettings, HostConfig, RestartPolicy, RestartPolicyNameEnum};
+use bollard::models::{
+    ContainerCreateBody as Config, EndpointSettings, HostConfig, NetworkingConfig, RestartPolicy,
+    RestartPolicyNameEnum,
+};
+use bollard::query_parameters::{
+    CreateContainerOptions, RemoveContainerOptions, StartContainerOptions, StopContainerOptions,
+};
 use serde_json::{json, Value};
 use sqlx::PgPool;
 
@@ -70,17 +75,14 @@ async fn remove_storage_dir(ctx: &Ctx, local_path: &std::path::Path, image: &str
     };
     match ctx
         .docker
-        .create_container(
-            None::<bollard::container::CreateContainerOptions<String>>,
-            body,
-        )
+        .create_container(None::<CreateContainerOptions>, body)
         .await
     {
         Ok(c) => {
             let id = c.id;
             let _ = ctx
                 .docker
-                .start_container(&id, None::<StartContainerOptions<String>>)
+                .start_container(&id, None::<StartContainerOptions>)
                 .await;
             let _ = crate::deploy::wait_exit(&ctx.docker, &id, 60).await;
         }
@@ -411,7 +413,7 @@ async fn start_container_with(
         },
         labels: Some(labels),
         networking_config: Some(NetworkingConfig {
-            endpoints_config: HashMap::from([(network, EndpointSettings::default())]),
+            endpoints_config: Some(HashMap::from([(network, EndpointSettings::default())])),
         }),
         host_config: Some(HostConfig {
             binds: Some(vec![format!("{}:/data", host_dir.display())]),
@@ -425,7 +427,7 @@ async fn start_container_with(
     };
     let id = dkr::create_or_replace_container(docker, &storage.container_name(), body).await?;
     docker
-        .start_container(&id, None::<StartContainerOptions<String>>)
+        .start_container(&id, None::<StartContainerOptions>)
         .await?;
     Ok(())
 }
@@ -435,13 +437,13 @@ async fn teardown_docker(ctx: &Ctx, storage: &Storage) {
     let name = storage.container_name();
     let _ = ctx
         .docker
-        .stop_container(&name, None::<bollard::container::StopContainerOptions>)
+        .stop_container(&name, None::<StopContainerOptions>)
         .await;
     let _ = ctx
         .docker
         .remove_container(
             &name,
-            Some(bollard::container::RemoveContainerOptions {
+            Some(RemoveContainerOptions {
                 force: true,
                 ..Default::default()
             }),

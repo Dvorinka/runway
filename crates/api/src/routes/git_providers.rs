@@ -57,10 +57,10 @@ async fn user_connection(
     let conn = git_providers::connection(&state.db, &state.crypto, provider, conn_id)
         .await?
         .ok_or_else(|| ApiError::not_found("connection"))?;
-    let owner: Option<i64> = sqlx::query_scalar(&format!(
+    let owner: Option<i64> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT user_id FROM {} WHERE id = $1",
         provider_table(provider)?
-    ))
+    )))
     .bind(conn_id)
     .fetch_optional(&state.db)
     .await?;
@@ -146,14 +146,14 @@ pub async fn connect(
             .clone()
             .filter(|w| !w.trim().is_empty())
             .ok_or_else(|| ApiError::bad_request("workspace required"))?;
-        sqlx::query_as(&format!(
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "INSERT INTO {table} (user_id, workspace, token, base_url)
              VALUES ($1,$2,$3,$4)
              ON CONFLICT (user_id, workspace) DO UPDATE SET
                 token = EXCLUDED.token, base_url = EXCLUDED.base_url,
                 updated_at = now()
              RETURNING id"
-        ))
+        )))
         .bind(user.user.id)
         .bind(&workspace)
         .bind(&ciphertext)
@@ -161,14 +161,14 @@ pub async fn connect(
         .fetch_one(&state.db)
         .await?
     } else {
-        sqlx::query_as(&format!(
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "INSERT INTO {table} (user_id, base_url, username, token)
              VALUES ($1,$2,$3,$4)
              ON CONFLICT (user_id, base_url) DO UPDATE SET
                 username = EXCLUDED.username, token = EXCLUDED.token,
                 updated_at = now()
              RETURNING id"
-        ))
+        )))
         .bind(user.user.id)
         .bind(&base_url)
         .bind(&username)
@@ -214,19 +214,20 @@ pub async fn list_connections(
     Path(provider): Path<String>,
 ) -> ApiResult<Response> {
     let table = provider_table(&provider)?;
-    let rows: Vec<(i64, Option<String>, String, String)> = sqlx::query_as(&format!(
-        "SELECT id, {base} AS base_url, {name} AS username, created_at::text
-         FROM {table} WHERE user_id = $1 ORDER BY id",
-        base = "base_url",
-        name = if provider == "bitbucket" {
-            "workspace"
-        } else {
-            "username"
-        },
-    ))
-    .bind(user.user.id)
-    .fetch_all(&state.db)
-    .await?;
+    let rows: Vec<(i64, Option<String>, String, String)> =
+        sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT id, {base} AS base_url, {name} AS username, created_at::text
+             FROM {table} WHERE user_id = $1 ORDER BY id",
+            base = "base_url",
+            name = if provider == "bitbucket" {
+                "workspace"
+            } else {
+                "username"
+            },
+        )))
+        .bind(user.user.id)
+        .fetch_all(&state.db)
+        .await?;
     let conns: Vec<Value> = rows
         .into_iter()
         .map(|(id, base_url, username, created_at)| {
@@ -249,17 +250,19 @@ pub async fn delete_connection(
 ) -> ApiResult<Response> {
     user_connection(&state, user.user.id, &provider, conn_id).await?;
     let table = provider_table(&provider)?;
-    sqlx::query(&format!("DELETE FROM {table} WHERE id = $1"))
-        .bind(conn_id)
-        .execute(&state.db)
-        .await
-        .map_err(|e| {
-            if e.to_string().contains("foreign key") {
-                ApiError::conflict("connection is in use by a project")
-            } else {
-                ApiError::from(e)
-            }
-        })?;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DELETE FROM {table} WHERE id = $1"
+    )))
+    .bind(conn_id)
+    .execute(&state.db)
+    .await
+    .map_err(|e| {
+        if e.to_string().contains("foreign key") {
+            ApiError::conflict("connection is in use by a project")
+        } else {
+            ApiError::from(e)
+        }
+    })?;
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 

@@ -5,10 +5,13 @@
 
 use std::collections::HashMap;
 
-use bollard::container::{
-    Config, InspectContainerOptions, NetworkingConfig, StartContainerOptions, StopContainerOptions,
+use bollard::models::{
+    ContainerCreateBody, EndpointSettings, HostConfig, NetworkingConfig, RestartPolicy,
+    RestartPolicyNameEnum,
 };
-use bollard::models::{EndpointSettings, HostConfig, RestartPolicy, RestartPolicyNameEnum};
+use bollard::query_parameters::{
+    InspectContainerOptions, RemoveContainerOptions, StartContainerOptions, StopContainerOptions,
+};
 use bollard::Docker;
 
 use crate::docker as dkr;
@@ -76,7 +79,7 @@ pub async fn ensure_cloudflared(
     tunnel_token: &str,
     network: &str,
 ) -> Result<String> {
-    let body = Config {
+    let body = ContainerCreateBody {
         image: Some(CLOUDFLARED_IMAGE.to_string()),
         cmd: Some(vec![
             "tunnel".into(),
@@ -91,7 +94,10 @@ pub async fn ensure_cloudflared(
             ("runway.name".into(), name.to_string()),
         ])),
         networking_config: Some(NetworkingConfig {
-            endpoints_config: HashMap::from([(network.to_string(), EndpointSettings::default())]),
+            endpoints_config: Some(HashMap::from([(
+                network.to_string(),
+                EndpointSettings::default(),
+            )])),
         }),
         host_config: Some(HostConfig {
             restart_policy: Some(RestartPolicy {
@@ -106,7 +112,7 @@ pub async fn ensure_cloudflared(
     dkr::pull_image(docker, CLOUDFLARED_IMAGE).await?;
     let id = dkr::create_or_replace_container(docker, name, body).await?;
     docker
-        .start_container(&id, None::<StartContainerOptions<String>>)
+        .start_container(&id, None::<StartContainerOptions>)
         .await?;
     Ok(id)
 }
@@ -124,7 +130,7 @@ pub async fn stop_cloudflared(docker: &Docker, name: &str) -> Result<()> {
             let _ = docker
                 .remove_container(
                     name,
-                    Some(bollard::container::RemoveContainerOptions {
+                    Some(RemoveContainerOptions {
                         force: true,
                         ..Default::default()
                     }),

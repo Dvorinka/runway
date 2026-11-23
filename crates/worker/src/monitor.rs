@@ -8,7 +8,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
-use bollard::container::InspectContainerOptions;
+use bollard::query_parameters::InspectContainerOptions;
 use chrono::Utc;
 use serde_json::json;
 

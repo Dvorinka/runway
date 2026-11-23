@@ -1,10 +1,15 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
-use bollard::container::{Config, CreateContainerOptions, ListContainersOptions};
 use bollard::errors::Error as BollardError;
-use bollard::models::{ContainerInspectResponse, EndpointSettings};
-use bollard::network::{ConnectNetworkOptions, CreateNetworkOptions, DisconnectNetworkOptions};
+use bollard::models::{
+    ContainerCreateBody, ContainerInspectResponse, EndpointSettings, NetworkConnectRequest,
+    NetworkCreateRequest, NetworkDisconnectRequest,
+};
+use bollard::query_parameters::{
+    CreateContainerOptions, CreateImageOptions, InspectContainerOptions, InspectNetworkOptions,
+    ListContainersOptions, RemoveContainerOptions, StatsOptions, StopContainerOptions,
+};
 use bollard::Docker;
 
 use crate::config::Settings;
@@ -51,7 +56,6 @@ pub async fn inspect_observed(
     docker: &Docker,
     container_id: &str,
 ) -> Option<(String, Option<i64>)> {
-    use bollard::container::InspectContainerOptions;
     match docker
         .inspect_container(container_id, None::<InspectContainerOptions>)
         .await
@@ -93,7 +97,7 @@ pub fn create_error_reason(err: &BollardError) -> String {
 
 pub async fn network_id(docker: &Docker, name: &str) -> Option<String> {
     docker
-        .inspect_network::<String>(name, None)
+        .inspect_network(name, None::<InspectNetworkOptions>)
         .await
         .ok()
         .and_then(|n| n.id)
@@ -111,11 +115,10 @@ pub async fn ensure_network(
     }
     labels.insert("runway.managed".into(), "true".into());
     match docker
-        .create_network(CreateNetworkOptions {
+        .create_network(NetworkCreateRequest {
             name: name.to_string(),
-            driver: "bridge".to_string(),
-            check_duplicate: true,
-            labels,
+            driver: Some("bridge".to_string()),
+            labels: Some(labels),
             ..Default::default()
         })
         .await
@@ -136,7 +139,9 @@ pub async fn remove_network_if_empty(docker: &Docker, name: &str) -> Result<()> 
     let Some(id) = network_id(docker, name).await else {
         return Ok(());
     };
-    let net = docker.inspect_network::<String>(name, None).await?;
+    let net = docker
+        .inspect_network(name, None::<InspectNetworkOptions>)
+        .await?;
     let containers = net.containers.unwrap_or_default();
     let traefik = traefik_container_id(docker).await;
     let removable = containers.keys().all(|cid| Some(cid) == traefik.as_ref());
@@ -157,7 +162,9 @@ pub async fn remove_network_if_empty(docker: &Docker, name: &str) -> Result<()> 
 /// True when the network has containers other than this process's own
 /// container attached.
 pub async fn network_has_deployments(docker: &Docker, name: &str) -> Result<bool> {
-    let net = docker.inspect_network::<String>(name, None).await?;
+    let net = docker
+        .inspect_network(name, None::<InspectNetworkOptions>)
+        .await?;
     let containers = net.containers.unwrap_or_default();
     let self_id = self_container_id();
     Ok(containers.keys().any(|cid| {
@@ -190,7 +197,7 @@ pub fn self_container_id() -> Option<String> {
 /// Id of a running service container (e.g. "traefik") by name match.
 pub async fn service_container_id(docker: &Docker, name: &str) -> Option<String> {
     let containers = docker
-        .list_containers(Some(ListContainersOptions::<String> {
+        .list_containers(Some(ListContainersOptions {
             all: false,
             ..Default::default()
         }))
@@ -212,9 +219,9 @@ pub async fn service_container_id(docker: &Docker, name: &str) -> Option<String>
 pub async fn traefik_container_id(docker: &Docker) -> Option<String> {
     let filters = HashMap::from([("label".to_string(), vec!["traefik.enable=true".to_string()])]);
     let containers = docker
-        .list_containers(Some(ListContainersOptions::<String> {
+        .list_containers(Some(ListContainersOptions {
             all: false,
-            filters,
+            filters: Some(filters),
             ..Default::default()
         }))
         .await
@@ -224,13 +231,12 @@ pub async fn traefik_container_id(docker: &Docker) -> Option<String> {
 
 /// Pull an image, draining the progress stream. Cheap when cached.
 pub async fn pull_image(docker: &Docker, image: &str) -> Result<()> {
-    use bollard::image::CreateImageOptions;
     use futures::StreamExt;
     let (from, tag) = image.rsplit_once(':').unwrap_or((image, "latest"));
     let mut stream = docker.create_image(
         Some(CreateImageOptions {
-            from_image: from.to_string(),
-            tag: tag.to_string(),
+            from_image: Some(from.to_string()),
+            tag: Some(tag.to_string()),
             ..Default::default()
         }),
         None,
@@ -238,7 +244,7 @@ pub async fn pull_image(docker: &Docker, image: &str) -> Result<()> {
     );
     while let Some(res) = stream.next().await {
         let info = res?;
-        if let Some(err) = info.error {
+        if let Some(err) = info.error_detail.and_then(|d| d.message) {
             anyhow::bail!(err);
         }
     }
@@ -250,15 +256,20 @@ pub async fn pull_image(docker: &Docker, image: &str) -> Result<()> {
 pub async fn create_or_replace_container(
     docker: &Docker,
     name: &str,
-    body: Config<String>,
+    body: ContainerCreateBody,
 ) -> crate::Result<String> {
-    match docker.inspect_container(name, None).await {
+    match docker
+        .inspect_container(name, None::<InspectContainerOptions>)
+        .await
+    {
         Ok(_) => {
-            let _ = docker.stop_container(name, None).await;
+            let _ = docker
+                .stop_container(name, None::<StopContainerOptions>)
+                .await;
             let _ = docker
                 .remove_container(
                     name,
-                    Some(bollard::container::RemoveContainerOptions {
+                    Some(RemoveContainerOptions {
                         force: true,
                         ..Default::default()
                     }),
@@ -270,9 +281,9 @@ pub async fn create_or_replace_container(
     }
     let created = docker
         .create_container(
-            Some(CreateContainerOptions::<String> {
-                name: name.to_string(),
-                platform: None,
+            Some(CreateContainerOptions {
+                name: Some(name.to_string()),
+                ..Default::default()
             }),
             body,
         )
@@ -297,9 +308,9 @@ pub async fn connect_to_network(
     docker
         .connect_network(
             network,
-            ConnectNetworkOptions {
+            NetworkConnectRequest {
                 container: container.to_string(),
-                endpoint_config: EndpointSettings::default(),
+                endpoint_config: Some(EndpointSettings::default()),
             },
         )
         .await
@@ -345,9 +356,9 @@ pub async fn disconnect_from_network(
     if let Err(e) = docker
         .disconnect_network(
             network,
-            DisconnectNetworkOptions {
+            NetworkDisconnectRequest {
                 container: container.to_string(),
-                force: true,
+                force: Some(true),
             },
         )
         .await
@@ -452,7 +463,7 @@ fn write_pem(path: &std::path::Path, pem: &str) -> Result<()> {
 /// published by any container on this daemon.
 pub async fn alloc_remote_port(docker: &Docker) -> anyhow::Result<i32> {
     let containers = docker
-        .list_containers(Some(ListContainersOptions::<String> {
+        .list_containers(Some(ListContainersOptions {
             all: true,
             ..Default::default()
         }))
@@ -485,7 +496,6 @@ pub struct StatsSnapshot {
 /// `docker stats --no-stream` equivalent. None when the container is
 /// gone or the stats call fails/times out (8s).
 pub async fn stats_snapshot(docker: &Docker, container_id: &str) -> Option<StatsSnapshot> {
-    use bollard::container::{MemoryStatsStats, StatsOptions};
     use futures::StreamExt;
 
     let mut stream = docker.stats(
@@ -501,24 +511,27 @@ pub async fn stats_snapshot(docker: &Docker, container_id: &str) -> Option<Stats
         .flatten()?;
     let s = frame.ok()?;
 
-    let cpu_delta = s
-        .cpu_stats
-        .cpu_usage
-        .total_usage
-        .saturating_sub(s.precpu_stats.cpu_usage.total_usage);
-    let sys_delta = s
-        .cpu_stats
-        .system_cpu_usage
+    let cpu = s.cpu_stats.as_ref();
+    let precpu = s.precpu_stats.as_ref();
+    let total = cpu
+        .and_then(|c| c.cpu_usage.as_ref())
+        .and_then(|u| u.total_usage)
+        .unwrap_or(0);
+    let pre_total = precpu
+        .and_then(|c| c.cpu_usage.as_ref())
+        .and_then(|u| u.total_usage)
+        .unwrap_or(0);
+    let cpu_delta = total.saturating_sub(pre_total);
+    let sys_delta = cpu
+        .and_then(|c| c.system_cpu_usage)
         .unwrap_or(0)
-        .saturating_sub(s.precpu_stats.system_cpu_usage.unwrap_or(0));
-    let ncpu = s
-        .cpu_stats
-        .online_cpus
+        .saturating_sub(precpu.and_then(|c| c.system_cpu_usage).unwrap_or(0));
+    let ncpu = cpu
+        .and_then(|c| c.online_cpus)
+        .map(u64::from)
         .or_else(|| {
-            s.cpu_stats
-                .cpu_usage
-                .percpu_usage
-                .as_ref()
+            cpu.and_then(|c| c.cpu_usage.as_ref())
+                .and_then(|u| u.percpu_usage.as_ref())
                 .map(|p| p.len() as u64)
         })
         .unwrap_or(1)
@@ -528,27 +541,28 @@ pub async fn stats_snapshot(docker: &Docker, container_id: &str) -> Option<Stats
     } else {
         0.0
     };
+    let mem = s.memory_stats.as_ref();
     // Page cache counts toward cgroup usage — v1 calls it `cache`,
     // v2 `inactive_file`. Subtract so the number reads like RSS.
-    let cache = match s.memory_stats.stats {
-        Some(MemoryStatsStats::V1(v1)) => v1.cache,
-        Some(MemoryStatsStats::V2(v2)) => v2.inactive_file,
-        None => 0,
-    };
+    let cache = mem
+        .and_then(|m| m.stats.as_ref())
+        .and_then(|st| st.get("inactive_file").or_else(|| st.get("cache")))
+        .copied()
+        .unwrap_or(0);
     let mut rx = 0u64;
     let mut tx = 0u64;
     if let Some(nets) = &s.networks {
         for n in nets.values() {
-            rx += n.rx_bytes;
-            tx += n.tx_bytes;
+            rx += n.rx_bytes.unwrap_or(0);
+            tx += n.tx_bytes.unwrap_or(0);
         }
     }
     Some(StatsSnapshot {
         cpu_pct,
-        mem_used: s.memory_stats.usage.unwrap_or(0).saturating_sub(cache),
-        mem_limit: s.memory_stats.limit.unwrap_or(0),
+        mem_used: mem.and_then(|m| m.usage).unwrap_or(0).saturating_sub(cache),
+        mem_limit: mem.and_then(|m| m.limit).unwrap_or(0),
         net_rx: rx,
         net_tx: tx,
-        pids: s.pids_stats.current.unwrap_or(0),
+        pids: s.pids_stats.as_ref().and_then(|p| p.current).unwrap_or(0),
     })
 }
