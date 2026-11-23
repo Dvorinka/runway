@@ -3,7 +3,7 @@
 //! logs (history + SSE stream).
 
 use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
@@ -852,11 +852,55 @@ pub async fn upload(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Query(q): Query<std::collections::HashMap<String, String>>,
+    headers: HeaderMap,
     body: axum::body::Body,
 ) -> ApiResult<Response> {
     const MAX_UPLOAD: u64 = 512 * 1024 * 1024; // jarvis: 512MB ceiling; revisit if monorepos hurt
 
     let project = accessible_project(&state, user.user.id, &id).await?;
+    let dry_run = q
+        .get("dry_run")
+        .is_some_and(|v| matches!(v.as_str(), "1" | "true"));
+
+    // Fail fast before streaming up to 512MB when an in-flight deployment
+    // already holds this project's target environment. If the client sent
+    // X-Runway-Upload-Sha matching the in-flight deployment (retry after an
+    // edge 504), return that deployment idempotently so the CLI can attach.
+    if !dry_run {
+        if let Some(existing) = deploy::in_flight(&state.db, &project, &project.repo_branch).await?
+        {
+            let req_sha = headers
+                .get("x-runway-upload-sha")
+                .and_then(|v| v.to_str().ok())
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            let existing_sha = existing.commit_meta.get("sha").and_then(|v| v.as_str());
+            if req_sha.is_some() && req_sha == existing_sha {
+                let mut payload = deployment_json(&state, &existing, &project);
+                if let Some(obj) = payload.as_object_mut() {
+                    obj.insert("resumed".into(), json!(true));
+                }
+                return Ok((StatusCode::OK, Json(payload)).into_response());
+            }
+            let env_slug = project
+                .environment_for_deploy(&project.repo_branch)
+                .map(|e| e.env_scope_slug().to_string())
+                .unwrap_or_else(|| "production".into());
+            return Ok((
+                StatusCode::CONFLICT,
+                Json(json!({
+                    "error": format!(
+                        "deployment {} is already in progress for environment '{env_slug}'; \
+                         attach with `runway logs {} --follow` or cancel it (`runway cancel {}`) and retry",
+                        existing.id, existing.id, existing.id
+                    ),
+                    "code": "deployment_in_progress",
+                    "deployment_id": existing.id,
+                })),
+            )
+                .into_response());
+        }
+    }
 
     let dep_id = runway_core::slugify::token_hex(16);
     let dir = std::path::Path::new(&state.settings.data_dir).join("uploads");
@@ -919,9 +963,7 @@ pub async fn upload(
 
     // `?dry_run=1` — report the resolved plan without creating a
     // deployment. Agents use this to preflight what an upload would do.
-    if q.get("dry_run")
-        .is_some_and(|v| matches!(v.as_str(), "1" | "true"))
-    {
+    if dry_run {
         let _ = tokio::fs::remove_file(&path).await;
         let mut plan = project.config.clone();
         if let (Some(dst), Some(src)) = (plan.as_object_mut(), extra.as_object()) {
@@ -946,7 +988,7 @@ pub async fn upload(
         author: user.user.username.clone(),
         timestamp: None,
     };
-    let dep = deploy::create(
+    let dep = match deploy::create(
         &state.db,
         &state.bus,
         &state.crypto,
@@ -957,7 +999,14 @@ pub async fn upload(
         Some(user.user.id),
         Some(extra),
     )
-    .await?;
+    .await
+    {
+        Ok(dep) => dep,
+        Err(e) => {
+            let _ = tokio::fs::remove_file(&path).await;
+            return Err(e.into());
+        }
+    };
     Ok((
         StatusCode::CREATED,
         Json(deployment_json(&state, &dep, &project)),

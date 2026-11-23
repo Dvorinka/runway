@@ -163,16 +163,20 @@ impl Client {
         Self::decode(self.req(reqwest::Method::DELETE, path).send().await?).await
     }
 
-    /// Raw gzip body upload (deployment tarball).
-    pub async fn upload(&self, path: &str, bytes: Vec<u8>) -> anyhow::Result<Value> {
-        Self::decode(
-            self.req(reqwest::Method::POST, path)
-                .header("content-type", "application/gzip")
-                .body(bytes)
-                .send()
-                .await?,
-        )
-        .await
+    /// Raw gzip body upload (deployment tarball) with optional idempotency SHA.
+    pub async fn upload_with_sha(
+        &self,
+        path: &str,
+        bytes: Vec<u8>,
+        sha: Option<&str>,
+    ) -> anyhow::Result<Value> {
+        let mut req = self
+            .req(reqwest::Method::POST, path)
+            .header("content-type", "application/gzip");
+        if let Some(sha) = sha {
+            req = req.header("x-runway-upload-sha", sha);
+        }
+        Self::decode(req.body(bytes).send().await?).await
     }
 
     /// Plain-text response (logs endpoint).
@@ -184,5 +188,60 @@ impl Client {
             bail!("{} {}: {}", status.as_u16(), status.as_str(), body);
         }
         Ok(body)
+    }
+}
+
+/// True when an API/network error is likely a transient edge/proxy timeout
+/// (e.g. Cloudflare 502/503/504/524 or connection reset) worth retrying.
+pub fn is_transient_error(err: &anyhow::Error) -> bool {
+    if let Some(re) = err.downcast_ref::<reqwest::Error>() {
+        if re.is_timeout() || re.is_connect() || re.is_request() || re.is_body() {
+            return true;
+        }
+    }
+    let msg = err.to_string();
+    for code in ["429 ", "502 ", "503 ", "504 ", "520 ", "522 ", "524 "] {
+        if msg.starts_with(code) {
+            return true;
+        }
+    }
+    let lower = msg.to_ascii_lowercase();
+    lower.contains("timed out")
+        || lower.contains("connection reset")
+        || lower.contains("broken pipe")
+        || lower.contains("unexpected eof")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_transient_error;
+
+    #[test]
+    fn classifies_edge_timeouts_as_transient() {
+        assert!(is_transient_error(&anyhow::anyhow!(
+            "504 504: Gateway Time-out"
+        )));
+        assert!(is_transient_error(&anyhow::anyhow!("502 502: Bad Gateway")));
+        assert!(is_transient_error(&anyhow::anyhow!(
+            "503 503: Service Unavailable"
+        )));
+        assert!(is_transient_error(&anyhow::anyhow!(
+            "524 524: A Timeout Occurred"
+        )));
+        assert!(is_transient_error(&anyhow::anyhow!(
+            "429 429: Too Many Requests"
+        )));
+        assert!(is_transient_error(&anyhow::anyhow!(
+            "connection reset by peer"
+        )));
+        assert!(!is_transient_error(&anyhow::anyhow!(
+            "409 409: deployment already in progress"
+        )));
+        assert!(!is_transient_error(&anyhow::anyhow!(
+            "400 400: empty upload body"
+        )));
+        assert!(!is_transient_error(&anyhow::anyhow!(
+            "401 401: unauthorized"
+        )));
     }
 }
