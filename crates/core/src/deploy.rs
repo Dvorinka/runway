@@ -133,6 +133,26 @@ pub async fn enqueue(db: &PgPool, kind: &str, payload: Value, defer_seconds: i64
     Ok(id)
 }
 
+/// Return any currently in-flight deployment for `project` + `branch`'s
+/// resolved environment, if one exists.
+pub async fn in_flight(db: &PgPool, project: &Project, branch: &str) -> Result<Option<Deployment>> {
+    let environment = project
+        .environment_for_deploy(branch)
+        .ok_or_else(|| Error::Validation(format!("no environment matches branch '{branch}'")))?;
+    let existing: Option<Deployment> = sqlx::query_as(
+        "SELECT * FROM deployment
+         WHERE project_id = $1 AND environment_id = $2
+           AND conclusion IS NULL AND status IN ('prepare','deploy')
+         ORDER BY created_at DESC
+         LIMIT 1",
+    )
+    .bind(&project.id)
+    .bind(&environment.id)
+    .fetch_optional(db)
+    .await?;
+    Ok(existing)
+}
+
 /// Create a deployment row + enqueue `start_deployment`.
 /// Port of DeploymentService.create (branch→env mapping, config snapshot).
 #[allow(clippy::too_many_arguments)]
@@ -153,21 +173,14 @@ pub async fn create(
 
     // One in-flight deployment per project+environment. A retried upload
     // after an edge 504 would otherwise race two runners on the same env.
-    let in_flight: Option<(String,)> = sqlx::query_as(
-        "SELECT id FROM deployment
-         WHERE project_id = $1 AND environment_id = $2
-           AND conclusion IS NULL AND status IN ('prepare','deploy')
-         LIMIT 1",
-    )
-    .bind(&project.id)
-    .bind(&environment.id)
-    .fetch_optional(db)
-    .await?;
-    if let Some((existing,)) = in_flight {
-        return Err(Error::Validation(format!(
-            "deployment {existing} is already in progress for environment \
-             '{}'; wait for it, or cancel it (`runway cancel`) and retry",
-            environment.env_scope_slug()
+    if let Some(existing) = in_flight(db, project, branch).await? {
+        return Err(Error::Conflict(format!(
+            "deployment {} is already in progress for environment \
+             '{}'; wait for it (`runway logs {} --follow`), or cancel it (`runway cancel {}`) and retry",
+            existing.id,
+            environment.env_scope_slug(),
+            existing.id,
+            existing.id
         )));
     }
 

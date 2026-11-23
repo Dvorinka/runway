@@ -321,7 +321,12 @@ pub async fn status(json_out: bool) -> anyhow::Result<()> {
 }
 
 /// `runway redeploy [id]` — new deployment from the same source.
-pub async fn redeploy(deployment: Option<String>, follow: bool) -> anyhow::Result<()> {
+pub async fn redeploy(
+    deployment: Option<String>,
+    wait: bool,
+    logs: bool,
+    follow: bool,
+) -> anyhow::Result<()> {
     let client = Client::from_config()?;
     let id = match deployment {
         Some(id) => id,
@@ -332,8 +337,11 @@ pub async fn redeploy(deployment: Option<String>, follow: bool) -> anyhow::Resul
         .await?;
     let new_id = res["id"].as_str().context("no deployment id in response")?;
     println!("Redeployed as {new_id}");
-    if follow {
-        follow_deployment(&client, new_id).await?;
+    let stream_logs = logs || follow;
+    if wait || stream_logs {
+        watch_deployment(&client, new_id, stream_logs, false).await?;
+    } else {
+        println!("Track progress with `runway deploy --wait --deployment {new_id}` or `runway logs {new_id} --follow`.");
     }
     Ok(())
 }
@@ -395,15 +403,38 @@ pub async fn link(project: Option<String>) -> anyhow::Result<()> {
 }
 
 /// `runway deploy` — tar the current directory and upload-deploy it.
+/// Returns immediately with the queued deployment id unless `--wait`,
+/// `--logs`, or `--follow` is requested. Pass `--deployment <id>` to
+/// re-attach without uploading.
+#[allow(clippy::too_many_arguments)]
 pub async fn deploy(
+    wait: bool,
+    logs: bool,
     follow: bool,
+    deployment: Option<String>,
     dry_run: bool,
     root: Option<std::path::PathBuf>,
+    json_out: bool,
 ) -> anyhow::Result<()> {
     let client = Client::from_config()?;
+    let stream_logs = logs || follow;
+    let should_wait = wait || stream_logs;
+
+    if let Some(dep_id) = deployment {
+        anyhow::ensure!(!dry_run, "--deployment cannot be combined with --dry-run");
+        let started = std::time::Instant::now();
+        let final_dep = watch_deployment(&client, &dep_id, stream_logs, json_out).await?;
+        if json_out {
+            print_json(&final_dep)?;
+        } else {
+            println!("done in {}s", started.elapsed().as_secs());
+        }
+        return Ok(());
+    }
+
     let link = match client::load_link() {
         Ok(l) => l,
-        Err(e) if std::io::stdin().is_terminal() => {
+        Err(e) if std::io::stdin().is_terminal() && !json_out => {
             println!("This directory is not linked to a project yet.");
             if !confirm_yes("Create a new upload-based project from this directory?")? {
                 bail!("{e} — or run `runway create <name>` first");
@@ -422,7 +453,7 @@ pub async fn deploy(
             .await?;
             client::load_link()?
         }
-        Err(_) if !std::io::stdin().is_terminal() => {
+        Err(_) if !std::io::stdin().is_terminal() || json_out => {
             bail!("no linked project — run `runway link <project-id>` or `runway create <name>`");
         }
         Err(e) => bail!("{e} — run `runway create <name>` first"),
@@ -431,40 +462,120 @@ pub async fn deploy(
     let tarball = pack_dir(root.as_deref())?;
     if dry_run {
         let plan = client
-            .upload(
+            .upload_with_sha(
                 &format!(
                     "/api/v1/projects/{}/deployments/upload?dry_run=1",
                     link.project_id
                 ),
                 tarball,
+                None,
             )
             .await?;
         println!("{}", serde_json::to_string_pretty(&plan)?);
         return Ok(());
     }
-    println!(
-        "Uploading {} bytes to project {} ...",
-        tarball.len(),
-        link.project_id
-    );
-    let dep = client
-        .upload(
-            &format!("/api/v1/projects/{}/deployments/upload", link.project_id),
-            tarball,
-        )
-        .await?;
+
+    let upload_sha = {
+        use sha2::Digest;
+        let mut h = sha2::Sha256::new();
+        h.update(&tarball);
+        hex::encode(h.finalize())[..40].to_string()
+    };
+
+    if !json_out {
+        println!(
+            "Uploading {} bytes to project {} ...",
+            tarball.len(),
+            link.project_id
+        );
+    }
+    let upload_path = format!("/api/v1/projects/{}/deployments/upload", link.project_id);
+    let dep = match client
+        .upload_with_sha(&upload_path, tarball, Some(&upload_sha))
+        .await
+    {
+        Ok(dep) => dep,
+        Err(err) if client::is_transient_error(&err) => {
+            // Edge proxies (e.g. Cloudflare 504/524) can drop the response
+            // after the origin already queued the deployment. Probe recent
+            // project deployments for our tarball SHA before failing.
+            if let Some(recovered) =
+                recover_uploaded_deployment(&client, &link.project_id, &upload_sha).await
+            {
+                if !json_out {
+                    eprintln!(
+                        "Upload hit transient edge error ({err}); recovered deployment {}",
+                        recovered["id"].as_str().unwrap_or("?")
+                    );
+                }
+                recovered
+            } else {
+                return Err(err).context(
+                    "upload interrupted by transient edge error; check `runway deployments` \
+                     before retrying, or re-attach with `runway logs <id> --follow`",
+                );
+            }
+        }
+        Err(err) => return Err(err),
+    };
+
     let dep_id = dep["id"].as_str().context("no deployment id in response")?;
     let url = dep["urls"]["immutable"].as_str().unwrap_or("");
-    println!("Deployment {dep_id} queued — https://{url}");
+    let resumed = dep["resumed"].as_bool().unwrap_or(false);
+    if !json_out {
+        if resumed {
+            println!("Deployment {dep_id} already in progress — https://{url}");
+        } else {
+            println!("Deployment {dep_id} queued — https://{url}");
+        }
+    }
 
-    if follow {
+    if should_wait {
         let started = std::time::Instant::now();
-        follow_deployment(&client, dep_id).await?;
-        println!("done in {}s", started.elapsed().as_secs());
+        let final_dep = watch_deployment(&client, dep_id, stream_logs, json_out).await?;
+        if json_out {
+            print_json(&final_dep)?;
+        } else {
+            println!("done in {}s", started.elapsed().as_secs());
+        }
+    } else if json_out {
+        print_json(&dep)?;
     } else {
-        println!("Stream logs with `runway logs --follow` (or re-run with --follow).");
+        println!(
+            "Track with `runway deploy --wait --deployment {dep_id}` or stream logs with `runway logs {dep_id} --follow`."
+        );
     }
     Ok(())
+}
+
+/// After a transient upload error (502/503/504/524), look up the project's
+/// recent deployments for one matching `upload_sha` so the CLI can recover.
+async fn recover_uploaded_deployment(
+    client: &Client,
+    project_id: &str,
+    upload_sha: &str,
+) -> Option<Value> {
+    for attempt in 0..3u64 {
+        if attempt > 0 {
+            tokio::time::sleep(std::time::Duration::from_secs(attempt * 2)).await;
+        }
+        if let Ok(res) = client
+            .get(&format!(
+                "/api/v1/projects/{project_id}/deployments?limit=5"
+            ))
+            .await
+        {
+            if let Some(found) = res["deployments"].as_array().and_then(|arr| {
+                arr.iter().find(|d| {
+                    d["commit_meta"]["sha"].as_str() == Some(upload_sha)
+                        || d["commit"]["sha"].as_str() == Some(upload_sha)
+                })
+            }) {
+                return Some(found.clone());
+            }
+        }
+    }
+    None
 }
 
 /// `runway logs [deployment-id] [--follow] [--project]`.
@@ -488,14 +599,34 @@ pub async fn logs(deployment: Option<String>, follow: bool, project: bool) -> an
     if !follow {
         return Ok(());
     }
+    let mut transient_errors = 0u32;
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        printed = print_logs(&client, &dep_id, printed, false).await?;
+        printed = print_logs(&client, &dep_id, printed, false)
+            .await
+            .unwrap_or(printed);
         // Terminal signal is `conclusion` — status='completed' covers
         // succeeded AND failed (devpush lifecycle semantics).
-        let dep = client.get(&format!("/api/v1/deployments/{dep_id}")).await?;
+        let dep = match client.get(&format!("/api/v1/deployments/{dep_id}")).await {
+            Ok(d) => {
+                transient_errors = 0;
+                d
+            }
+            Err(e) if client::is_transient_error(&e) && transient_errors < 6 => {
+                transient_errors += 1;
+                eprintln!(
+                    "warn: transient edge error polling {dep_id} ({e}); retrying ({transient_errors}/6)..."
+                );
+                tokio::time::sleep(std::time::Duration::from_secs(
+                    (2u64 << transient_errors.min(3)).min(16),
+                ))
+                .await;
+                continue;
+            }
+            Err(e) => return Err(e),
+        };
         if let Some(conclusion) = dep["conclusion"].as_str() {
-            let _ = print_logs(&client, &dep_id, printed, false).await?;
+            let _ = print_logs(&client, &dep_id, printed, false).await;
             println!("-- deployment concluded: {conclusion}");
             break;
         }
@@ -1639,16 +1770,44 @@ async fn print_logs(
     Ok(lines.len())
 }
 
-/// Poll a deployment until terminal status, streaming new log lines and
-/// printing transitions (Vercel-style `deploy` output).
-async fn follow_deployment(client: &Client, dep_id: &str) -> anyhow::Result<()> {
+/// Poll a deployment until terminal status, optionally streaming new log
+/// lines and printing status transitions. Tolerates transient edge/proxy
+/// timeouts (502/503/504/524) with backoff instead of aborting mid-build.
+async fn watch_deployment(
+    client: &Client,
+    dep_id: &str,
+    stream_logs: bool,
+    quiet: bool,
+) -> anyhow::Result<Value> {
     let mut last = String::new();
     let mut printed = 0usize;
+    let mut transient_errors = 0u32;
     loop {
-        printed = print_logs(client, dep_id, printed, true)
-            .await
-            .unwrap_or(printed);
-        let dep = client.get(&format!("/api/v1/deployments/{dep_id}")).await?;
+        if stream_logs && !quiet {
+            printed = print_logs(client, dep_id, printed, true)
+                .await
+                .unwrap_or(printed);
+        }
+        let dep = match client.get(&format!("/api/v1/deployments/{dep_id}")).await {
+            Ok(dep) => {
+                transient_errors = 0;
+                dep
+            }
+            Err(e) if client::is_transient_error(&e) && transient_errors < 6 => {
+                transient_errors += 1;
+                if !quiet {
+                    eprintln!(
+                        "warn: transient edge error polling {dep_id} ({e}); retrying ({transient_errors}/6)..."
+                    );
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(
+                    (2u64 << transient_errors.min(3)).min(16),
+                ))
+                .await;
+                continue;
+            }
+            Err(e) => return Err(e),
+        };
         let status = dep["status"].as_str().unwrap_or("?").to_string();
         let computed = dep["computed_status"].as_str().unwrap_or("");
         let label = if computed.is_empty() || computed == "unknown" || computed == status {
@@ -1656,23 +1815,30 @@ async fn follow_deployment(client: &Client, dep_id: &str) -> anyhow::Result<()> 
         } else {
             format!("{status} ({computed})")
         };
-        if label != last {
+        if !quiet && label != last {
             println!("status: {label}");
             last = label;
         }
         match dep["conclusion"].as_str() {
             Some("succeeded") => {
-                let env = dep["urls"]["environment"].as_str().unwrap_or("");
-                let imm = dep["urls"]["immutable"].as_str().unwrap_or("");
-                if !env.is_empty() && env != imm {
-                    println!("Live at https://{env} (immutable: https://{imm})");
-                } else {
-                    println!("Live at https://{imm}");
+                if !quiet {
+                    if stream_logs {
+                        let _ = print_logs(client, dep_id, printed, true).await;
+                    }
+                    let env = dep["urls"]["environment"].as_str().unwrap_or("");
+                    let imm = dep["urls"]["immutable"].as_str().unwrap_or("");
+                    if !env.is_empty() && env != imm {
+                        println!("Live at https://{env} (immutable: https://{imm})");
+                    } else {
+                        println!("Live at https://{imm}");
+                    }
                 }
-                return Ok(());
+                return Ok(dep);
             }
             Some(other) => {
-                let _ = print_logs(client, dep_id, printed, true).await;
+                if stream_logs && !quiet {
+                    let _ = print_logs(client, dep_id, printed, true).await;
+                }
                 let err = dep["error"]["message"]
                     .as_str()
                     .or(dep["error"].as_str())

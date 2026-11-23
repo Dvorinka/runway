@@ -16,6 +16,7 @@ anyhow.workspace = true
 axum.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
+hex.workspace = true
 reqwest.workspace = true
 rpassword = "7.5.4"
 runway-api = { path = "../api" }
@@ -24,6 +25,7 @@ runway-worker = { path = "../worker" }
 serde.workspace = true
 chrono.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 sqlx.workspace = true
 tokio.workspace = true
 tracing.workspace = true

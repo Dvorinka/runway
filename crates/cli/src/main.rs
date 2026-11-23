@@ -35,10 +35,23 @@ enum Command {
         password: Option<String>,
     },
     /// Deploy the current directory (upload tarball to the linked project).
+    /// Returns immediately with the queued deployment ID unless --wait,
+    /// --logs, or --follow is passed.
     Deploy {
-        /// Stream build logs until the deployment settles (default: on; pass --follow=false to disable).
-        #[arg(long, default_value_t = true, num_args = 0..=1, default_missing_value = "true", action = clap::ArgAction::Set)]
+        /// Poll deployment status until it settles (no build log stream).
+        #[arg(long)]
+        wait: bool,
+        /// Stream build logs until the deployment settles (implies --wait).
+        #[arg(long)]
+        logs: bool,
+        /// Stream build logs until the deployment settles (alias for --logs;
+        /// accepts --follow=false for scripts).
+        #[arg(long, default_value_t = false, num_args = 0..=1, default_missing_value = "true", action = clap::ArgAction::Set)]
         follow: bool,
+        /// Re-attach --wait / --logs / --follow to an existing deployment ID
+        /// instead of uploading a new tarball.
+        #[arg(long, value_name = "ID")]
+        deployment: Option<String>,
         /// Resolve the plan server-side (preset, env, config) without deploying.
         #[arg(long)]
         dry_run: bool,
@@ -47,6 +60,9 @@ enum Command {
         /// subtree server-side (Vercel parity).
         #[arg(long, value_name = "DIR")]
         root: Option<std::path::PathBuf>,
+        /// Print machine-readable JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// Instance + auth + link preflight — exits non-zero on failures.
     Doctor {
@@ -58,7 +74,13 @@ enum Command {
     Redeploy {
         /// Deployment ID (defaults to the latest of the linked project).
         deployment: Option<String>,
-        /// Stream build logs until the deployment settles (default: on; pass --follow=false to disable).
+        /// Poll deployment status until it settles (no build log stream).
+        #[arg(long)]
+        wait: bool,
+        /// Stream build logs until the deployment settles.
+        #[arg(long)]
+        logs: bool,
+        /// Stream build logs until the deployment settles (default: on; pass --follow=false to return immediately).
         #[arg(long, default_value_t = true, num_args = 0..=1, default_missing_value = "true", action = clap::ArgAction::Set)]
         follow: bool,
     },
@@ -368,15 +390,24 @@ async fn main() -> anyhow::Result<()> {
                 other => anyhow::bail!("unknown shell: {other} (bash|zsh|fish|powershell|elvish)"),
             }
         }
-        Command::Redeploy { deployment, follow } => commands::redeploy(deployment, follow).await?,
+        Command::Redeploy {
+            deployment,
+            wait,
+            logs,
+            follow,
+        } => commands::redeploy(deployment, wait, logs, follow).await?,
         Command::Create { name, preset } => {
             commands::create(name, preset).await?;
         }
         Command::Deploy {
+            wait,
+            logs,
             follow,
+            deployment,
             dry_run,
             root,
-        } => commands::deploy(follow, dry_run, root).await?,
+            json,
+        } => commands::deploy(wait, logs, follow, deployment, dry_run, root, json).await?,
         Command::Doctor { json } => commands::doctor(json).await?,
         Command::Logs {
             deployment,
@@ -543,4 +574,69 @@ async fn allowlist_add(
         println!("allowlist rule {}: {ty}:{value}", id.0);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deploy_defaults_to_async_and_supports_wait_logs_follow() {
+        let cli = Cli::try_parse_from(["runway", "deploy"]).unwrap();
+        match cli.command {
+            Command::Deploy {
+                wait,
+                logs,
+                follow,
+                deployment,
+                dry_run,
+                root,
+                json,
+            } => {
+                assert!(!wait);
+                assert!(!logs);
+                assert!(!follow);
+                assert!(deployment.is_none());
+                assert!(!dry_run);
+                assert!(root.is_none());
+                assert!(!json);
+            }
+            _ => panic!("expected Deploy"),
+        }
+
+        let cli = Cli::try_parse_from(["runway", "deploy", "--wait", "--json"]).unwrap();
+        match cli.command {
+            Command::Deploy {
+                wait,
+                logs,
+                follow,
+                json,
+                ..
+            } => {
+                assert!(wait);
+                assert!(!logs);
+                assert!(!follow);
+                assert!(json);
+            }
+            _ => panic!("expected Deploy"),
+        }
+
+        let cli =
+            Cli::try_parse_from(["runway", "deploy", "--logs", "--deployment", "abc123"]).unwrap();
+        match cli.command {
+            Command::Deploy {
+                logs, deployment, ..
+            } => {
+                assert!(logs);
+                assert_eq!(deployment.as_deref(), Some("abc123"));
+            }
+            _ => panic!("expected Deploy"),
+        }
+
+        let cli = Cli::try_parse_from(["runway", "deploy", "--follow"]).unwrap();
+        assert!(matches!(cli.command, Command::Deploy { follow: true, .. }));
+
+        let cli = Cli::try_parse_from(["runway", "deploy", "--follow=false"]).unwrap();
+        assert!(matches!(cli.command, Command::Deploy { follow: false, .. }));
+    }
 }
