@@ -7,12 +7,16 @@
 
 use std::collections::HashMap;
 
-use bollard::container::{
-    Config as ContainerConfig, InspectContainerOptions, ListContainersOptions, LogsOptions,
-    NetworkingConfig, RemoveContainerOptions, StartContainerOptions, StopContainerOptions,
+use bollard::models::{
+    ContainerCreateBody as ContainerConfig, EndpointSettings, HostConfig, MountType,
+    NetworkingConfig, RestartPolicy, RestartPolicyNameEnum, VolumeCreateRequest,
 };
-use bollard::models::{EndpointSettings, HostConfig, RestartPolicy, RestartPolicyNameEnum};
-use bollard::volume::CreateVolumeOptions;
+use bollard::query_parameters::{
+    BuildImageOptions, CreateImageOptions, DownloadFromContainerOptions, InspectContainerOptions,
+    ListContainersOptions, LogsOptions, RemoveContainerOptions, RemoveImageOptions,
+    RemoveVolumeOptions, StartContainerOptions, StopContainerOptions, UploadToContainerOptions,
+    WaitContainerOptions,
+};
 use futures::StreamExt;
 use serde_json::json;
 
@@ -140,12 +144,12 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
     let mut binds: Vec<String> = vec![];
     let cache_volume = format!("runway-cache-{}", &project.id[..12.min(project.id.len())]);
     let _ = docker
-        .create_volume(CreateVolumeOptions {
-            name: cache_volume.clone(),
-            labels: HashMap::from([
+        .create_volume(VolumeCreateRequest {
+            name: Some(cache_volume.clone()),
+            labels: Some(HashMap::from([
                 ("runway.project_id".into(), project.id.clone()),
                 ("runway.cache".into(), "dependencies".into()),
-            ]),
+            ])),
             ..Default::default()
         })
         .await;
@@ -630,12 +634,12 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
         ] {
             let vol = format!("{base}-{suffix}");
             let _ = docker
-                .create_volume(CreateVolumeOptions {
-                    name: vol.clone(),
-                    labels: HashMap::from([
+                .create_volume(VolumeCreateRequest {
+                    name: Some(vol.clone()),
+                    labels: Some(HashMap::from([
                         ("runway.project_id".into(), project.id.clone()),
                         ("runway.cache".into(), format!("build-{suffix}")),
-                    ]),
+                    ])),
                     ..Default::default()
                 })
                 .await;
@@ -849,10 +853,10 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
                     ("runway.role".into(), "build".into()),
                 ])),
                 networking_config: Some(NetworkingConfig {
-                    endpoints_config: HashMap::from([(
+                    endpoints_config: Some(HashMap::from([(
                         workspace_network.clone(),
                         EndpointSettings::default(),
-                    )]),
+                    )])),
                 }),
                 host_config: Some(HostConfig {
                     restart_policy: Some(RestartPolicy {
@@ -893,7 +897,7 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
                     Err(e) => return Err(e.into()),
                 };
             docker
-                .start_container(&build_id, None::<StartContainerOptions<String>>)
+                .start_container(&build_id, None::<StartContainerOptions>)
                 .await?;
             spawn_log_tailer(ctx, build_id.clone(), deployment_id.clone());
             log("Building static output...").await;
@@ -1030,7 +1034,7 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
                 env: Some(serve_env),
                 labels: Some(labels),
                 networking_config: Some(NetworkingConfig {
-                    endpoints_config: serve_endpoints.clone(),
+                    endpoints_config: Some(serve_endpoints.clone()),
                 }),
                 host_config: Some(host_config),
                 ..Default::default()
@@ -1088,7 +1092,7 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
                     vec![bollard::models::Mount {
                         target: Some("/srv".into()),
                         source: Some(vol),
-                        typ: Some(bollard::models::MountTypeEnum::VOLUME),
+                        typ: Some(MountType::VOLUME),
                         read_only: Some(true),
                         ..Default::default()
                     }],
@@ -1100,7 +1104,7 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
                 env: Some(serve_env),
                 labels: Some(labels),
                 networking_config: Some(NetworkingConfig {
-                    endpoints_config: serve_endpoints.clone(),
+                    endpoints_config: Some(serve_endpoints.clone()),
                 }),
                 host_config: Some(HostConfig {
                     binds: if serve_binds.is_empty() {
@@ -1142,7 +1146,7 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
             },
             labels: Some(labels),
             networking_config: Some(NetworkingConfig {
-                endpoints_config: serve_endpoints,
+                endpoints_config: Some(serve_endpoints),
             }),
             host_config: Some(host_config),
             cmd: if docker_build {
@@ -1175,7 +1179,7 @@ async fn run_pipeline(ctx: &Ctx, deployment: &Deployment, project: &Project) -> 
     };
 
     docker
-        .start_container(&container_id, None::<StartContainerOptions<String>>)
+        .start_container(&container_id, None::<StartContainerOptions>)
         .await?;
 
     sqlx::query("UPDATE deployment SET container_id = $1 WHERE id = $2")
@@ -1344,7 +1348,7 @@ pub async fn wait_exit(
     timeout_secs: u64,
 ) -> anyhow::Result<i64> {
     use std::time::Duration;
-    let mut stream = docker.wait_container::<String>(id, None);
+    let mut stream = docker.wait_container(id, None::<WaitContainerOptions>);
     let code = tokio::time::timeout(Duration::from_secs(timeout_secs.max(1)), async {
         match stream.next().await {
             Some(res) => anyhow::Ok(res?.status_code),
@@ -1385,12 +1389,11 @@ fn is_local_image(image: &str) -> bool {
 }
 
 pub async fn pull_image(docker: &bollard::Docker, image: &str) -> anyhow::Result<()> {
-    use bollard::image::CreateImageOptions;
     let (from, tag) = image.rsplit_once(':').unwrap_or((image, "latest"));
     let mut stream = docker.create_image(
         Some(CreateImageOptions {
-            from_image: from.to_string(),
-            tag: tag.to_string(),
+            from_image: Some(from.to_string()),
+            tag: Some(tag.to_string()),
             ..Default::default()
         }),
         None,
@@ -1398,7 +1401,7 @@ pub async fn pull_image(docker: &bollard::Docker, image: &str) -> anyhow::Result
     );
     while let Some(res) = stream.next().await {
         let info = res?;
-        if let Some(err) = info.error {
+        if let Some(err) = info.error_detail.and_then(|d| d.message) {
             anyhow::bail!(err);
         }
     }
@@ -1412,7 +1415,7 @@ pub async fn pull_image(docker: &bollard::Docker, image: &str) -> anyhow::Result
 fn spawn_log_tailer(ctx: &Ctx, container_id: String, deployment_id: String) {
     let ctx = ctx.clone();
     tokio::spawn(async move {
-        let mut stream = ctx.docker.logs::<String>(
+        let mut stream = ctx.docker.logs(
             &container_id,
             Some(LogsOptions {
                 follow: true,
@@ -2017,7 +2020,7 @@ pub async fn delete_container(ctx: &Ctx, deployment_id: &str) -> anyhow::Result<
     let Some(container_id) = &deployment.container_id else {
         if let Some(volume) = &static_volume {
             let _ = docker
-                .remove_volume(volume, None::<bollard::volume::RemoveVolumeOptions>)
+                .remove_volume(volume, None::<RemoveVolumeOptions>)
                 .await;
         }
         return Ok(());
@@ -2071,7 +2074,7 @@ pub async fn delete_container(ctx: &Ctx, deployment_id: &str) -> anyhow::Result<
     }
     if let Some(volume) = &static_volume {
         let _ = docker
-            .remove_volume(volume, None::<bollard::volume::RemoveVolumeOptions>)
+            .remove_volume(volume, None::<RemoveVolumeOptions>)
             .await;
     }
     Ok(())
@@ -2552,7 +2555,7 @@ where
         .await
         .map_err(|e| anyhow::anyhow!("fetch container: {e}"))?;
     docker
-        .start_container(&fetch_id, None::<StartContainerOptions<String>>)
+        .start_container(&fetch_id, None::<StartContainerOptions>)
         .await?;
     spawn_log_tailer(ctx, fetch_id.clone(), deployment_id.clone());
     let exit = wait_exit(docker, &fetch_id, ctx.settings.deployment_timeout_seconds).await;
@@ -2657,20 +2660,20 @@ where
     Fut: std::future::Future<Output = ()>,
 {
     let mut stream = docker.build_image(
-        bollard::image::BuildImageOptions::<String> {
+        BuildImageOptions {
             dockerfile: dockerfile.to_string(),
-            t: tag.to_string(),
+            t: Some(tag.to_string()),
             rm: true,
             forcerm: true,
-            buildargs,
-            labels: HashMap::from([
+            buildargs: Some(buildargs),
+            labels: Some(HashMap::from([
                 ("runway.deployment_id".into(), deployment_id.to_string()),
                 ("runway.project_id".into(), project_id.to_string()),
-            ]),
+            ])),
             ..Default::default()
         },
         None,
-        Some(tar.into()),
+        Some(bollard::body_full(tar.into())),
     );
     let collect = async {
         while let Some(item) = stream.next().await {
@@ -2680,7 +2683,7 @@ where
                     log(line).await;
                 }
             }
-            if let Some(err) = info.error {
+            if let Some(err) = info.error_detail.and_then(|d| d.message) {
                 anyhow::bail!("image build failed: {err}");
             }
         }
@@ -3040,7 +3043,7 @@ async fn drop_artifacts(ctx: &Ctx, dep: &Deployment) {
         .docker
         .remove_image(
             &format!("runway-dep-{}:latest", &dep.id[..12.min(dep.id.len())]),
-            None,
+            None::<RemoveImageOptions>,
             None,
         )
         .await;
@@ -3077,7 +3080,7 @@ pub async fn reconcile_edge_network(
         // Startup pass: scan all containers for the label.
         let containers = ctx
             .docker
-            .list_containers(Some(ListContainersOptions::<String> {
+            .list_containers(Some(ListContainersOptions {
                 all: true,
                 ..Default::default()
             }))
@@ -3169,7 +3172,9 @@ async fn download_container_dir(
 ) -> anyhow::Result<()> {
     let mut stream = docker.download_from_container(
         container,
-        Some(bollard::container::DownloadFromContainerOptions { path }),
+        Some(DownloadFromContainerOptions {
+            path: path.to_string(),
+        }),
     );
     let mut bytes = Vec::new();
     while let Some(chunk) = stream.next().await {
@@ -3225,8 +3230,8 @@ async fn download_static_out(
 ) -> anyhow::Result<()> {
     let mut stream = docker.download_from_container(
         container,
-        Some(bollard::container::DownloadFromContainerOptions {
-            path: "/app/.runway-out",
+        Some(DownloadFromContainerOptions {
+            path: "/app/.runway-out".to_string(),
         }),
     );
     let mut bytes = Vec::new();
@@ -3292,8 +3297,8 @@ async fn ship_static_volume(
     runner_image: &str,
 ) -> anyhow::Result<()> {
     docker
-        .create_volume(bollard::volume::CreateVolumeOptions {
-            name: volume,
+        .create_volume(VolumeCreateRequest {
+            name: Some(volume.to_string()),
             ..Default::default()
         })
         .await?;
@@ -3354,7 +3359,7 @@ async fn ship_static_volume(
                 mounts: Some(vec![bollard::models::Mount {
                     target: Some("/srv".into()),
                     source: Some(volume.to_string()),
-                    typ: Some(bollard::models::MountTypeEnum::VOLUME),
+                    typ: Some(MountType::VOLUME),
                     ..Default::default()
                 }]),
                 ..Default::default()
@@ -3364,16 +3369,16 @@ async fn ship_static_volume(
     )
     .await?;
     docker
-        .start_container(&id, None::<StartContainerOptions<String>>)
+        .start_container(&id, None::<StartContainerOptions>)
         .await?;
     let shipped = docker
         .upload_to_container(
             &id,
-            Some(bollard::container::UploadToContainerOptions {
-                path: "/srv",
+            Some(UploadToContainerOptions {
+                path: "/srv".to_string(),
                 ..Default::default()
             }),
-            payload.into(),
+            bollard::body_full(payload.into()),
         )
         .await;
     let _ = docker

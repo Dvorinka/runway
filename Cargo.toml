@@ -15,35 +15,36 @@ license = "MIT"
 repository = "https://github.com/Dvorinka/runway"
 
 [workspace.dependencies]
-aes-gcm = "0.10"
+aes-gcm = "0.11"
 anyhow = "1"
-argon2 = "0.5"
+argon2 = "0.6"
 axum = "0.8"
-axum-extra = { version = "0.10", features = ["cookie"] }
-base64 = "0.22"
-bollard = { version = "0.18", features = ["ssl"] }
+axum-extra = { version = "0.12", features = ["cookie"] }
+base64 = "0.23"
+bollard = { version = "0.21", features = ["ssl"] }
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive", "env"] }
 clap_complete = "4"
 dotenvy = "0.15"
 futures = "0.3"
 hex = "0.4"
-hmac = "0.12"
+hmac = "0.13"
 jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 lettre = { version = "0.11", default-features = false, features = [
     "builder",
     "smtp-transport",
     "tokio1-native-tls",
 ] }
-rand = "0.8"
+rand = "0.10"
 regex = "1"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.13", default-features = false, features = ["form", "json", "query", "rustls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
-sha2 = "0.10"
-sqlx = { version = "0.8", default-features = false, features = [
-    "runtime-tokio-rustls",
+sha2 = "0.11"
+sqlx = { version = "0.9", default-features = false, features = [
+    "runtime-tokio",
+    "tls-rustls-ring",
     "postgres",
     "uuid",
     "chrono",
@@ -56,9 +57,8 @@ time = "0.3"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 tokio-util = { version = "0.7", features = ["codec", "io"] }
-tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
+tower-http = { version = "0.7", features = ["cors", "trace", "fs"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-tracing-log = "0.2"
 log = "0.4"
 uuid = { version = "1", features = ["v4", "serde"] }

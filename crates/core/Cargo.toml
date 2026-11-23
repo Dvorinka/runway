@@ -21,7 +21,7 @@ hmac.workspace = true
 jsonwebtoken.workspace = true
 lettre.workspace = true
 rand.workspace = true
-rcgen = "0.13"
+rcgen = "0.14"
 regex.workspace = true
 reqwest.workspace = true
 rustls = { version = "0.23", features = ["ring"] }
@@ -38,4 +38,4 @@ log.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-x509-parser = "0.16"
+x509-parser = "0.18"

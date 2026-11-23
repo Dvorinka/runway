@@ -53,10 +53,12 @@ pub async fn delete_project(ctx: &Ctx, project_id: &str) -> anyhow::Result<()> {
         "storage_project",
         "notification",
     ] {
-        sqlx::query(&format!("DELETE FROM {table} WHERE project_id = $1"))
-            .bind(project_id)
-            .execute(&ctx.db)
-            .await?;
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DELETE FROM {table} WHERE project_id = $1"
+        )))
+        .bind(project_id)
+        .execute(&ctx.db)
+        .await?;
     }
     sqlx::query("DELETE FROM project WHERE id = $1")
         .bind(project_id)
